@@ -19,6 +19,8 @@ export default defineConfig({
         horn: resolve(here, "horn-calculator.html"),
         flh: resolve(here, "annular-flh.html"),
         directivity: resolve(here, "directivity-match.html"),
+        cdexit: resolve(here, "cd-exit-divider.html"),
+        aperture: resolve(here, "aperture-wavefield.html"),
       },
     },
   },

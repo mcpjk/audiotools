@@ -4,12 +4,12 @@ Working notes for this repo. Read before changing anything.
 
 ## What this is
 
-Three loudspeaker design calculators served as a static multi-page site at
+Five loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
 Tools are usually iterated **one at a time in separate sessions**. Assume you
-are touching one tool and that the other two must come out byte-identical.
+are touching one tool and that the others must come out byte-identical.
 
 ## Layout
 
@@ -18,6 +18,8 @@ index.html                landing page — plain HTML/CSS, no React
 horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
+cd-exit-divider.html      → src/cd-exit-main.jsx     → CDExitCellDivider
+aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
 vite.config.js            the `input` map is what makes this multi-page
@@ -71,6 +73,11 @@ It prints a fresh block plus before/after contrast ratios. Paste the block into
 `src/palette.js`. Do not hand-edit individual hexes — that is how a ramp stops
 being a ramp. The background also appears in each entry HTML's inline `<style>`
 and in the favicon data URI, so those need the same value.
+
+Anything that mixes colour numerically — the Aperture Wavefield canvas colour
+map, for instance — must derive its endpoints from `C` rather than hard-coding
+RGB. That tool originally held the old background as raw `(12, 15, 20)` in its
+pixel loop, which left the canvas off-theme when the palette changed.
 
 Accent colours (amber, blue, cyan, green, red, violet, magenta) are the
 original design and should not be changed without asking. Two known
