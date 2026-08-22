@@ -2,7 +2,7 @@
 
 Loudspeaker design calculators, served as a static multi-page site.
 
-Live at: `tools.kiiworkshop.com` (see **Deployment** below)
+Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 
 | Tool | Page | What it does |
 |---|---|---|
@@ -70,18 +70,34 @@ Then `npm run build` to confirm it compiles, and push.
 
 ## Deployment
 
-GitHub → Cloudflare Pages, automatic on every push to `main`.
+GitHub → **Cloudflare Workers** (static assets), automatic on every push to `main`.
+
+Cloudflare builds the site in a disposable container and serves `dist/` straight
+from its edge. There is no server-side code: `wrangler.jsonc` declares an
+assets-only Worker with no `main` entry point.
+
+Dashboard settings:
 
 - Build command: `npm run build`
-- Output directory: `dist`
-- Production branch: `main`
+- Deploy command: `npx wrangler deploy`
+- `NODE_VERSION` environment variable: `22` — Vite 8 requires Node ≥ 20.19, and
+  Cloudflare's default image can be older. Without this the build fails in a way
+  that looks like a dependency error but is just an old interpreter.
 
-Pushing to `main` triggers a fresh clone and build in a disposable container;
-the resulting static files go to Cloudflare's edge. A failed build does not
-overwrite the working version, and previous deployments can be rolled back from
-the dashboard.
+The output directory is **not** a dashboard field here, unlike Cloudflare Pages.
+It comes from `assets.directory` in `wrangler.jsonc`. If the Vite output
+location ever changes, both files have to change together.
 
-The custom domain is a **subdomain** (`tools.kiiworkshop.com`) on purpose: a
-subdomain needs only one CNAME record wherever kiiworkshop.com's DNS already
-lives. An apex domain would require moving nameservers to Cloudflare, which
-would put the main site's DNS at risk for no benefit here.
+A failed build does not overwrite the live version, and previous deployments can
+be rolled back from the dashboard.
+
+### Custom domain
+
+`audiotools.kiiworkshop.com`, added under the Worker's **Domains & Routes**.
+kiiworkshop.com is already a Cloudflare zone, so Cloudflare creates the DNS
+record and provisions the certificate itself — nothing to edit by hand at a
+registrar.
+
+A subdomain rather than the apex, so the tools deploy independently of whatever
+serves kiiworkshop.com itself. Note that Workers custom domains only attach to
+zones on Cloudflare's nameservers; an external CNAME cannot point at a Worker.

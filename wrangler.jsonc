@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "audiotools",
+  "compatibility_date": "2026-08-22",
+  // Static-assets-only Worker: no server-side code, no "main" entry.
+  // Everything in dist/ is served straight from Cloudflare's edge.
+  // "directory" must match the Vite build output — see vite.config.js.
+  "assets": {
+    "directory": "./dist"
+  }
+}
