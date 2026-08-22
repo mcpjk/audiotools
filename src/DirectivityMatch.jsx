@@ -255,13 +255,19 @@ export default function DirectivityMatch() {
   const atFx = at(fx);
   const atFx2 = at(fx2);
 
-  // suggested crossover: where cone coverage equals horn coverage
+  // Suggested crossover: where the cone's coverage descends through the horn's.
+  //
+  // Below pattern control both curves sit clamped at 180 - the cone because
+  // ka < 2.2 has no -6 dB point inside 90 degrees, the horn because its
+  // aperture term already exceeds 180. They are equal there, but that is the
+  // clamp, not a match, so those points are skipped. Taking the equality at
+  // face value reports the left edge of the frequency grid as the answer.
   const suggestedFx = useMemo(() => {
     for (let i = 1; i < curves.length; i++) {
       const a = curves[i - 1], b = curves[i];
+      if (a.cone >= 180 && a.horn >= 180) continue;
       const da = a.cone - a.horn, db = b.cone - b.horn;
-      if (da === 0) return a.f;
-      if (da > 0 && db <= 0) {
+      if (da >= 0 && db < 0) {
         const t = da / (da - db);
         return a.f + t * (b.f - a.f);
       }
