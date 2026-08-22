@@ -7,5 +7,16 @@
   // "directory" must match the Vite build output — see vite.config.js.
   "assets": {
     "directory": "./dist"
-  }
+  },
+  // The live hostname, declared here rather than left as dashboard-only
+  // state, so the deploy is self-contained and survives a project rebuild.
+  // custom_domain: true is what makes Cloudflare create and hold the DNS
+  // record; a plain route would attach the Worker to a pattern without
+  // bringing the hostname into existence.
+  "routes": [
+    { "pattern": "audiotools.kiiworkshop.com", "custom_domain": true }
+  ],
+  // Declaring routes would otherwise turn the workers.dev subdomain off.
+  // Keep it: it isolates "did the build work" from "did the domain work".
+  "workers_dev": true
 }

@@ -93,10 +93,17 @@ be rolled back from the dashboard.
 
 ### Custom domain
 
-`audiotools.kiiworkshop.com`, added under the Worker's **Domains & Routes**.
-kiiworkshop.com is already a Cloudflare zone, so Cloudflare creates the DNS
-record and provisions the certificate itself — nothing to edit by hand at a
-registrar.
+`audiotools.kiiworkshop.com`, declared as a `custom_domain` route in
+`wrangler.jsonc` so the binding lives in version control rather than only in
+the dashboard. kiiworkshop.com is already a Cloudflare zone, so Cloudflare
+creates the DNS record and provisions the certificate itself — nothing to edit
+by hand at a registrar.
+
+Note the distinction, because the two sit next to each other in the dashboard
+and only one of them works here: a **custom domain** creates the DNS record and
+makes the hostname resolve; a plain **route** only attaches the Worker to a URL
+pattern, and assumes a record already exists. A route on a hostname with no DNS
+record produces a "server not found" error, not a Worker error.
 
 A subdomain rather than the apex, so the tools deploy independently of whatever
 serves kiiworkshop.com itself. Note that Workers custom domains only attach to
