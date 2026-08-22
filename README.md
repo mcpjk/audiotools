@@ -26,14 +26,40 @@ horn-calculator.html      entry → src/horn-main.jsx       → HornCalculator
 annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalculator
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
 src/
-  HornCalculator.jsx        the component — self-contained, imports only react
+  HornCalculator.jsx        the component — self-contained, imports react + palette
   AnnularFLHCalculator.jsx
   DirectivityMatch.jsx
+  palette.js                shared theme tokens, imported by all three
   horn-main.jsx             three-line mount script
   flh-main.jsx
   directivity-main.jsx
+scripts/palette-gen.mjs   regenerates the neutral ramp
 vite.config.js            the `input` map is what makes this multi-page
+wrangler.jsonc            Cloudflare deploy config and custom domain
 ```
+
+## Theme
+
+Dark, warm. All colour lives in `src/palette.js`; the tools import it rather
+than each carrying a copy.
+
+The neutrals are a warm ramp at OKLCH hue 45. They came from the original
+blue-tinted ramp by rotating the hue and **holding each step's lightness
+fixed**, so the theme changed temperature without any text getting harder to
+read — text on background moved 14.20:1 to 14.15:1, and the other steps by
+similar margins.
+
+To retheme, change the two numbers and re-run:
+
+```bash
+node scripts/palette-gen.mjs 45 0.6    # hue, chroma scale
+node scripts/palette-gen.mjs 260 1.0   # back to the original cool ramp
+```
+
+It prints the block to paste into `src/palette.js`, along with before/after
+contrast ratios so the change can be checked rather than eyeballed. The
+background colour also appears in each entry HTML's inline `<style>` and in the
+favicon, which need the same value.
 
 `base: "./"` in the Vite config keeps asset paths relative, so the built site
 works from any directory, not just a domain root.

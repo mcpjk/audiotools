@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
+import { C } from "./palette.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // DIRECTIVITY MATCH — horn ↔ cone crossover tool
@@ -146,18 +147,6 @@ const fmt = (v, dec = 1) => {
   return v.toFixed(dec);
 };
 
-// ─────────────────────────────────────────────
-// PALETTE — matches the other tools in this project
-// ─────────────────────────────────────────────
-const C = {
-  bg: "#0c0f14", surface: "#151a23", surfaceAlt: "#1a2030",
-  border: "#2a3040", borderLight: "#3a4558",
-  text: "#d8dee8", textDim: "#7a8598", textMuted: "#4e5a6e",
-  amber: "#e8a040", blue: "#4a9ade", cyan: "#50c8c8",
-  green: "#48b858", red: "#e05050", violet: "#9a7adb", white: "#e8e8e8",
-  mono: "'SF Mono','Cascadia Code','Fira Code','Consolas',monospace",
-  sans: "-apple-system,'Segoe UI','Helvetica Neue',sans-serif",
-};
 const sInput = {
   background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 4,
   color: C.text, padding: "6px 8px", fontFamily: C.mono, fontSize: 13,

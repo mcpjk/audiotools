@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
+import { C } from "./palette.js";
 
 // ═══════════════════════════════════════════════
 // PHYSICS & PROFILE FUNCTIONS
@@ -87,25 +88,6 @@ const fmt = (v, dec = 1) => {
 // STYLES
 // ═══════════════════════════════════════════════
 
-const C = {
-  bg: "#0c0f14",
-  surface: "#151a23",
-  surfaceAlt: "#1a2030",
-  border: "#2a3040",
-  borderLight: "#3a4558",
-  text: "#d8dee8",
-  textDim: "#7a8598",
-  textMuted: "#4e5a6e",
-  amber: "#e8a040",
-  amberDim: "#c08030",
-  blue: "#4a9ade",
-  cyan: "#50c8c8",
-  magenta: "#d060a0",
-  green: "#48b858",
-  red: "#e05050",
-  mono: "'SF Mono','Cascadia Code','Fira Code','Consolas',monospace",
-  sans: "-apple-system,'Segoe UI','Helvetica Neue',sans-serif",
-};
 
 const sInput = {
   background: C.surfaceAlt,
