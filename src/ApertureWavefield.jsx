@@ -67,11 +67,19 @@ const speedOfSound = (tC) => 331.3 * Math.sqrt(1 + tC / 273.15);
 // changed. Unpacked to scalars because the map runs per pixel per frame.
 const rgb255 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const [bgR, bgG, bgB] = rgb255(C.bg);       // zero pressure
-const [posR, posG, posB] = rgb255(C.amber); // positive half-cycle; also the hot stop of the magnitude ramp
-const [negR, negG, negB] = rgb255(C.blue);  // negative half-cycle; also the cool stop of the magnitude ramp
-const [hiR, hiG, hiB] = rgb255(C.white);    // top of the magnitude scale
-const [midR, midG, midB] = rgb255(C.red);   // magnitude ramp midpoint, between cool and hot
+const [posR, posG, posB] = rgb255(C.amber); // positive half-cycle
+const [negR, negG, negB] = rgb255(C.blue);  // negative half-cycle
 const DEG = 180 / Math.PI;
+
+// Magnitude (dB) view uses a fixed, conventional heat-map ramp instead of the
+// theme palette — blue (quietest) -> green -> yellow -> orange -> red
+// (loudest). Deliberately does not follow the theme or blend with the page;
+// that's the point of a "standard" heatmap. Raw colour, opted out on purpose.
+const [m0R, m0G, m0B] = rgb255("#0000ff"); // blue — quietest        // palette-exempt
+const [m1R, m1G, m1B] = rgb255("#00cc00"); // green                  // palette-exempt
+const [m2R, m2G, m2B] = rgb255("#ffff00"); // yellow                 // palette-exempt
+const [m3R, m3G, m3B] = rgb255("#ff8000"); // orange                 // palette-exempt
+const [m4R, m4G, m4B] = rgb255("#ff0000"); // red — loudest          // palette-exempt
 
 function NumInput({ label, value, onChange, unit, min, max, step = 1, accent }) {
   const [local, setLocal] = useState(String(value));
@@ -327,26 +335,22 @@ export default function ApertureWavefield() {
             r = bgR + t * (negR - bgR); g = bgG + t * (negG - bgG); b = bgB + t * (negB - bgB);
           }
         } else {
-          // thermal-style ramp — cool (blue) → hot (red → amber) → the theme's
-          // reference colour at the peak (near-white on sumi, near-black ink on
-          // washi, for max contrast against the page either way) — built from
-          // the same palette tokens as everywhere else in the tool, so it
-          // retints with the theme instead of freezing to one look.
+          // fixed heat-map ramp — see the m0..m4 constants above.
           const mg = Math.hypot(re[i], im[i]) * inv;
           const db = 20 * Math.log10(Math.max(mg, 1e-6));
-          const t = Math.min(Math.max((db + 40) / 40, 0), 1);
-          if (t < 0.35) {
-            const u = t / 0.35;
-            r = bgR + u * (negR - bgR); g = bgG + u * (negG - bgG); b = bgB + u * (negB - bgB);
-          } else if (t < 0.65) {
-            const u = (t - 0.35) / 0.3;
-            r = negR + u * (midR - negR); g = negG + u * (midG - negG); b = negB + u * (midB - negB);
-          } else if (t < 0.85) {
-            const u = (t - 0.65) / 0.2;
-            r = midR + u * (posR - midR); g = midG + u * (posG - midG); b = midB + u * (posB - midB);
+          const seg = Math.min(Math.max((db + 40) / 40, 0), 1) * 4;
+          if (seg < 1) {
+            const u = seg;
+            r = m0R + u * (m1R - m0R); g = m0G + u * (m1G - m0G); b = m0B + u * (m1B - m0B);
+          } else if (seg < 2) {
+            const u = seg - 1;
+            r = m1R + u * (m2R - m1R); g = m1G + u * (m2G - m1G); b = m1B + u * (m2B - m1B);
+          } else if (seg < 3) {
+            const u = seg - 2;
+            r = m2R + u * (m3R - m2R); g = m2G + u * (m3G - m2G); b = m2B + u * (m3B - m2B);
           } else {
-            const u = (t - 0.85) / 0.15;
-            r = posR + u * (hiR - posR); g = posG + u * (hiG - posG); b = posB + u * (hiB - posB);
+            const u = Math.min(seg - 3, 1);
+            r = m3R + u * (m4R - m3R); g = m3G + u * (m4G - m3G); b = m3B + u * (m4B - m3B);
           }
         }
         const p = i * 4;
