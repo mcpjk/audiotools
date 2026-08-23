@@ -545,10 +545,10 @@ export default function CDExitCellDivider() {
     const strokeW = R * 0.006;
     geo.cells.forEach((cc, i) => {
       const tint = cc.ring % 2 === 0 ? C.amber : C.blue;
-      els.push(`<path d="${cellPath(cc)}" fill="${plain ? "none" : tint + "16"}" stroke="${plain ? "#000" : C.textMuted}" stroke-width="${strokeW}"/>`);
+      els.push(`<path d="${cellPath(cc)}" fill="${plain ? "none" : tint + "16"}" stroke="${plain ? "#000" : C.textMuted}" stroke-width="${strokeW}"/>`);  // palette-exempt: black is correct for plain SVG/DXF export
     });
-    els.push(`<circle cx="0" cy="0" r="${R}" fill="none" stroke="${plain ? "#000" : C.amber}" stroke-width="${strokeW * 2}"/>`);
-    if (hubR > 0) els.push(`<circle cx="0" cy="0" r="${hubR}" fill="${plain ? "none" : C.textMuted + "60"}" stroke="${plain ? "#000" : C.textDim}" stroke-width="${strokeW}"/>`);
+    els.push(`<circle cx="0" cy="0" r="${R}" fill="none" stroke="${plain ? "#000" : C.amber}" stroke-width="${strokeW * 2}"/>`);  // palette-exempt: black is correct for plain SVG/DXF export
+    if (hubR > 0) els.push(`<circle cx="0" cy="0" r="${hubR}" fill="${plain ? "none" : C.textMuted + "60"}" stroke="${plain ? "#000" : C.textDim}" stroke-width="${strokeW}"/>`);  // palette-exempt: black is correct for plain SVG/DXF export
     return els.join("");
   };
 

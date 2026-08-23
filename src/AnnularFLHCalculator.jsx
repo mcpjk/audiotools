@@ -388,7 +388,7 @@ export default function AnnularFLHCalculator() {
     // ── wall bodies (between the two face lines: exact source of truth) ──
     const wall = (fin, fout, zTop, zBot, key) =>
       <polygon key={key} points={P([[fin(zTop), zTop], [fout(zTop), zTop], [fout(zBot), zBot], [fin(zBot), zBot]])}
-        fill={C.amber} opacity={0.9} stroke="#000" strokeWidth={0.4} />;
+        fill={C.amber} opacity={0.9} stroke="#000" strokeWidth={0.4} />;  // palette-exempt: black is correct for plain SVG/DXF export
     els.push(wall(g.A_in, g.A_out, g.H, g.zA, "wA"));
     els.push(wall(g.B_in, g.B_out, g.zB, 0, "wB"));
     els.push(wall(g.O_in, g.O_out, g.H, g.zO, "wO"));

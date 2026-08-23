@@ -46,59 +46,37 @@ wrangler.jsonc            Cloudflare deploy config and custom domain
 
 ## Theme
 
-Dark, warm. All colour lives in `src/palette.js`; the tools import it rather
-than each carrying a copy.
+Light, warm — sumi ink on washi paper. All colour lives in `src/palette.js`;
+the tools import it rather than each carrying a copy, and `npm run check:palette`
+(which the build runs first) fails if a tool contains a raw hex or a page's
+background drifts from the palette.
 
-The neutrals are a warm ramp at OKLCH hue 45. They came from the original
-blue-tinted ramp by rotating the hue and **holding each step's lightness
-fixed**, so the theme changed temperature without any text getting harder to
-read — text on background moved 14.20:1 to 14.15:1, and the other steps by
-similar margins.
+Two themes ship. To switch, change one line in `src/palette.js` and sync:
 
-To retheme, change the two numbers and re-run:
-
-```bash
-node scripts/palette-gen.mjs 45 0.6    # hue, chroma scale
-node scripts/palette-gen.mjs 260 1.0   # back to the original cool ramp
+```js
+export const THEME = "washi";   // light, paper  (active)
+export const THEME = "sumi";    // warm dark     (the previous theme)
 ```
 
-It prints the block to paste into `src/palette.js`, along with before/after
-contrast ratios so the change can be checked rather than eyeballed. The
-background colour also appears in each entry HTML's inline `<style>` and in the
-favicon, which need the same value.
-
-`base: "./"` in the Vite config keeps asset paths relative, so the built site
-works from any directory, not just a domain root.
-
-## Working on it
-
 ```bash
-npm install     # once, after cloning
-npm run dev     # local preview with hot reload, http://localhost:5173
-npm run build   # produce dist/
-npm run preview # serve the built dist/ exactly as it will be deployed
+npm run theme:sync      # push the values into the entry HTML files
 ```
 
-`dist/` and `node_modules/` are deliberately **not** committed — Cloudflare
-regenerates both on every deploy. Build output in a repo goes stale and
-produces meaningless diffs.
+The sync step exists because each entry page carries a literal background and
+favicon colour — both must paint before any JS runs, or the page flashes the
+wrong colour on load. Those values are tagged with the role they hold, so they
+can be rewritten mechanically.
 
-## Adding a new tool
+The active theme is drawn from a traditional Japanese colour plate — 千草鼠
+chigusa-nezumi, 砥粉色 tonoko-iro, 媚茶色 kobicha-iro, 黒色 kuro. Those are used
+as a hue family rather than literal values: as printed, the gold sits at 1.70:1
+against the paper and the sage at 2.91:1, where a plot line needs 3:1. They
+work in a book because they are large blocks, not thin marks. Each hue was
+re-stepped in OKLCH to the lightness its role actually needs.
 
-Four small edits, no other files involved:
-
-1. Drop the component in `src/`, e.g. `src/MulticellHorn.jsx`.
-   It needs a `export default function ...`.
-2. Add `src/multicell-main.jsx` — copy any existing mount script and change the
-   two names.
-3. Add `multicell.html` at the repo root — copy an existing entry HTML, change
-   the `<title>` and the `<script src>`.
-4. Register it in **two** places:
-   - `vite.config.js` → one line in the `input` map. **A page not listed here
-     will not be built**, and the omission is silent.
-   - `index.html` → one `<a class="card">` block so it is reachable.
-
-Then `npm run build` to confirm it compiles, and push.
+To adjust, edit the OKLCH specs in `scripts/palette-gen.mjs` and re-run it — it
+prints a block that replaces the theme wholesale, and reproduces the committed
+values exactly, so a diff shows only comments.
 
 ## Deployment
 

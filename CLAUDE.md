@@ -52,39 +52,87 @@ npm run preview  # serve the built output as deployed
 
 ## The palette
 
-`src/palette.js` is the single source of truth. **Import it; never redeclare a
-local `C`.** All three tools used to carry their own copy, which is exactly how
-three tools drift into three shades of the same theme.
+`src/palette.js` is the master palette and the single source of colour.
+**Import it; never redeclare a local `C`; never write a raw hex in a tool.**
 
 ```js
 import { C } from "./palette.js";
 ```
 
-The neutrals are a warm ramp at OKLCH hue 45. They were derived from the
-original cool ramp by rotating hue only and **holding lightness fixed**, so
-every contrast ratio was preserved (text on bg 14.20:1 → 14.15:1). If you
-change the theme, do it the same way:
+`npm run check:palette` enforces all three, and the build runs it first. It
+also checks that every entry HTML's inline background and favicon still match
+`C.page`. A line that genuinely needs a fixed colour whatever the theme — black
+for CAD/SVG export — opts out with a trailing `palette-exempt` comment.
 
-```bash
-node scripts/palette-gen.mjs 45 0.6    # hue, chroma scale
+### Role names, not colour names
+
+The palette has two layers: themes hold values, tools consume **roles**.
+
+```
+page panel panelAlt      grounds
+border borderStrong      rules and outlines
+ink inkDim inkMuted      type, three weights
+series1..series7         data marks, fixed order
+accent accentDim         the one highlight
+reference                marker / crosshair lines
 ```
 
-It prints a fresh block plus before/after contrast ratios. Paste the block into
-`src/palette.js`. Do not hand-edit individual hexes — that is how a ramp stops
-being a ramp. The background also appears in each entry HTML's inline `<style>`
-and in the favicon data URI, so those need the same value.
+**New tools should use role names.** `C.amber` pins a tool to a colour;
+`C.series1` lets the theme move it. The older tools still use legacy aliases
+(`bg`, `surface`, `text`, `amber`, `blue`, …) which map onto the roles, so they
+keep working — but do not add more.
+
+The clearest illustration is `C.white`. It means "the reference-line colour",
+so on the light theme it resolves to near-black ink, and every tool that draws
+a crosshair follows the theme without being edited.
+
+### Switching or changing a theme
+
+```bash
+# edit THEME in src/palette.js -> "washi" (light, paper) | "sumi" (warm dark)
+npm run theme:sync      # push the new values into the entry HTML files
+npm run check:palette   # confirm nothing drifted
+```
+
+Every tool follows from the palette import. The entry pages need the sync step
+because they carry literal colours: the background and the inline SVG favicon
+have to paint before any JS runs, or the page flashes the wrong colour on load.
+Each of those values is tagged with the role it holds —
+`background:#f4efe7;/*theme:page*/` — which is what lets the sync rewrite them
+safely. Verified as a round trip: washi to sumi and back returns every page
+byte-identical.
+
+To change values, edit the OKLCH specs in `scripts/palette-gen.mjs` and re-run
+it; it prints a block that replaces the theme in `palette.js`. It is written to
+reproduce the committed theme exactly, so a diff should show only comments.
+Do not hand-edit hexes — that is how a ramp stops being a ramp.
+
+### Why the values are what they are
+
+The active theme comes from a traditional Japanese colour plate — 千草鼠
+chigusa-nezumi, 砥粉色 tonoko-iro, 媚茶色 kobicha-iro, 黒色 kuro, on washi paper.
+
+Those four are used as a **hue family, not as literal values**. As printed they
+cannot survive as thin marks: against the paper the gold measures 1.70:1 and
+the sage 2.91:1, where a plot line needs 3:1. They work in the book because
+they are large blocks. Each hue was re-stepped in OKLCH to the lightness its
+role needs.
+
+Series lightness is spread from 0.44 to 0.64 deliberately. Separation that
+survives colour-blindness comes from lightness, not hue — red, green and gold
+all collapse toward one hue under deuteranopia, so they are held apart in
+lightness instead. 0.64 is the ceiling where a mark stops clearing 3:1.
+
+There is a standing tension here: muting the colours makes them prettier and
+less distinguishable. Muted was tried and pushed the worst pair below the
+normal-vision floor, so the slightly more saturated step was kept. If you
+retheme, re-run the data-viz palette validator on the series before trusting
+them — every combination that can appear together on one chart should pass.
 
 Anything that mixes colour numerically — the Aperture Wavefield canvas colour
 map, for instance — must derive its endpoints from `C` rather than hard-coding
-RGB. That tool originally held the old background as raw `(12, 15, 20)` in its
-pixel loop, which left the canvas off-theme when the palette changed.
-
-Accent colours (amber, blue, cyan, green, red, violet, magenta) are the
-original design and should not be changed without asking. Two known
-colour-vision weaknesses, both pre-existing: violet/blue are nearly identical
-under deuteranopia, green/amber under protanopia. Both are currently mitigated
-by direct labels and dash patterns rather than colour alone — preserve that if
-you touch the plots.
+RGB. That tool once held the background as raw `(12, 15, 20)` in its pixel
+loop, which left the canvas off-theme when the palette changed.
 
 ## Component conventions
 

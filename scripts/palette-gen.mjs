@@ -1,44 +1,67 @@
-// Regenerate the neutral ramp in src/palette.js.
+// Regenerate a theme's values for src/palette.js.
 //
-//   node scripts/palette-gen.mjs [hue] [chromaScale]
-//   node scripts/palette-gen.mjs 45 0.6      <- the current theme
-//   node scripts/palette-gen.mjs 260 1.0     <- back to the original cool ramp
+//   node scripts/palette-gen.mjs            # the active washi theme
+//   node scripts/palette-gen.mjs --check    # also print contrast for each role
 //
-// Rotates the ORIGINAL cool ramp to a new hue, holding each step's OKLCH
-// lightness fixed so every contrast ratio in the UI is preserved. Prints the
-// block to paste into src/palette.js, plus the contrast ratios so a change can
-// be checked rather than eyeballed.
-import { hexToOklch, oklchToHex, contrast } from "./oklch.mjs";
+// Every value is specified as OKLCH (hue, lightness, chroma) rather than as a
+// hex, because lightness is the thing that has to be chosen deliberately:
+//
+//   · Neutrals are one warm hue with chroma tapering from the paper down to
+//     the ink, so the ground is tinted but the type stays near-neutral.
+//   · Series lightness is spread from 0.44 to 0.64 on purpose. Separation that
+//     survives colour-blindness comes from lightness, not hue — red, green and
+//     gold all collapse toward one hue under deuteranopia. The 0.64 ceiling is
+//     where a mark stops clearing 3:1 against paper.
+//
+// After changing anything here, re-run the data-viz palette validator on the
+// series values before trusting them.
+import { oklchToHex, contrast } from "./oklch.mjs";
 
-// The original blue-tinted ramp this project started from. Kept as the source
-// so repeated regeneration never compounds rounding error.
-const BASE = {
-  bg: "#0c0f14", surface: "#151a23", surfaceAlt: "#1a2030", border: "#2a3040",
-  borderLight: "#3a4558", textMuted: "#4e5a6e", textDim: "#7a8598", text: "#d8dee8",
+const NEUTRAL_HUE = 80; // between tonoko (87) and kobicha (61)
+
+const NEUTRALS = {
+  page:         [0.955, 0.012],
+  panel:        [0.988, 0.006],
+  panelAlt:     [0.945, 0.016],
+  border:       [0.875, 0.020],
+  borderStrong: [0.795, 0.026],
+  inkMuted:     [0.615, 0.028],
+  inkDim:       [0.475, 0.030],
+  ink:          [0.285, 0.024],
 };
 
-// Warmth should read on the large dark areas and fade toward the text, so the
-// type stays near-neutral instead of turning orange.
-const BOOST = {
-  bg: 1.9, surface: 1.9, surfaceAlt: 1.7, border: 1.5,
-  borderLight: 1.3, textMuted: 1.1, textDim: 0.9, text: 0.7,
+// hue, lightness, chroma
+const SERIES = {
+  series1: [85,  0.635, 0.125], // tonoko gold, deepened for line use
+  series2: [252, 0.492, 0.148], // ai indigo
+  series3: [203, 0.598, 0.105], // chigusa sage-teal
+  series4: [128, 0.506, 0.126], // moss
+  series5: [30,  0.437, 0.145], // shu vermilion
+  series6: [326, 0.441, 0.142], // edo murasaki
+  series7: [346, 0.558, 0.130], // old rose
 };
-
-const hue = Number(process.argv[2] ?? 45);
-const scale = Number(process.argv[3] ?? 0.6);
+const ACCENT_DIM = [85, 0.520, 0.110];
 
 const out = {};
-for (const [k, v] of Object.entries(BASE)) {
-  const o = hexToOklch(v);
-  out[k] = oklchToHex({ L: o.L, C: o.C * BOOST[k] * scale, H: hue });
+for (const [k, [L, C]] of Object.entries(NEUTRALS)) out[k] = oklchToHex({ L, C, H: NEUTRAL_HUE });
+for (const [k, [H, L, C]] of Object.entries(SERIES)) out[k] = oklchToHex({ L, C, H });
+out.accent = out.series1;
+out.accentDim = oklchToHex({ L: ACCENT_DIM[1], C: ACCENT_DIM[2], H: ACCENT_DIM[0] });
+out.reference = out.ink;
+
+console.log("  washi: {");
+for (const k of Object.keys(NEUTRALS)) console.log(`    ${k}: "${out[k]}",`);
+console.log("");
+for (const k of Object.keys(SERIES)) console.log(`    ${k}: "${out[k]}",`);
+for (const k of ["accent", "accentDim", "reference"]) console.log(`    ${k}: "${out[k]}",`);
+console.log("  },");
+
+if (process.argv.includes("--check")) {
+  console.log("\n// contrast against page / panel:");
+  for (const k of [...Object.keys(SERIES), "ink", "inkDim", "inkMuted"]) {
+    const a = contrast(out[k], out.page), b = contrast(out[k], out.panel);
+    const need = k.startsWith("series") ? 3 : 3;
+    console.log(`//   ${k.padEnd(13)} ${a.toFixed(2)}:1 / ${b.toFixed(2)}:1 ${Math.min(a,b) >= need ? "ok" : "LOW"}`);
+  }
+  console.log("//   series list: " + Object.keys(SERIES).map((k) => out[k]).join(","));
 }
-
-console.log(`// neutrals — hue ${hue}, chroma x${scale}`);
-for (const [k, v] of Object.entries(out)) console.log(`  ${k}: "${v}",`);
-
-const pair = (a, b) => `${contrast(out[a], out[b]).toFixed(2)}:1 (was ${contrast(BASE[a], BASE[b]).toFixed(2)}:1)`;
-console.log("\n// contrast, new vs original:");
-console.log("//   text on bg        ", pair("text", "bg"));
-console.log("//   text on surface   ", pair("text", "surface"));
-console.log("//   textDim on surface", pair("textDim", "surface"));
-console.log("//   textMuted on surf ", pair("textMuted", "surface"));
