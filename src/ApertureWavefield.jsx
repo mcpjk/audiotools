@@ -67,9 +67,10 @@ const speedOfSound = (tC) => 331.3 * Math.sqrt(1 + tC / 273.15);
 // changed. Unpacked to scalars because the map runs per pixel per frame.
 const rgb255 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const [bgR, bgG, bgB] = rgb255(C.bg);       // zero pressure
-const [posR, posG, posB] = rgb255(C.amber); // positive half-cycle
-const [negR, negG, negB] = rgb255(C.blue);  // negative half-cycle
+const [posR, posG, posB] = rgb255(C.amber); // positive half-cycle; also the hot stop of the magnitude ramp
+const [negR, negG, negB] = rgb255(C.blue);  // negative half-cycle; also the cool stop of the magnitude ramp
 const [hiR, hiG, hiB] = rgb255(C.white);    // top of the magnitude scale
+const [midR, midG, midB] = rgb255(C.red);   // magnitude ramp midpoint, between cool and hot
 const DEG = 180 / Math.PI;
 
 function NumInput({ label, value, onChange, unit, min, max, step = 1, accent }) {
@@ -326,14 +327,25 @@ export default function ApertureWavefield() {
             r = bgR + t * (negR - bgR); g = bgG + t * (negG - bgG); b = bgB + t * (negB - bgB);
           }
         } else {
+          // thermal-style ramp — cool (blue) → hot (red → amber) → the theme's
+          // reference colour at the peak (near-white on sumi, near-black ink on
+          // washi, for max contrast against the page either way) — built from
+          // the same palette tokens as everywhere else in the tool, so it
+          // retints with the theme instead of freezing to one look.
           const mg = Math.hypot(re[i], im[i]) * inv;
           const db = 20 * Math.log10(Math.max(mg, 1e-6));
           const t = Math.min(Math.max((db + 40) / 40, 0), 1);
-          if (t < 0.55) {
-            const u = t / 0.55;
-            r = bgR + u * (posR - bgR); g = bgG + u * (posG - bgG); b = bgB + u * (posB - bgB);
+          if (t < 0.35) {
+            const u = t / 0.35;
+            r = bgR + u * (negR - bgR); g = bgG + u * (negG - bgG); b = bgB + u * (negB - bgB);
+          } else if (t < 0.65) {
+            const u = (t - 0.35) / 0.3;
+            r = negR + u * (midR - negR); g = negG + u * (midG - negG); b = negB + u * (midB - negB);
+          } else if (t < 0.85) {
+            const u = (t - 0.65) / 0.2;
+            r = midR + u * (posR - midR); g = midG + u * (posG - midG); b = midB + u * (posB - midB);
           } else {
-            const u = (t - 0.55) / 0.45;
+            const u = (t - 0.85) / 0.15;
             r = posR + u * (hiR - posR); g = posG + u * (hiG - posG); b = posB + u * (hiB - posB);
           }
         }
