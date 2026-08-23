@@ -1054,8 +1054,9 @@ export default function HornCalculator() {
         Flare rate: (1/S)(dS/dx)
         <br />
         <strong style={{ color: C.textDim }}>T parameter</strong> ·
-        T=0: hyperbolic (cosh²) — fastest initial flare, smoothest throat loading ·
-        T=1: exponential — constant flare rate, classic reference ·
+        T=0: hyperbolic (cosh²) — zero initial flare at the throat, largest throat impedance
+        overshoot ·
+        T=1: exponential — constant flare rate from the throat, smoothest throat loading ·
         0&lt;T&lt;1: intermediate family blending both characteristics
       </div>
     </div>
