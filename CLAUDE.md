@@ -4,7 +4,7 @@ Working notes for this repo. Read before changing anything.
 
 ## What this is
 
-Five loudspeaker design calculators served as a static multi-page site at
+Six loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
@@ -20,8 +20,11 @@ annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 cd-exit-divider.html      → src/cd-exit-main.jsx     → CDExitCellDivider
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
+h-grid-throat.html        → src/hgrid-main.jsx       → HGridThroat
+src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
+scripts/test-hgrid.mjs    test vectors for hgrid-model.js — the build runs these
 vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy + custom domain
 ```
@@ -34,9 +37,10 @@ server rewrite rules. Do not introduce one.
 
 ```bash
 npm install
-npm run dev      # localhost:5173
-npm run build    # → dist/
-npm run preview  # serve the built output as deployed
+npm run dev        # localhost:5173
+npm run build      # check:palette, then test:hgrid, then vite → dist/
+npm run preview    # serve the built output as deployed
+npm run test:hgrid # test vectors for the H-grid model, against closed forms
 ```
 
 ## Adding a tool
@@ -142,6 +146,12 @@ Match what is already there rather than modernising it:
 - Inline style objects, no CSS modules, no styling library.
 - Hand-rolled SVG for all plots — no charting library.
 - Physics helpers as plain top-level functions above the component.
+- **One exception, deliberate**: `HGridThroat.jsx` keeps its physics in
+  `src/hgrid-model.js` — a plain module with no React and no colour — so that
+  `scripts/test-hgrid.mjs` can import it under node and check it against closed
+  forms. Split a tool this way only when it has enough physics AND enough
+  independent closed forms to make the tests worth having. Do not split for
+  tidiness; the single-file convention is the default for a reason.
 - A long comment block at the top of each tool stating the model, its
   assumptions, and the direction of error for each simplification. **Keep this
   current.** If you change the physics, change that block in the same edit.
@@ -159,6 +169,13 @@ claiming a change works:
 3. For a physics change, check the number against a closed form computed
    independently, not against the tool's own output. Vary one input at a time
    and confirm the result moves the way theory says it should.
+4. For anything in `src/hgrid-model.js`, `npm run test:hgrid` must pass. It
+   checks against closed forms — the exact Neumann modes of a disc and of a
+   circular sector, the corner-angle and DOF counts, the evanescent decay
+   length — never against the tool's own previous output. **A physics change
+   there without a matching change to that script is a change that has not been
+   verified.** If a test starts failing, work out which of the two is wrong
+   before touching either.
 
 Chromium is available at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
 for headless rendering checks.
@@ -189,3 +206,17 @@ in software, and new to git — worth explaining git concepts as they come up
 rather than just running commands. Metric units, SGD for costs.
 
 Report findings rather than silently patching things that were not asked about.
+
+## Known findings worth not re-deriving
+
+- **H-grid f₁ is set by rows, not columns.** The binding cell's long dimension
+  runs in the row direction, so adding columns only narrows every cell — raising
+  its aspect ratio — while f₁_min barely moves. 6×3 and 8×3 land within a few
+  percent of each other despite a third more cells; 6×3 → 6×4 → 6×5 goes
+  14.9 → 20.0 → 24.6 kHz. The build spec's hand estimates said the opposite and
+  flagged themselves as order-of-magnitude only; they are wrong in direction.
+- **The equal-arc corner angle is rarely the best one.** For 8×3 it is 24.5°
+  and the optimum is near 37.5°. Treat it as the seed it is.
+- **An equal-area H-grid does not beat a comparable O-grid on f₁_min.** 6×3 at
+  ~14.9 kHz against 1+6+12 at 22.4 kHz. The H-grid earns its place through the
+  mouth mapping, not through the throat number.

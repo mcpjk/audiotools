@@ -21,6 +21,7 @@ export default defineConfig({
         directivity: resolve(here, "directivity-match.html"),
         cdexit: resolve(here, "cd-exit-divider.html"),
         aperture: resolve(here, "aperture-wavefield.html"),
+        hgrid: resolve(here, "h-grid-throat.html"),
       },
     },
   },

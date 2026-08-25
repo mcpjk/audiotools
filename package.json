@@ -6,9 +6,10 @@
   "description": "Loudspeaker design calculators, served as a static multi-page site",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-palette.mjs && vite build",
+    "build": "node scripts/check-palette.mjs && node scripts/test-hgrid.mjs && vite build",
     "preview": "vite preview",
     "check:palette": "node scripts/check-palette.mjs",
+    "test:hgrid": "node scripts/test-hgrid.mjs",
     "theme:sync": "node scripts/sync-theme.mjs"
   },
   "dependencies": {
