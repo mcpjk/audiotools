@@ -11,6 +11,7 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
 | CD Exit Cell Division | `cd-exit-divider.html` | Equal open-area partition of a compression driver exit; layout chosen to raise the HOM-free limit |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
+| H-Grid Throat Partition | `h-grid-throat.html` | Equal-area row-and-column partition of a CD exit, curvature-controlled grid lines, lofted cell-for-cell to a rectangular mouth |
 
 Everything computes client-side. No backend, no network calls, no analytics,
 no external libraries beyond React itself.
@@ -29,20 +30,38 @@ annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalcul
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
 cd-exit-divider.html      entry → src/cd-exit-main.jsx     → CDExitCellDivider
 aperture-wavefield.html   entry → src/aperture-main.jsx    → ApertureWavefield
+h-grid-throat.html        entry → src/hgrid-main.jsx       → HGridThroat
 src/
   HornCalculator.jsx        the component — self-contained, imports react + palette
   AnnularFLHCalculator.jsx
   DirectivityMatch.jsx
   CDExitCellDivider.jsx
   ApertureWavefield.jsx
+  HGridThroat.jsx           the one tool split in two — see below
+  hgrid-model.js            its geometry, solver and acoustics; no React, no colour
   palette.js                shared theme tokens, imported by every tool
   horn-main.jsx             three-line mount script
   flh-main.jsx
   directivity-main.jsx
 scripts/palette-gen.mjs   regenerates the neutral ramp
+scripts/test-hgrid.mjs    test vectors for the H-grid model, run by the build
 vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy config and custom domain
 ```
+
+### The one tool that is two files
+
+Every other tool is a single self-contained component. The H-grid throat
+partition keeps its geometry, its equal-area solver and its acoustic model in
+`src/hgrid-model.js`, which imports nothing — no React, no palette. That is so
+`npm run test:hgrid` can load it under plain node and check it against closed
+forms: the exact Neumann modes of a disc and of a circular sector, the
+divergence-free property of the curvature flow, the evanescent decay length,
+the corner-angle and DOF counts. The build runs those tests before Vite.
+
+The reason is the one in **Verifying a change** in `CLAUDE.md`: for this kind of
+tool `vite build` succeeding proves almost nothing. A wrong coefficient compiles
+perfectly. Splitting the file is what makes the numbers checkable.
 
 ## Theme
 
