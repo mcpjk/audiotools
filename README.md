@@ -11,7 +11,7 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
 | CD Exit Cell Division | `cd-exit-divider.html` | Equal open-area partition of a compression driver exit; layout chosen to raise the HOM-free limit |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
-| H-Grid Throat Partition | `h-grid-throat.html` | Equal-area row-and-column partition of a CD exit, curvature-controlled grid lines, lofted cell-for-cell to a rectangular mouth |
+| H-Grid Throat Partition | `h-grid-throat.html` | Equal-area row-and-column partition of a CD exit, per-line curvature control, lofted cell-for-cell to a rectangular mouth |
 
 Everything computes client-side. No backend, no network calls, no analytics,
 no external libraries beyond React itself.
@@ -49,15 +49,35 @@ vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy config and custom domain
 ```
 
+### Grid lines as the primitive
+
+The H-grid tool represents its partition as **lines, not nodes**. Each latitude
+and longitude line is one continuous curve carrying a few Chebyshev shape
+coefficients in a reference square, pushed through a square-to-disc seed map; a
+node is just where two lines cross. That is far more freedom than two division
+vectors — a tensor-product grid has 4 parameters against 5 independent area
+constraints at 6×3 and provably cannot be equal-area — and far less than free
+nodes, which is the point: the coefficients are legible (where the line sits,
+how much it bows, where the bow concentrates) and there are ten of them rather
+than ninety.
+
+Sliders are **requests, not settings**. Moving one states a wish; the solver
+returns the nearest parameter vector that still has equal areas, and the tool
+shows requested against achieved for every parameter. Unlike free nodes,
+whole-line curvature cannot always reach equal area — when it cannot, the tool
+says so, names the binding constraint, and shows how far along the request it
+did get.
+
 ### The one tool that is two files
 
 Every other tool is a single self-contained component. The H-grid throat
 partition keeps its geometry, its equal-area solver and its acoustic model in
 `src/hgrid-model.js`, which imports nothing — no React, no palette. That is so
 `npm run test:hgrid` can load it under plain node and check it against closed
-forms: the exact Neumann modes of a disc and of a circular sector, the
-divergence-free property of the curvature flow, the evanescent decay length,
-the corner-angle and DOF counts. The build runs those tests before Vite.
+forms: the exact Neumann modes of a disc and of a circular sector, area closure
+on πR² for any parameter vector, mirrored cells agreeing to machine precision,
+the evanescent decay length, and the corner-angle and DOF counts. The build runs
+those tests before Vite.
 
 The reason is the one in **Verifying a change** in `CLAUDE.md`: for this kind of
 tool `vite build` succeeding proves almost nothing. A wrong coefficient compiles

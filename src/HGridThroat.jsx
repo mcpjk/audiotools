@@ -18,10 +18,15 @@ import * as G from "./hgrid-model.js";
 // tool has enough physics, and enough closed forms to check it against, that
 // "it compiles" is not evidence of anything.
 //
-// WHAT THIS FILE ADDS
-//   · the pipeline split into a cached base solve and a cheap curvature pass,
-//     so the sliders stay live while the equal-area solve does not re-run
-//   · the two plan views, the path-length chart and the exports
+// GRID LINES ARE THE PRIMITIVE. Each latitude and longitude line is one
+// continuous curve with its own low-order Chebyshev shape coefficients, and
+// equal cell area is reached by solving on those coefficients. A node is just
+// where two lines cross.
+//
+// SLIDERS ARE REQUESTS, NOT SETTINGS. Moving a bow slider states a wish; the
+// solver returns the nearest parameter vector that still has equal areas. This
+// file shows requested against achieved for every parameter and never quietly
+// moves a slider the user set.
 //
 // THE ONE THING TO KEEP IN MIND WHILE READING THE NUMBERS
 //   An equal-area map cannot also be conformal unless it is a rigid motion.
@@ -36,6 +41,7 @@ const R2D = 180 / Math.PI;
 
 const fmt = (v, d = 1) => {
   if (v == null || !isFinite(v)) return "—";
+  if (v !== 0 && Math.abs(v) < 1e-4) return "0";
   if (Math.abs(v) >= 10000) return v.toFixed(0);
   if (Math.abs(v) >= 100) return v.toFixed(Math.min(d, 1));
   if (Math.abs(v) >= 1) return v.toFixed(d);
@@ -122,11 +128,15 @@ const dl = (name, text, mime) => {
   URL.revokeObjectURL(u);
 };
 
-const KNOB_HINTS = {
-  row_bow: "psi = (1-r²)² · xy. Bows the row dividers, pulling them toward the axis in the core and out toward the rim beyond r ≈ 0.45R. Trades middle-row against outer-row cell aspect.",
-  col_splay: "psi = (1-r²)² · xy(x²-y²). Column lines radial (fanning from the centre) against parallel. Radial reduces corner-cell distortion; parallel keeps the middle row rectangular.",
-  radial_bias: "psi = (1-r²)² · xy·r². The same strain as row bow, re-weighted outward in radius: it moves where the crescents sit, not how big they are.",
-  swirl: "psi = (1-r²)². A rotation of the interior. Even in both x and y, so it is unavailable while mirror symmetry is enforced — and it is the knob that directly creates twist.",
+const ORDER_HINT = [
+  "how much the line bows",
+  "where the bow concentrates — mid-line against toward the rim",
+  "finer structure, rarely needed",
+];
+
+const SEED_NOTE = {
+  elliptical: "Closed form and fast. Its own corners sit at 45°, so the displacement needed to honour α is carried inward by a transfinite blend.",
+  conformal: "Schwarz–Christoffel. Angle-preserving, so cells start locally square — the best shapes available, with the wrong areas. Its corners ARE the prevertices, so it honours any α exactly. Several times slower to solve.",
 };
 
 export default function HGridThroat() {
@@ -145,17 +155,12 @@ export default function HGridThroat() {
   const [ringSpec, setRingSpec] = useState("1,6,12");
   const [bm, setBm] = useState(2);
   const [bp, setBp] = useState(2);
-  const [alphaAuto, setAlphaAuto] = useState(true);
-  const [alphaDeg, setAlphaDeg] = useState(30);
   const [seed, setSeed] = useState("elliptical");
-  const [bulge, setBulge] = useState(true);
 
-  // ── curvature ──
-  const [symmetry, setSymmetry] = useState("both");
-  const [degree, setDegree] = useState(6);
-  const [knobs, setKnobs] = useState({ row_bow: 0, col_splay: 0, radial_bias: 0, swirl: 0 });
-  const [coefMode, setCoefMode] = useState("knobs");
-  const [rawCoef, setRawCoef] = useState(null);
+  // ── line shapes ──
+  const [shapeOrder, setShapeOrder] = useState(2); // m
+  const [symmetric, setSymmetric] = useState(true);
+  const [request, setRequest] = useState(null);    // p_requested, or null for nominal
 
   // ── mouth ──
   const [mouthW, setMouthW] = useState(200);
@@ -170,10 +175,9 @@ export default function HGridThroat() {
 
   // ── optimiser ──
   const [wAspect, setWAspect] = useState(0.6);
-  const [wTwist, setWTwist] = useState(0.5);
-  const [wSeed, setWSeed] = useState(0.4);
-  const [maxEval, setMaxEval] = useState(300);
-  const [searchAlpha, setSearchAlpha] = useState(true);
+  const [wTwist, setWTwist] = useState(0);
+  const [wCorrection, setWCorrection] = useState(0.5);
+  const [maxEval, setMaxEval] = useState(160);
   const [optState, setOptState] = useState(null);
   const [running, setRunning] = useState(false);
 
@@ -187,51 +191,52 @@ export default function HGridThroat() {
     () => ringSpec.split(/[^0-9]+/).filter(Boolean).map(Number).filter((n) => n > 0),
     [ringSpec]
   );
-  const alphaEff = family === "hgrid"
-    ? (alphaAuto ? G.equalArcAlphaDeg(nc, nr) : alphaDeg)
-    : (alphaAuto ? 45 : alphaDeg);
+  // ── line-shape configuration and the requested parameter vector ──
+  const cfg = useMemo(
+    () => G.lineGridConfig({ nc, nr, m: shapeOrder, symmetric }),
+    [nc, nr, shapeOrder, symmetric]
+  );
+  const labels = useMemo(() => G.paramLabels(cfg), [cfg]);
+  const nominal = useMemo(() => G.nominalParams(cfg), [cfg]);
+  // the request resets whenever the shape space itself changes
+  const pReq = request && request.length === cfg.nParams ? request : nominal;
+  useEffect(() => { setRequest(null); }, [cfg]);
 
-  const basis = useMemo(() => G.psiBasis(symmetry, degree), [symmetry, degree]);
-  const coef = useMemo(() => {
-    if (coefMode === "raw" && rawCoef && rawCoef.length === basis.length) return rawCoef;
-    return G.knobsToCoeffs(knobs, basis);
-  }, [coefMode, rawCoef, knobs, basis]);
+  // The seed object is kept across solves so the conformal map's warm start
+  // survives; only the corner angle moves inside it.
+  const seedObj = useMemo(() => G.makeSeed(seed, R, pReq[cfg.alphaAt]), [seed, R, cfg]);
+  const lastP = useRef(null);
 
-  // ── STAGE A: seed and equalise. Expensive, and independent of curvature. ──
-  const base = useMemo(() => {
-    const L = G.buildLayout({
-      family, R, nc, nr, alphaDeg: alphaEff, seed, bulge,
-      rings: rings.length ? rings : [1, 6, 12], m: bm, p: bp,
-      t: thickness, c, equalIters: 50,
-    });
-    return L;
-  }, [family, R, nc, nr, alphaEff, seed, bulge, ringSpec, bm, bp, thickness, c]);
-
-  // ── STAGE B: flow and correct. Cheap, so the sliders stay live. ──
   const layout = useMemo(() => {
-    const mesh = G.cloneMesh(base.mesh);
-    let drift = null, driftOpen = null;
-    if (coef.some((v) => v) && G.canFlow(mesh)) {
-      const b0 = mesh.cells.map((_, i) => G.cellArea(mesh, i));
-      const b1 = mesh.cells.map((_, i) => G.cellOpenArea(mesh, i, thickness));
-      G.flowMesh(mesh, basis, coef, 24);
-      const a0 = mesh.cells.map((_, i) => G.cellArea(mesh, i));
-      const a1 = mesh.cells.map((_, i) => G.cellOpenArea(mesh, i, thickness));
-      drift = Math.max(...a0.map((v, i) => Math.abs(v - b0[i]) / b0[i])) * 100;
-      driftOpen = Math.max(...a1.map((v, i) => Math.abs(v - b1[i]) / b1[i])) * 100;
-      G.equaliseAreas(mesh, { t: thickness, iters: 14, tikhonov: 0 });
-    }
-    const throat = G.analyseThroat(mesh, { c, R, t: thickness });
-    return { mesh, throat, drift, driftOpen };
-  }, [base, coef, basis, thickness, c, R]);
+    const L = G.buildLayout({
+      family, R, nc, nr, m: shapeOrder, symmetric,
+      params: pReq, seed, seedObj,
+      pStart: lastP.current && lastP.current.length === cfg.nParams ? lastP.current : null,
+      rings: rings.length ? rings : [1, 6, 12], bm, bp,
+      t: thickness, c,
+    });
+    if (L.solve && L.solve.p) lastP.current = L.solve.p;
+    return L;
+  }, [family, R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, ringSpec, bm, bp, thickness, c, cfg]);
 
   const throat = layout.throat;
+  const solve = layout.solve;
+  // Where the number of cells meeting is not four. For the H-grid these are the
+  // four corners of the reference square, wherever the seed map puts them.
+  const singular = useMemo(() => {
+    if (layout.family === "hgrid" && layout.seedObj)
+      return [[1, -1], [1, 1], [-1, 1], [-1, -1]].map(([u, v]) => layout.seedObj.map(u, v));
+    if (layout.mesh) return layout.mesh.singular.map((ni) => G.nodeXY(layout.mesh, ni));
+    return [];
+  }, [layout]);
+  const alphaEff = family === "hgrid" && solve.p ? solve.p[cfg.alphaAt] * R2D : 45;
 
-  const map = useMemo(() => G.mapThroatToMouth(layout.mesh, throat, {
-    c, mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
+  const map = useMemo(() => G.mapThroatToMouth(throat, {
+    c, nc, nr, R, rectangular: layout.rectangular,
+    mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
     tight, fTarget, dividerEndFrac, stations, keepGeometry: true,
     wallWidthAt: mouthW / nc,
-  }), [layout, c, mouthW, mouthH, apex, depth, flatten, exitAngle, tight, fTarget, dividerEndFrac, stations, nc]);
+  }), [layout, throat, c, nc, nr, R, mouthW, mouthH, apex, depth, flatten, exitAngle, tight, fTarget, dividerEndFrac, stations]);
 
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process, knifeEdge,
@@ -239,54 +244,54 @@ export default function HGridThroat() {
 
   // ── objective, live ──
   const obj = useMemo(
-    () => G.objective(layout.mesh, throat, map, { wAspect, wTwist, wSeed, seedDisp: base.seedDisp }),
-    [layout, throat, map, wAspect, wTwist, wSeed, base]
+    () => G.objective(throat, map, {
+      wAspect, wTwist, wCorrection,
+      correction: solve.correction || 0, infeasible: !solve.converged,
+    }),
+    [throat, map, wAspect, wTwist, wCorrection, solve]
   );
 
   // ── optimiser ──────────────────────────────────────────────────────────────
+  // ── optimiser ─────────────────────────────────────────────────────────────
+  // The search space is now the 7-13 line parameters, alpha among them, so
+  // Nelder-Mead on the whole vector is enough — no outer scan is needed, and
+  // every candidate goes through the equal-area solve before f1 is looked at.
   const runOptimiser = () => {
-    if (busy.current || family === "ogrid") return;
+    if (busy.current || family !== "hgrid") return;
     busy.current = true;
     setRunning(true);
     setTimeout(() => {
       const t0 = Date.now();
-      let evals = 0;
-      const evalAt = (alph, cf, baseMesh) => {
-        const mesh = G.cloneMesh(baseMesh);
-        if (cf.some((v) => v) && G.canFlow(mesh)) {
-          G.flowMesh(mesh, basis, cf, 12, 6);
-          G.equaliseAreas(mesh, { t: thickness, iters: 10, tikhonov: 0 });
-        }
-        const th = G.analyseThroat(mesh, { c, R, t: thickness });
-        const mp = wTwist > 0 ? G.mapThroatToMouth(mesh, th, {
-          c, mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
-          tight, fTarget, samples: 16, stations: 6, wallWidthAt: mouthW / nc,
-        }) : null;
-        evals++;
-        return G.objective(mesh, th, mp, { wAspect, wTwist, wSeed, seedDisp: base.seedDisp }).J;
-      };
-      // Alpha changes the SEED, so it cannot ride inside the same simplex as
-      // the coefficients without paying for a full equal-area solve on every
-      // evaluation. It gets a coarse outer scan instead; the coefficients get
-      // the simplex, on a base mesh solved once per alpha.
-      const alphas = searchAlpha && family === "hgrid"
-        ? [-12, -6, 0, 6, 12].map((d) => Math.max(8, Math.min(82, alphaEff + d)))
-        : [alphaEff];
-      let best = { J: Infinity, alpha: alphaEff, coef: coef.slice() };
-      for (const a of alphas) {
-        const L = a === alphaEff ? base : G.buildLayout({
-          family, R, nc, nr, alphaDeg: a, seed, bulge,
-          rings: rings.length ? rings : [1, 6, 12], m: bm, p: bp,
-          t: thickness, c, equalIters: 50,
+      let evals = 0, warm = solve.p ? solve.p.slice() : null;
+      const evalAt = (x) => {
+        const q = x.slice();
+        q[cfg.alphaAt] = Math.min(85 * D2R, Math.max(5 * D2R, q[cfg.alphaAt]));
+        // Cheaper quadrature and no continuation fallback while RANKING
+        // candidates; the winner is re-solved at full order by the pipeline
+        // before anything is drawn or exported, so nothing reported is ever a
+        // reduced-order number.
+        const sol = G.solveEqualArea(cfg, q, {
+          R, seed: seedObj, pStart: warm, t: thickness,
+          tol: 1e-9, maxIter: 40, maxGeom: 240, gl: 10, continuation: false,
         });
-        const res = G.nelderMead((x) => evalAt(a, x, L.mesh), coef.slice(),
-          { maxEval: Math.round(maxEval / alphas.length), step: 0.1 });
-        if (res.f < best.J) best = { J: res.f, alpha: a, coef: res.x };
-      }
-      setRawCoef(best.coef);
-      setCoefMode("raw");
-      if (best.alpha !== alphaEff) { setAlphaAuto(false); setAlphaDeg(best.alpha); }
-      setOptState({ J: best.J, evals, ms: Date.now() - t0, alpha: best.alpha });
+        evals++;
+        if (sol.converged) warm = sol.p;
+        const cells = G.lineGridCells(sol.geometry, { c, t: thickness, per: 8 });
+        const th = G.analyseThroat(cells, { c, R, dividerTotal: G.lineGridDividerLength(sol.geometry) });
+        const mp = wTwist > 0 ? G.mapThroatToMouth(th, {
+          c, nc, nr, R, rectangular: true, mouthW, mouthH, apex, depth, flatten,
+          exitHalfAngle: exitAngle, tight, fTarget, samples: 16, stations: 6, wallWidthAt: mouthW / nc,
+        }) : null;
+        return G.objective(th, mp, {
+          wAspect, wTwist, wCorrection,
+          correction: sol.correction, infeasible: !sol.converged,
+        }).J;
+      };
+      const res = G.nelderMead(evalAt, pReq.slice(), { maxEval, step: 0.06 });
+      const best = res.x.slice();
+      best[cfg.alphaAt] = Math.min(85 * D2R, Math.max(5 * D2R, best[cfg.alphaAt]));
+      setRequest(best);
+      setOptState({ J: res.f, evals, ms: Date.now() - t0 });
       setRunning(false);
       busy.current = false;
     }, 30);
@@ -295,11 +300,16 @@ export default function HGridThroat() {
   // ── warnings ───────────────────────────────────────────────────────────────
   const warnings = useMemo(() => {
     const w = [];
-    if (base.fallback) w.push(base.fallback);
-    if (throat.spread > 1e-4)
-      w.push(`Open-area spread is ${fmt(throat.spread, 3)}% — the equal-area solve did not converge here. Try the other seed, or move the corner angle.`);
-    if (family === "hgrid" && !alphaAuto && Math.abs(alphaEff - G.equalArcAlphaDeg(nc, nr)) > 20)
-      w.push(`Corner angle is ${fmt(alphaEff, 1)}° against an equal-arc seed of ${fmt(G.equalArcAlphaDeg(nc, nr), 1)}° — the rim division is now strongly uneven, which is legal but worth looking at in the plan view.`);
+    // The feasibility message is the solver's own, and it names the binding
+    // constraint. It is the one warning that must never be softened: whole-line
+    // curvature genuinely cannot always reach equal area.
+    if (!solve.converged && solve.reason)
+      w.push(`No equal-area grid for this request. ${solve.reason}${
+        solve.reachedFraction != null
+          ? ` The grid shown is the furthest point along the request that does have equal areas — ${fmt(solve.reachedFraction * 100, 0)}% of the way there.`
+          : ""}`);
+    else if (throat.spread > 1e-4)
+      w.push(`Open-area spread is ${fmt(throat.spread, 3)}% — the solve did not reach equal areas here. Raise the shape order m, or ease the request.`);
     if (throat.blockage > 0.12)
       w.push(`Dividers block ${fmt(throat.blockage * 100, 1)}% of the exit. That is an unintended compression step: the shell has to grow to ⌀${fmt(fab.dShell, 2)} mm to give the area back.`);
     if (thickness > 0 && thickness < fab.tMin)
@@ -310,6 +320,8 @@ export default function HGridThroat() {
       w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
     if (map && map.aimMax > map.aimLimitDeg)
       w.push(`Aim error reaches ${fmt(map.aimMax, 1)}° against a ${fmt(map.aimLimitDeg, 1)}° tangency tolerance. Shape the aperture surface from the directivity requirement first — a surface chosen for routing radiates its own curvature error phase-coherently and no EQ removes it.`);
+    if (family === "hgrid" && solve.converged && solve.monotone && solve.monotone.gap < 0.02)
+      w.push(`Two grid lines come within ${solve.monotone.gap.toExponential(2)} of each other in parameter space — the areas are equal but a cell is pinched to nearly nothing there, which will not print and will not behave like a duct. Ease the bow, raise the shape order m, or move the corner angle.`);
     if (throat.curvatureFlagged)
       w.push(`${throat.curvatureFlagged} cell(s) have edge curvature strong relative to their own short dimension. The flat-rectangle first-mode model errs as O((L/r_curv)²) with the sign not established — verify these in ABEC.`);
     if (map && map.rows.some((r) => r.runNeeded && r.straightAvail < r.runNeeded))
@@ -317,7 +329,7 @@ export default function HGridThroat() {
     if (family !== "hgrid")
       w.push(`${family === "ogrid" ? "An O-grid" : "A butterfly"} throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
     return w;
-  }, [base, throat, family, alphaAuto, alphaEff, nc, nr, thickness, fab, map, fTarget, mouthW]);
+  }, [solve, throat, family, alphaEff, nc, nr, thickness, fab, map, fTarget, mouthW]);
 
   // ── exports ────────────────────────────────────────────────────────────────
   const stem = `hgrid_${fmt(exitDia, 1)}mm_${family === "hgrid" ? `${nc}x${nr}` : family}_${throat.N}cells`;
@@ -358,13 +370,23 @@ export default function HGridThroat() {
       family, nCols: nc, nRows: nr, rings: family === "ogrid" ? rings : undefined,
       core: family === "butterfly" ? { m: bm, p: bp } : undefined,
       cornerAlphaDeg: alphaEff, equalArcAlphaDeg: G.equalArcAlphaDeg(nc, nr),
-      seed, curvature: bulge, symmetry, basisDegree: degree,
-      dof: G.dofCount(layout.mesh), constraints: G.constraintCount(layout.mesh),
-      singularVertices: layout.mesh.singular.length,
+      seed, singularVertices: singular.length,
+      lineShapes: family === "hgrid" ? {
+        shapeOrder, symmetric, chebyshevOrders: cfg.orders,
+        freeParameters: cfg.nParams, independentConstraints: cfg.nConstraints, spare: cfg.spare,
+        parameters: labels.map((l, i) => ({
+          group: l.group, name: l.name, kind: l.kind,
+          requested: +pReq[i].toFixed(8), achieved: +solve.p[i].toFixed(8),
+        })),
+      } : undefined,
     },
     solve: {
+      converged: solve.converged,
+      reason: solve.reason || undefined,
       openAreaSpreadPercent: throat.spread,
-      areaDriftUnderFlowPercent: layout.drift,
+      areaResidual: solve.residual,
+      correctionNorm: solve.correction,
+      monotonicityGap: solve.monotone ? solve.monotone.gap : undefined,
       note: "Areas are equal to the solver tolerance reported here, not by construction.",
     },
     aperture: map ? { type: flatten === 1 ? "spherical cap" : "oblate spheroid", apexBehindThroat: apex, axialDepth: depth, flatten, mouthW, mouthH } : null,
@@ -451,8 +473,7 @@ export default function HGridThroat() {
     els.push(<circle key="rim" cx={0} cy={0} r={R} fill="none" stroke={C.accent} strokeWidth={sw * 2.4} />);
     // singular vertices — where the number of cells meeting is not four. They
     // are unavoidable when a rectangular index is laid on a disc.
-    layout.mesh.singular.forEach((ni, k) => {
-      const p = G.nodeXY(layout.mesh, ni);
+    singular.forEach((p, k) => {
       els.push(<g key={`sv${k}`}>
         <circle cx={p[0]} cy={-p[1]} r={R * 0.035} fill="none" stroke={C.series6} strokeWidth={sw * 2.2} />
         <circle cx={p[0]} cy={-p[1]} r={R * 0.011} fill={C.series6} />
@@ -528,6 +549,17 @@ export default function HGridThroat() {
     </text>);
     return <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>{els}</svg>;
   };
+
+  // parameters grouped by the line they belong to, for the panel above
+  const groups = useMemo(() => {
+    const out = [];
+    labels.forEach((l, i) => {
+      let g = out.find((x) => x.name === l.group);
+      if (!g) { g = { name: l.group, items: [] }; out.push(g); }
+      g.items.push({ i, l });
+    });
+    return out;
+  }, [labels]);
 
   const hoverCell = hover != null ? throat.cells.find((x) => x.id === hover) : null;
   const hoverRow = hover != null && map ? map.rows.find((x) => x.id === hover) : null;
@@ -606,31 +638,23 @@ export default function HGridThroat() {
             <NumInput label="Fan rings p" value={bp} onChange={(v) => setBp(Math.round(v))} min={1} max={8} step={1} accent={C.series4} />
           </>}
           <div>
-            <label style={sLabel}>Corner half-angle α</label>
-            <div style={{ display: "flex", gap: 4, marginBottom: 5 }}>
-              <button onClick={() => setAlphaAuto(true)} style={btn(alphaAuto, C.series3)}>Equal-arc seed</button>
-              <button onClick={() => { setAlphaAuto(false); setAlphaDeg(alphaEff); }} style={btn(!alphaAuto, C.series3)}>Free</button>
-            </div>
-            {alphaAuto
-              ? <div style={{ fontSize: 12, fontFamily: C.mono, color: C.series3, padding: "5px 0" }}>{fmt(alphaEff, 2)}°</div>
-              : <input type="number" value={alphaDeg} min={5} max={85} step={0.5}
-                  onChange={(e) => setAlphaDeg(Math.min(85, Math.max(5, parseFloat(e.target.value) || 45)))} style={sInput} />}
-          </div>
-          <div>
             <label style={sLabel}>Seed map</label>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <button onClick={() => setSeed("elliptical")} style={btn(seed === "elliptical", C.series2)}>Elliptical</button>
               <button onClick={() => setSeed("conformal")} style={btn(seed === "conformal", C.series2)}>Conformal (SC)</button>
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11, marginTop: 8 }}>
-              <input type="checkbox" checked={bulge} onChange={(e) => setBulge(e.target.checked)} style={{ accentColor: C.series4 }} />
-              <span style={{ color: C.inkDim }}>Per-edge curvature (+2 DOF each)</span>
-            </label>
+            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.4 }}>{SEED_NOTE[seed]}</div>
           </div>
           <div style={{ fontFamily: C.mono, fontSize: 11, lineHeight: 1.7, color: C.inkDim }}>
-            <div><span style={{ color: C.series4 }}>{G.dofCount(layout.mesh)}</span> DOF · <span style={{ color: C.series1 }}>{G.constraintCount(layout.mesh)}</span> constraints</div>
-            <div>residual freedom <span style={{ color: C.series3 }}>{G.dofCount(layout.mesh) - G.constraintCount(layout.mesh)}</span></div>
-            <div style={{ color: C.inkMuted }}>{layout.mesh.singular.length} singular vertices</div>
+            {family === "hgrid" ? (<>
+              <div><span style={{ color: C.series4 }}>{cfg.nParams}</span> free parameters · <span style={{ color: C.series1 }}>{cfg.nConstraints}</span> constraints</div>
+              <div>spare <span style={{ color: cfg.spare >= 0 ? C.series3 : C.series5 }}>{cfg.spare}</span> · {cfg.nLon + cfg.nLat} line shapes</div>
+              <div style={{ color: C.inkMuted }}>{cfg.nClasses} distinct cells under the mirrors</div>
+            </>) : (<>
+              <div><span style={{ color: C.series4 }}>{layout.mesh ? G.dofCount(layout.mesh) : 0}</span> node DOF</div>
+              <div style={{ color: C.inkMuted }}>comparison family — no line parameterisation</div>
+            </>)}
+            <div style={{ color: C.inkMuted }}>{singular.length} singular vertices</div>
             <div style={{ color: C.inkMuted, fontSize: 10, marginTop: 3, lineHeight: 1.4, fontFamily: C.sans }}>
               Conformally natural α for a {fmt(mouthW / mouthH, 2)}:1 mouth is {fmt(G.scAlphaForAspect(mouthW / mouthH) * R2D, 1)}°, set by the
               Schwarz–Christoffel elliptic modulus. The equal-arc formula is a seed, not a derivation.
@@ -639,78 +663,132 @@ export default function HGridThroat() {
         </div>
       </div>
 
-      {/* CURVATURE */}
+      {/* LINE SHAPES */}
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-          <span style={secTitle}>Curvature — area-preserving stream-function flow</span>
-          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10, color: C.inkMuted }}>Mirror symmetry</span>
-            {[["both", "Both axes"], ["horizontal", "Horizontal"], ["none", "None"]].map(([v, l]) => (
-              <button key={v} onClick={() => setSymmetry(v)} style={btn(symmetry === v, C.series7)}>{l}</button>
-            ))}
-            <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>Degree</span>
-            {[4, 6].map((d) => <button key={d} onClick={() => setDegree(d)} style={btn(degree === d, C.series7)}>{d}</button>)}
-            <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>{basis.length} coefficients</span>
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "0 18px" }}>
-          {["row_bow", "col_splay", "radial_bias", "swirl"].map((k) => (
-            <Slider key={k} label={G.KNOBS[k].label} value={knobs[k]} min={-1} max={1} step={0.005}
-              col={C.series7}
-              disabled={coefMode === "raw" || !G.canFlow(layout.mesh) || (G.KNOBS[k].needs === "none" && symmetry !== "none")}
-              onChange={(v) => { setKnobs({ ...knobs, [k]: v }); setCoefMode("knobs"); }}
-              hint={KNOB_HINTS[k]} />
-          ))}
-        </div>
-        <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 6, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={runOptimiser} disabled={running || family === "ogrid"}
-            style={{ ...btn(true, C.series1), fontSize: 11, padding: "6px 14px", opacity: running || family === "ogrid" ? 0.5 : 1 }}>
-            {running ? "Optimising…" : "Maximise min f₁"}
-          </button>
-          <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11 }}>
-            <input type="checkbox" checked={searchAlpha} onChange={(e) => setSearchAlpha(e.target.checked)} style={{ accentColor: C.series1 }} />
-            <span style={{ color: C.inkDim }}>also scan the corner angle</span>
-          </label>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            {[["aspect", wAspect, setWAspect], ["twist", wTwist, setWTwist], ["seed pull", wSeed, setWSeed]].map(([l, v, set]) => (
-              <label key={l} style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 4, alignItems: "center" }}>
-                w<sub>{l}</sub>
-                <input type="number" value={v} min={0} max={5} step={0.1} onChange={(e) => set(parseFloat(e.target.value) || 0)}
-                  style={{ ...sInput, width: 56, padding: "3px 5px", fontSize: 11 }} />
+          <span style={secTitle}>Grid-line shape — sliders are requests, not settings</span>
+          {family === "hgrid" && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, color: C.inkMuted }}>shape order m</span>
+              {[1, 2, 3].map((d) => (
+                <button key={d} onClick={() => setShapeOrder(d)} style={btn(shapeOrder === d, C.series7)}>{d}</button>
+              ))}
+              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, marginLeft: 4 }}>
+                T{cfg.orders.join(", T")}
+              </span>
+              <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11, marginLeft: 8 }}>
+                <input type="checkbox" checked={symmetric} onChange={(e) => setSymmetric(e.target.checked)} style={{ accentColor: C.series7 }} />
+                <span style={{ color: C.inkDim }}>enforce both mirror symmetries</span>
               </label>
-            ))}
-            <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 4, alignItems: "center" }}>
-              evals
-              <input type="number" value={maxEval} min={40} max={2000} step={20} onChange={(e) => setMaxEval(parseInt(e.target.value) || 300)}
-                style={{ ...sInput, width: 64, padding: "3px 5px", fontSize: 11 }} />
-            </label>
-          </div>
-          {coefMode === "raw" && (
-            <button onClick={() => { setCoefMode("knobs"); setRawCoef(null); }} style={btn(false, C.series5)}>Back to the sliders</button>
+              <button onClick={() => setRequest(null)} style={{ ...btn(false, C.series5), marginLeft: 6 }}>Reset to nominal</button>
+            </div>
           )}
-          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted, marginLeft: "auto", textAlign: "right", lineHeight: 1.5 }}>
-            <div>objective J = {fmt(obj.J, 3)} · softmin f₁ {fmt(obj.soft, 2)} kHz</div>
-            <div>aspect {fmt(obj.aspectPenalty, 3)} · twist {fmt(obj.twistPenalty, 3)} · seed {fmt(obj.seedPenalty, 3)}</div>
-            {optState && <div style={{ color: C.series4 }}>{optState.evals} evaluations in {(optState.ms / 1000).toFixed(1)} s · α {fmt(optState.alpha, 1)}°</div>}
-          </div>
         </div>
-        {coefMode === "raw" && rawCoef && (
-          <div style={{ marginTop: 8, fontFamily: C.mono, fontSize: 10, color: C.inkDim, wordBreak: "break-all" }}>
-            ψ = (1−r²)² · [{basis.map(([a, b], i) => `${rawCoef[i] >= 0 ? "+" : "−"}${Math.abs(rawCoef[i]).toFixed(4)}·ξ${a > 1 ? `^${a}` : ""}η${b > 1 ? `^${b}` : ""}`).join(" ")}]
+
+        {family !== "hgrid" ? (
+          <div style={{ fontSize: 11, color: C.inkMuted, lineHeight: 1.5 }}>
+            The line parameterisation belongs to the H-grid: it needs one continuous latitude and longitude line across the whole disc.
+            An O-grid has rings and radials, a butterfly has a core and four fans — neither carries a single (i,j) index, so neither has
+            grid lines to shape. Both are here as equal-N comparisons at the throat and are solved on their own node positions.
           </div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${300}px, 1fr))`, gap: "0 20px" }}>
+              {groups.map((grp) => (
+                <div key={grp.name} style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 10, color: C.series7, fontFamily: C.mono, letterSpacing: "0.05em", margin: "6px 0 2px" }}>
+                    {grp.name.toUpperCase()}
+                  </div>
+                  {grp.items.map(({ i, l }) => {
+                    const isAlpha = l.kind === "alpha";
+                    const val = isAlpha ? pReq[i] * R2D : pReq[i];
+                    const got = isAlpha ? solve.p[i] * R2D : solve.p[i];
+                    const lim = l.kind === "pos" ? 1 : l.kind === "alpha" ? null : 0.6;
+                    const moved = Math.abs(got - val) > (isAlpha ? 0.05 : 5e-4);
+                    return (
+                      <div key={i} style={{ marginBottom: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
+                          <label style={{ ...sLabel, marginBottom: 1 }}>{l.name}</label>
+                          <span style={{ fontFamily: C.mono, fontSize: 10, whiteSpace: "nowrap" }}>
+                            <span style={{ color: C.inkDim }}>{val.toFixed(isAlpha ? 2 : 4)}</span>
+                            <span style={{ color: C.inkMuted }}> → </span>
+                            <span style={{ color: moved ? C.series5 : C.series4 }}>{got.toFixed(isAlpha ? 2 : 4)}</span>
+                            {isAlpha && <span style={{ color: C.inkMuted }}>°</span>}
+                          </span>
+                        </div>
+                        <input type="range"
+                          min={isAlpha ? 5 : -lim} max={isAlpha ? 85 : lim} step={isAlpha ? 0.25 : 0.002}
+                          value={val}
+                          onChange={(e) => {
+                            const q = pReq.slice();
+                            q[i] = isAlpha ? parseFloat(e.target.value) * D2R : parseFloat(e.target.value);
+                            setRequest(q);
+                          }}
+                          style={{ width: "100%", accentColor: moved ? C.series5 : C.series7, margin: 0 }} />
+                        {l.kind === "bow" && (
+                          <div style={{ fontSize: 9, color: C.inkMuted, lineHeight: 1.3 }}>
+                            {ORDER_HINT[Math.min(cfg.orders.indexOf(l.order), 2)]}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 6, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={runOptimiser} disabled={running}
+                style={{ ...btn(true, C.series1), fontSize: 11, padding: "6px 14px", opacity: running ? 0.5 : 1 }}>
+                {running ? "Optimising…" : "Maximise min f₁"}
+              </button>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                {[["aspect", wAspect, setWAspect], ["twist", wTwist, setWTwist], ["correction", wCorrection, setWCorrection]].map(([l, v, set]) => (
+                  <label key={l} style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 4, alignItems: "center" }}>
+                    w<sub>{l}</sub>
+                    <input type="number" value={v} min={0} max={5} step={0.1} onChange={(e) => set(parseFloat(e.target.value) || 0)}
+                      style={{ ...sInput, width: 56, padding: "3px 5px", fontSize: 11 }} />
+                  </label>
+                ))}
+                <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 4, alignItems: "center" }}>
+                  evals
+                  <input type="number" value={maxEval} min={40} max={2000} step={20} onChange={(e) => setMaxEval(parseInt(e.target.value) || 160)}
+                    style={{ ...sInput, width: 64, padding: "3px 5px", fontSize: 11 }} />
+                </label>
+              </div>
+              <div style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted, marginLeft: "auto", textAlign: "right", lineHeight: 1.5 }}>
+                <div>objective J = {fmt(obj.J, 3)} · softmin f₁ {fmt(obj.soft, 2)} kHz</div>
+                <div>aspect {fmt(obj.aspectPenalty, 3)} · twist {fmt(obj.twistPenalty, 3)} · correction {fmt(obj.correctionPenalty, 3)}</div>
+                {optState && <div style={{ color: C.series4 }}>{optState.evals} evaluations in {(optState.ms / 1000).toFixed(1)} s</div>}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 8, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+              <span><span style={{ color: C.inkMuted }}>status </span>
+                <span style={{ color: solve.converged ? C.series4 : C.series5 }}>
+                  {solve.converged
+                    ? "equal-area solution found"
+                    : `infeasible — showing ${fmt((solve.reachedFraction || 0) * 100, 0)}% of the request`}
+                </span></span>
+              <span><span style={{ color: C.inkMuted }}>area residual </span>{solve.residual.toExponential(2)}</span>
+              <span><span style={{ color: C.inkMuted }}>correction ‖p−p_req‖_W </span>
+                <span style={{ color: solve.correction > 0.2 ? C.series1 : C.ink }}>{fmt(solve.correction, 4)}</span></span>
+              <span><span style={{ color: C.inkMuted }}>closest line spacing </span>
+                <span style={{ color: solve.monotone && solve.monotone.gap < 0.02 ? C.series5 : C.ink }}>
+                  {solve.monotone
+                    ? (solve.monotone.gap < 1e-3 ? solve.monotone.gap.toExponential(2) : solve.monotone.gap.toFixed(4))
+                    : "—"}</span></span>
+            </div>
+
+            <div style={{ marginTop: 8, fontSize: 10, color: C.inkMuted, lineHeight: 1.5 }}>
+              A slider states what you want; the solver returns the <em>nearest</em> parameter vector that still has equal areas, and both numbers
+              are shown above — request on the left, achieved on the right, in red when they differ. Positions are weighted cheap so they move
+              freely; bows are weighted expensive so the shape you asked for survives wherever the constraint leaves room. Unlike free nodes,
+              whole-line curvature <strong style={{ color: C.inkDim }}>cannot always reach equal area</strong>: when it cannot, the tool says so and names
+              the binding constraint rather than returning a converged-looking but distorted grid.
+            </div>
+          </>
         )}
-        <div style={{ marginTop: 8, fontSize: 10, color: C.inkMuted, lineHeight: 1.5 }}>
-          Every cell area is preserved for <em>any</em> ψ: a planar deformation preserves area exactly when its velocity is divergence-free,
-          and every divergence-free planar field is the skew gradient of a stream function. The (1−r²)² factor makes ψ and ∇ψ vanish on the rim,
-          so the outline and the rim division points are held fixed. Measured drift before correction:{" "}
-          <span style={{ color: layout.drift == null || layout.drift < 0.01 ? C.series4 : C.series5, fontFamily: C.mono }}>
-            {layout.drift == null ? "—" : `${layout.drift.toExponential(2)}%`}
-          </span> on geometric area
-          {!bulge && layout.drift != null && <> — large because <strong style={{ color: C.inkDim }}>per-edge curvature is off</strong>: a straight
-            segment has no control point to carry the flowed shape, so the correction pass is doing the work rather than checking it. Turn curvature on
-            to see the property itself</>}
-          {layout.driftOpen != null && <> · <span style={{ fontFamily: C.mono }}>{layout.driftOpen.toExponential(2)}%</span> on open area, which legitimately moves because the flow changes divider lengths, and is corrected by one Newton pass</>}.
-        </div>
       </div>
 
       {/* THROAT + MOUTH */}
@@ -798,12 +876,20 @@ export default function HGridThroat() {
         <Metric label="Cells N" value={`${throat.N}`} sub={family === "hgrid" ? `${nc} × ${nr}` : family === "ogrid" ? rings.join(" + ") : `${bm}² + 4·${bm}·${bp}`} />
         <Metric label="Open area / cell" value={`${fmt(throat.openMean, 2)} mm²`} sub={`gross ${fmt(throat.areaMean, 2)} mm²`} />
         <Metric label="Open-area spread" value={throat.spread < 1e-6 ? `${throat.spread.toExponential(1)}%` : `${fmt(throat.spread, 3)}%`}
-          sub={throat.spread < 1e-6 ? "solver tolerance" : "did not converge"} color={throat.spread < 1e-6 ? C.series4 : C.series5} />
+          sub={throat.spread < 1e-6 ? "achieved, not assumed" : "no equal-area solution"} color={throat.spread < 1e-6 ? C.series4 : C.series5} />
         <Metric label="f₁ min" value={`${fmt(throat.f1min / 1000, 2)} kHz`} sub={`cell ${throat.f1minCell.label} · ${throat.f1minCell.f1model}`} color={C.series4} />
         <Metric label="Isodiametric ceiling" value={`${fmt(throat.f1ceiling / 1000, 2)} kHz`} sub={`c·√N/(2D) · ${fmt((1 - throat.f1min / throat.f1ceiling) * 100, 0)}% left on the table`} />
         <Metric label="Undivided exit" value={`${fmt(throat.fUndividedAz / 1000, 2)} kHz`} sub={`radial mode ${fmt(throat.fUndividedRad / 1000, 2)} kHz`} color={C.inkDim} />
         <Metric label="Gain vs undivided" value={`${fmt(throat.f1min / throat.fUndividedAz, 2)}×`} sub={`ceiling is ${fmt(throat.f1ceiling / throat.fUndividedAz, 2)}×`} />
         <Metric label="Worst aspect" value={fmt(throat.aspectMax, 2)} sub="equal area forbids all-square cells" />
+        {family === "hgrid" && <>
+          <Metric label="Free parameters" value={`${cfg.nParams}`}
+            sub={`${cfg.nLon + cfg.nLat} line shapes × (position + ${cfg.orders.length}) + α`} />
+          <Metric label="Spare freedom" value={`${cfg.spare}`}
+            sub={`${cfg.nConstraints} independent constraints`} color={cfg.spare > 0 ? C.ink : C.series5} />
+          <Metric label="Slider correction" value={fmt(solve.correction, 4)}
+            sub="‖p − p_requested‖_W" color={solve.correction > 0.2 ? C.series1 : C.ink} />
+        </>}
         <Metric label="Divider blockage" value={`${fmt(throat.blockage * 100, 1)}%`} sub={`${fmt(throat.dividerTotal, 0)} mm of centreline at ${fmt(thickness, 2)} mm`} color={throat.blockage > 0.12 ? C.series1 : C.ink} />
         <Metric label="Shell oversize" value={`⌀ ${fmt(fab.dShell, 2)} mm`} sub={`+${fmt(fab.oversize, 2)} mm on ⌀${fmt(exitDia, 1)} to give the area back`} />
         <Metric label="Non-convex cells" value={`${throat.nonConvex}`} sub="Payne–Weinberger does not apply to these" color={throat.nonConvex ? C.series1 : C.ink} />
@@ -882,10 +968,18 @@ export default function HGridThroat() {
 
       {/* NOTES */}
       <div style={{ fontSize: 10, color: C.inkMuted, lineHeight: 1.6, padding: "0 4px", fontFamily: C.sans }}>
-        <strong style={{ color: C.inkDim }}>Why the grid lines have to bend individually</strong> · A fixed square-to-disc map with adjustable u and v
-        division values offers (n_cols−1)+(n_rows−1) knobs against n_cols·n_rows−1 area constraints. For 6×3 that is 7 knobs for 17 constraints and it is
-        not solvable in general. So the grid is stored as free nodes plus per-edge shape — {G.dofCount(layout.mesh)} DOF against {G.constraintCount(layout.mesh)} constraints
-        here, leaving {G.dofCount(layout.mesh) - G.constraintCount(layout.mesh)} of residual freedom for the curvature knobs and the optimiser to spend.
+        <strong style={{ color: C.inkDim }}>Why lines, and why they bend individually</strong> · A fixed square-to-disc map with adjustable u and v
+        division values offers (n_cols−1)+(n_rows−1) knobs against n_cols·n_rows−1 area constraints — for 6×3 that is a tensor-product grid with
+        4 parameters against 5 independent constraints, and it is <em>not solvable</em>. The tool will tell you so if you ask for it. Each line therefore
+        carries its own Chebyshev coefficients, which is far more freedom than two division vectors and far less than free nodes:
+        {" "}{family === "hgrid" ? `${cfg.nParams} free parameters against ${cfg.nConstraints} constraints here, leaving ${cfg.spare} spare` : "a handful of parameters rather than hundreds"}.
+        Only even orders appear under mirror symmetry — odd orders break it — and T₀ is a constant already absorbed into the line position.
+        <br />
+        <strong style={{ color: C.inkDim }}>Whole-line curvature can genuinely run out</strong> · Free nodes could always reach equal area. A line has to
+        stay one curve, so an equal-area grid may not exist for a given corner angle and bow request, and the honest answer is to say which constraint is
+        binding rather than to return a converged-looking distorted grid. Feasibility tightens as m falls, as α moves away from the equal-arc default, and
+        as the mouth aspect ratio departs from the grid aspect ratio. Non-crossing is checked on 64 samples in parameter space, which is enough: Φ is a
+        diffeomorphism, so lines that keep their order in the square keep it in the disc.
         <br />
         <strong style={{ color: C.inkDim }}>Singular vertices are not a layout failure</strong> · Mapping a rectangular index onto a disc must produce
         vertices where the number of cells meeting is not four. The H-grid puts its four on the rim, exactly where the cells are already most distorted;
@@ -898,8 +992,14 @@ export default function HGridThroat() {
         <br />
         <strong style={{ color: C.inkDim }}>Shape distortion is mandatory here</strong> · An equal-area map cannot also be conformal unless it is a rigid
         motion, so the residual aspect ratios are the price of the area constraint and not a solver deficiency. The conformal seed shows the best shapes
-        available — locally square cells, with the wrong areas; the equal-area solve then buys correct areas by spending exactly that squareness. Displacement
-        from the seed is a reported penalty precisely so the optimiser cannot wander into contorted-but-technically-valid geometry.
+        available — locally square cells, with the wrong areas; the equal-area solve then buys correct areas by spending exactly that squareness. Curvature is
+        applied in <em>parameter</em> space and pushed through the seed map, so the seed still governs cell shape quality: the same bow coefficients give
+        better-shaped cells on the conformal seed than on the elliptical one.
+        <br />
+        <strong style={{ color: C.inkDim }}>What the truncation costs</strong> · Line shapes stop at order 2m, so shapes needing finer structure are simply
+        unreachable. Raising m widens the feasible set and shrinks the correction the solver has to apply to your request — but it also adds parameters the
+        optimiser has to search. The area solve itself is exact to quadrature tolerance; the spread readout above is the ground truth, not an assumption of
+        equality.
         <br />
         <strong style={{ color: C.inkDim }}>What the first-mode number is, and is not</strong> · For a curved quadrilateral, f₁ ≈ c/(2·max(L_long, L_short))
         with each L the mean of an opposing pair of edge arc lengths. That is a flat-rectangle approximation whose error is O((L/r_curv)²) <em>with the sign not

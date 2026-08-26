@@ -220,3 +220,16 @@ Report findings rather than silently patching things that were not asked about.
 - **An equal-area H-grid does not beat a comparable O-grid on f₁_min.** 6×3 at
   ~14.9 kHz against 1+6+12 at 22.4 kHz. The H-grid earns its place through the
   mouth mapping, not through the throat number.
+- **The line-parameter solve needs the request walked up to it.** A cold
+  Gauss-Newton step from an ambitious slider setting drives straight into the
+  non-crossing boundary and jams, so `solveEqualArea` falls back to approaching
+  the request from the nominal grid in steps. Before that fallback existed, m=2
+  reported a bow of 0.25 infeasible while m=1 solved it — more shape freedom
+  failing where less succeeded, which is always the solver and never the
+  geometry. If a layout ever comes back infeasible, check that first.
+- **Two things must never be tested on the residual alone.** The Schwarz–
+  Christoffel inversion converges on its STEP, because its residual has a
+  quadrature floor; and the equal-area solve converges on the residual AND the
+  remaining move toward the request, because any feasible point stays feasible
+  when the request moves — testing feasibility alone silently ignored the new
+  slider on every warm start.

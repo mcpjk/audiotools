@@ -15,6 +15,10 @@
 // open area whose connectivity is a rectangular (i,j) grid, so that each
 // throat cell can be lofted to one cell of a rectangular mouth grid.
 //
+// Note "open" area: a cell loses t/2 along every edge it shares with a divider,
+// and that is what the solve equalises once the walls have thickness. The
+// GEOMETRIC areas still sum to pi R^2 exactly whatever the parameters are.
+//
 // Three topologies, all reduced to the same cell record so everything
 // downstream is family-agnostic:
 //
@@ -26,28 +30,45 @@
 // a rectangular index onto a disc cannot avoid them — this is a fact about the
 // disc, not a layout failure.
 //
-// ── WHY NOT A TENSOR-PRODUCT GRID ──────────────────────────────────────────
+// ── GRID LINES ARE THE PRIMITIVE ───────────────────────────────────────────
 // A fixed square-to-disc map with adjustable u and v division values offers
-// (nc-1)+(nr-1) knobs against nc·nr-1 area constraints. For 6x3 that is 7
-// knobs for 17 constraints and is not solvable in general. Grid lines have to
-// bend individually, so the grid is stored as free nodes and per-edge shape,
-// not as two division vectors.
+// (nc-1)+(nr-1) knobs against nc·nr-1 area constraints. For 6x3 that is a
+// tensor-product grid with 4 free parameters against 5 independent constraints
+// and it is PROVABLY not equal-area — the tool reports that rather than
+// pretending otherwise. So each latitude and longitude line is one continuous
+// curve carrying its own low-order Chebyshev coefficients, defined in the
+// reference square and pushed through the seed map. A node is just where two
+// lines cross; an edge is just the piece of a line between two crossings.
 //
-// ── THE THREE STAGES ───────────────────────────────────────────────────────
-// 1. SEED      a square-to-disc map. Elliptical (closed form) or conformal
-//              (Schwarz-Christoffel, f'(z) = (1 - 2z^2 cos2a + z^4)^(-1/2)).
-//              Neither gives equal areas. That is expected.
-// 2. EQUALISE  damped Gauss-Newton on the node DOF against the area
-//              residuals, with a Tikhonov pull back toward the seed. Exact to
-//              solver tolerance; the achieved spread is always reported rather
-//              than asserted.
-// 3. EXPLORE   area-preserving flows. In 2D a deformation preserves area iff
-//              its velocity field is divergence-free, and every divergence-
-//              free planar field is the skew gradient of a stream function:
-//                  v = ( dpsi/dy , -dpsi/dx )
-//              so flowing every node and control point along such a field
-//              preserves EVERY cell area, for any psi. The curvature knobs
-//              therefore cannot break stage 2.
+// That is far more freedom than two division vectors and far less than free
+// nodes, which is the point: the parameters are legible, and there are ten of
+// them for a 6x3 rather than ninety.
+//
+// ── THE STAGES ─────────────────────────────────────────────────────────────
+// 1. SEED      a square-to-disc map, carrying the square's boundary onto the
+//              circle and its corners to the requested half-angle alpha.
+//              Elliptical (closed form) or conformal (Schwarz-Christoffel,
+//              f'(z) = (1 - 2z^2 cos2a + z^4)^(-1/2)). Neither gives equal
+//              areas. That is expected, and is what stage 2 is for.
+// 2. SOLVE     SLIDERS ARE REQUESTS, NOT SETTINGS:
+//                  minimise || p - p_requested ||^2_W
+//                  subject to area_residuals(p) = 0
+//              Requested and achieved are both reported for every parameter.
+//              Positions are weighted cheap so they move freely; bows are
+//              weighted expensive so the shape request survives wherever the
+//              constraint leaves room.
+// 3. FEASIBILITY  Unlike free nodes, whole-line curvature CANNOT always reach
+//              equal area. When it cannot, the tool says so, names the binding
+//              constraint, and shows how far along the request it did get —
+//              never a converged-looking but distorted grid.
+//
+// An area-preserving stream-function flow was the previous mechanism here, and
+// the fact it encodes is still true and worth knowing: in 2D a deformation
+// preserves area iff its velocity field is divergence-free, and every such
+// planar field is the skew gradient of a scalar stream function, v = (dpsi/dy,
+// -dpsi/dx). That is why flowing every node along one preserves every cell
+// area for ANY psi. With a fast solve on ten parameters it is no longer needed
+// to protect the area constraint, and it is not in the build.
 //
 // ── ASSUMPTIONS AND THE DIRECTION OF THEIR ERROR ───────────────────────────
 //  · The per-cell first mode is a flat-rectangle approximation to a curved
@@ -68,10 +89,17 @@
 //  · An equal-area map cannot also be conformal unless it is a rigid motion.
 //    The residual cell aspect ratios are the mandatory price of the area
 //    constraint, not a solver deficiency.
-//  · Stage 3 is exact in the continuum. Discretised, each edge is refitted
-//    from its flowed endpoints and flowed midpoint, so the drift is the
-//    difference between that quadratic and the true image curve. Measured,
-//    reported, and cleaned up by one Gauss-Newton correction.
+//  · Line shapes are truncated at Chebyshev order 2m, so shapes needing finer
+//    structure are simply unreachable. Raising m widens the feasible set and
+//    shrinks the correction applied to a request, at the cost of parameters
+//    the optimiser must search.
+//  · Curvature is applied in PARAMETER space and pushed through the seed map,
+//    so the seed still governs cell shape quality: the same bow coefficients
+//    give better-shaped cells on the conformal seed than on the elliptical one.
+//  · The area solve is exact to quadrature tolerance. The spread readout is the
+//    ground truth, never the assumption of equality — total area closes on
+//    pi R^2 by construction, but individual cells are equal only to the
+//    reported solver tolerance.
 //
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -465,7 +493,13 @@ export function polyDiameter(poly) {
 // adds 27 interior edges x 2 = 54, for 92. This count is the honest answer to
 // "how much curvature freedom is there", so the tool prints it.
 
-export function finalizeMesh(mesh, { bulge = false } = {}) {
+// The two comparison families are solved on node positions and ring radii only.
+// Per-edge control points are gone with the stream-function flow they existed to
+// carry: the H-grid gets its curvature from the line coefficients now, and an
+// O-grid ring divider is a cone of revolution, not a free curve. Edges keep a
+// `bulge` field, always zero, so one quadratic-Bezier code path still serves
+// both straight segments and anything a future family needs.
+export function finalizeMesh(mesh) {
   const dof = [];
   const ringNodes = new Map();
   mesh.nodes.forEach((n, i) => {
@@ -476,19 +510,12 @@ export function finalizeMesh(mesh, { bulge = false } = {}) {
       ringNodes.get(n.ringIdx).push(i);
     }
   });
-  const ringDof = [];
   [...ringNodes.keys()].sort((a, b) => a - b).forEach((k) => {
-    ringDof.push(dof.length);
     dof.push({ t: "ring", i: k, nodes: ringNodes.get(k) });
   });
   mesh.nInteriorEdges = 0;
-  mesh.edges.forEach((e, i) => {
-    if (e.arc) return;
-    mesh.nInteriorEdges++;
-    if (bulge) { dof.push({ t: "bx", i }); dof.push({ t: "by", i }); }
-  });
+  mesh.edges.forEach((e) => { if (!e.arc) mesh.nInteriorEdges++; });
   mesh.dof = dof;
-  mesh.bulgeOn = bulge;
 
   // which cells each node / edge touches, so a finite-difference column only
   // recomputes the cells that can actually move
@@ -629,22 +656,30 @@ const scQ = (z, cos2a) => {
 // variable turns that into a constant. Away from a prevertex it costs nothing.
 export function scMap(z, alpha, sub = 10) {
   const cos2a = Math.cos(2 * alpha);
-  let acc = [0, 0];
+  const zr = z[0], zi = z[1];
+  let ar = 0, ai = 0;
   for (let k = 0; k < sub; k++)
     for (let q = 0; q < 8; q++) {
       const sg = (k + GL8_X[q]) / sub;
-      const s = 1 - (1 - sg) * (1 - sg);
-      const w = (GL8_W[q] / sub) * 2 * (1 - sg);
-      const t = [z[0] * s, z[1] * s];
-      acc = cAdd(acc, cMul([w, 0], cDiv([1, 0], cSqrt(scQ(t, cos2a)))));
+      const om = 1 - sg;
+      const s = 1 - om * om;
+      const w = (GL8_W[q] / sub) * 2 * om;
+      const tr = zr * s, ti = zi * s;
+      const t2r = tr * tr - ti * ti, t2i = 2 * tr * ti;
+      const t4r = t2r * t2r - t2i * t2i, t4i = 2 * t2r * t2i;
+      const qr = 1 - 2 * cos2a * t2r + t4r;
+      const qi = -2 * cos2a * t2i + t4i;
+      // 1/sqrt(Q) = conj(sqrt(Q)) / |Q|, since |sqrt(Q)|^2 = |Q|
+      const mod = Math.hypot(qr, qi);
+      const sr = Math.sqrt((mod + qr) / 2);
+      const si = (qi < 0 ? -1 : 1) * Math.sqrt(Math.max((mod - qr) / 2, 0));
+      const iv = w / mod;
+      ar += iv * sr;
+      ai -= iv * si;
     }
-  return cMul(acc, z);
+  return [ar * zr - ai * zi, ar * zi + ai * zr];
 }
 
-// Rectangle half-width and half-height of that image. f(1) is real, f(i) is
-// imaginary; the aspect X/Y is fixed by alpha alone, which is exactly why the
-// conformally natural corner angle for a given mouth aspect is NOT the
-// equal-arc value.
 export function scRect(alpha) {
   return { X: scMap([1, 0], alpha)[0], Y: scMap([0, 1], alpha)[1] };
 }
@@ -662,178 +697,33 @@ export function scAlphaForAspect(aspect) {
 
 // Invert f by Newton. 1/f'(z) = sqrt(Q(z)) in closed form, so each step costs
 // one quadrature of f and nothing else.
-export function scInvert(w, alpha, guess) {
+export function scInvert(w, alpha, guess, sub = 10) {
   const cos2a = Math.cos(2 * alpha);
   let z = guess;
-  for (let it = 0; it < 40; it++) {
-    const d = cSub(scMap(z, alpha), w);
+  // Convergence is tested on the STEP, never on the residual. The residual has
+  // a quadrature floor it can never get under, so a residual test either runs
+  // every call to the iteration cap (if the tolerance is below the floor) or
+  // returns a different answer depending on how good the starting guess was
+  // (if it is above). Testing the step gives one fixed point, reached in a
+  // single iteration from an already-converged warm start.
+  for (let it = 0; it < 12; it++) {
+    const d = cSub(scMap(z, alpha, sub), w);
+    // Above the quadrature floor, so it is actually reachable — and an
+    // already-converged warm start returns its cached z untouched, which is
+    // what keeps repeated evaluations bit-identical.
     if (Math.hypot(d[0], d[1]) < 1e-12) break;
     const step = cMul(d, cSqrt(scQ(z, cos2a)));
     let nz = cSub(z, step);
-    const r = Math.hypot(nz[0], nz[1]);
-    if (r > 0.999999) nz = [(nz[0] / r) * 0.999999, (nz[1] / r) * 0.999999];
+    const rr = Math.hypot(nz[0], nz[1]);
+    if (rr > 0.999999) nz = [(nz[0] / rr) * 0.999999, (nz[1] / rr) * 0.999999];
+    const moved = Math.hypot(nz[0] - z[0], nz[1] - z[1]);
     z = nz;
+    if (moved < 1e-14) break;
   }
   return z;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FAMILY 1 — H-GRID
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// One (i,j) index over the whole disc. The four square corners land on the rim
-// and become the singular vertices, where three cells meet instead of four.
-//
-// CORNER PLACEMENT. Equal rim arc per cell edge gives
-//     alpha = 90 * n_rows / (n_rows + n_cols)
-// so 6x3 -> 30 deg and 6x6 -> 45 deg. That is a SEED, not a derivation: the
-// conformally natural corner angle is set by the Schwarz-Christoffel elliptic
-// modulus for the mouth's aspect ratio (scAlphaForAspect above) and is not in
-// general the equal-arc value. The optimiser is free to move it.
-
 export const equalArcAlphaDeg = (nc, nr) => (90 * nr) / (nr + nc);
-
-// Rim angle of boundary index (i,j), walking the square boundary
-// counterclockwise from the (nc,0) corner at -alpha.
-function hgridRimTheta(i, j, nc, nr, alpha) {
-  const spanX = Math.PI - 2 * alpha; // arc carried by the top and bottom edges
-  if (i === nc) return -alpha + (2 * alpha * j) / nr;
-  if (j === nr) return alpha + (spanX * (nc - i)) / nc;
-  if (i === 0) return Math.PI - alpha + (2 * alpha * (nr - j)) / nr;
-  return Math.PI + alpha + (spanX * i) / nc; // j === 0
-}
-
-export function buildHGrid({ R, nc, nr, alphaDeg, seed = "elliptical", bulge = false }) {
-  const alpha = alphaDeg * D2R;
-  const mesh = makeMesh(R);
-  mesh.family = "hgrid";
-  mesh.nc = nc; mesh.nr = nr; mesh.alphaDeg = alphaDeg; mesh.seedKind = seed;
-  const onRim = (i, j) => i === 0 || i === nc || j === 0 || j === nr;
-  const key = (i, j) => `n${i}_${j}`;
-
-  // ── interior seed positions ──
-  const P = [];
-  if (seed === "conformal") {
-    // Uniform grid in the conformal rectangle, pulled back to the disc. The
-    // cells start locally square — the best shapes available — and with the
-    // wrong areas, which is what stage 2 is for. Note the rim division comes
-    // from the map, not from the equal-arc rule.
-    const rect = scRect(alpha);
-    // Boundary points are found by BISECTION ON THE RIM ANGLE, not by the 2-D
-    // Newton: on |z| = 1 the map is monotone along each rim segment, so
-    // bisection cannot miss, whereas Newton walks off the disc near a
-    // prevertex — it was returning 20.8 deg for a corner that belongs at
-    // 18 deg. The four corners need no solve at all: they ARE the prevertices.
-    const rimSolve = (thA, thB, want, comp) => {
-      let lo = thA, hi = thB;
-      const val = (th) => scMap([Math.cos(th), Math.sin(th)], alpha)[comp];
-      const inc = val(thB) > val(thA);
-      for (let k = 0; k < 80; k++) {
-        const mid = 0.5 * (lo + hi);
-        if ((val(mid) < want) === inc) lo = mid; else hi = mid;
-      }
-      return 0.5 * (lo + hi);
-    };
-    const cTh = [-alpha, alpha, Math.PI - alpha, Math.PI + alpha, TAU - alpha];
-    for (let i = 0; i <= nc; i++) {
-      P.push([]);
-      for (let j = 0; j <= nr; j++) {
-        const u = -1 + (2 * i) / nc, v = -1 + (2 * j) / nr;
-        const w = [rect.X * u, rect.Y * v];
-        const corner = (i === 0 || i === nc) && (j === 0 || j === nr);
-        let z;
-        if (corner) {
-          const k = i === nc ? (j === 0 ? 0 : 1) : j === nr ? 2 : 3;
-          z = [Math.cos(cTh[k]), Math.sin(cTh[k])];
-        } else if (i === nc) z = polar(rimSolve(cTh[0], cTh[1], w[1], 1));
-        else if (j === nr) z = polar(rimSolve(cTh[1], cTh[2], w[0], 0));
-        else if (i === 0) z = polar(rimSolve(cTh[2], cTh[3], w[1], 1));
-        else if (j === 0) z = polar(rimSolve(cTh[3], cTh[4], w[0], 0));
-        else {
-          const g = ellipticalMap(u, v);
-          z = scInvert(w, alpha, [g[0] * 0.9, g[1] * 0.9]);
-        }
-        P[i].push([z[0] * R, z[1] * R]);
-      }
-    }
-  } else {
-    for (let i = 0; i <= nc; i++) {
-      P.push([]);
-      for (let j = 0; j <= nr; j++) {
-        const g = ellipticalMap(-1 + (2 * i) / nc, -1 + (2 * j) / nr);
-        P[i].push([g[0] * R, g[1] * R]);
-      }
-    }
-    // The elliptical map puts its corners at 45 degrees whatever alpha is, and
-    // divides the rim unevenly. Impose the wanted rim, then carry the boundary
-    // displacement inward with a transfinite (Coons) blend so the interior
-    // follows instead of shearing away from it.
-    const dsp = (i, j) => {
-      const th = hgridRimTheta(i, j, nc, nr, alpha);
-      return [R * Math.cos(th) - P[i][j][0], R * Math.sin(th) - P[i][j][1]];
-    };
-    const D = [];
-    for (let i = 0; i <= nc; i++) {
-      D.push([]);
-      for (let j = 0; j <= nr; j++) D[i].push(onRim(i, j) ? dsp(i, j) : null);
-    }
-    for (let i = 1; i < nc; i++)
-      for (let j = 1; j < nr; j++) {
-        const a = i / nc, b = j / nr;
-        const c1 = mul(D[0][j], 1 - a), c2 = mul(D[nc][j], a);
-        const c3 = mul(D[i][0], 1 - b), c4 = mul(D[i][nr], b);
-        const k1 = mul(D[0][0], (1 - a) * (1 - b)), k2 = mul(D[nc][0], a * (1 - b));
-        const k3 = mul(D[0][nr], (1 - a) * b), k4 = mul(D[nc][nr], a * b);
-        const d = sub(add(add(c1, c2), add(c3, c4)), add(add(k1, k2), add(k3, k4)));
-        P[i][j] = add(P[i][j], d);
-      }
-  }
-
-  // ── nodes ──
-  for (let i = 0; i <= nc; i++)
-    for (let j = 0; j <= nr; j++) {
-      if (onRim(i, j)) {
-        const th = seed === "conformal"
-          ? Math.atan2(P[i][j][1], P[i][j][0])
-          : hgridRimTheta(i, j, nc, nr, alpha);
-        addNode(mesh, key(i, j), { kind: "rim", th, gi: i, gj: j });
-      } else {
-        addNode(mesh, key(i, j), { kind: "free", x: P[i][j][0], y: P[i][j][1], gi: i, gj: j });
-      }
-    }
-
-  // ── edges ──
-  // u-edges run along i, v-edges along j. On the rim they become circular
-  // arcs; the stored sign records which way round the circle a->b goes.
-  const U = [], V = [];
-  for (let i = 0; i < nc; i++) {
-    U.push([]);
-    for (let j = 0; j <= nr; j++) {
-      const isRim = j === 0 || j === nr;
-      U[i].push(addEdge(mesh, key(i, j), key(i + 1, j),
-        isRim ? { arc: { r: R, sign: j === 0 ? 1 : -1 }, rim: true } : {}));
-    }
-  }
-  for (let i = 0; i <= nc; i++) {
-    V.push([]);
-    for (let j = 0; j < nr; j++) {
-      const isRim = i === 0 || i === nc;
-      V[i].push(addEdge(mesh, key(i, j), key(i, j + 1),
-        isRim ? { arc: { r: R, sign: i === nc ? 1 : -1 }, rim: true } : {}));
-    }
-  }
-
-  // ── cells, counterclockwise: +i, +j, -i, -j ──
-  const rev = (h) => ({ e: h.e, rev: !h.rev });
-  for (let i = 0; i < nc; i++)
-    for (let j = 0; j < nr; j++)
-      addCell(mesh, [[U[i][j]], [V[i + 1][j]], [rev(U[i][j + 1])], [rev(V[i][j])]],
-        { kind: "quad", i, j, label: `${i + 1},${j + 1}` });
-
-  mesh.singular = [key(0, 0), key(nc, 0), key(nc, nr), key(0, nr)].map((k) => mesh.nodeKey.get(k));
-  return finalizeMesh(mesh, { bulge });
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // FAMILY 2 — O-GRID
 // ═══════════════════════════════════════════════════════════════════════════
@@ -968,7 +858,7 @@ export function buildOGrid({ R, hubR = 0, rings, rotDeg = 0 }) {
 // Trades the H-grid's rim singularities — which sit right where the cells are
 // most distorted — for interior ones in a region that is already well behaved.
 
-export function buildButterfly({ R, m, p, alphaDeg = 45, coreFrac = 0.42, bulge = false }) {
+export function buildButterfly({ R, m, p, alphaDeg = 45, coreFrac = 0.42 }) {
   const alpha = alphaDeg * D2R;
   const mesh = makeMesh(R);
   mesh.family = "butterfly";
@@ -1046,7 +936,7 @@ export function buildButterfly({ R, m, p, alphaDeg = 45, coreFrac = 0.42, bulge 
     const [ci, cj] = f === 0 ? [m, 0] : f === 1 ? [m, m] : f === 2 ? [0, m] : [0, 0];
     return mesh.nodeKey.get(coreKey(ci, cj));
   });
-  return finalizeMesh(mesh, { bulge });
+  return finalizeMesh(mesh);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1236,169 +1126,6 @@ export function areaSpread(mesh, t = 0) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// STAGE 3 — AREA-PRESERVING STREAM-FUNCTION FLOW
-// ═══════════════════════════════════════════════════════════════════════════
-//
-//     psi(x,y) = (1 - r^2)^2 * g(x,y)          r^2 = (x^2 + y^2) / R^2
-//     v = ( dpsi/dy , -dpsi/dx )
-//
-// The (1-r^2)^2 factor makes psi and grad(psi) both vanish on the rim, so the
-// rim outline AND the rim division points are held fixed by construction —
-// only the interior moves. Divergence-free means every cell area is preserved
-// for ANY g, so no curvature knob can undo stage 2.
-//
-// SYMMETRY. Mirror symmetry about the horizontal axis needs psi odd in y;
-// about the vertical axis, odd in x. Requiring both restricts g to monomials
-// with both exponents odd, which roughly halves the search space and makes an
-// asymmetric result impossible.
-
-export function psiBasis(symmetry = "both", degree = 6) {
-  const out = [];
-  for (let a = 0; a <= degree; a++)
-    for (let b = 0; a + b <= degree; b++) {
-      if (symmetry === "both" && !(a % 2 === 1 && b % 2 === 1)) continue;
-      if (symmetry === "horizontal" && b % 2 !== 1) continue;
-      out.push([a, b]);
-    }
-  return out;
-}
-
-// The named sliders are directions in that coefficient space, not a separate
-// mechanism — which is what guarantees they cannot change a cell area either.
-export const KNOBS = {
-  row_bow: { terms: [[[1, 1], 1]], label: "row bow" },
-  radial_bias: { terms: [[[3, 1], 1], [[1, 3], 1]], label: "radial bias" },
-  col_splay: { terms: [[[3, 1], 1], [[1, 3], -1]], label: "column splay" },
-  swirl: { terms: [[[0, 0], 1]], label: "swirl", needs: "none" },
-};
-
-export function knobsToCoeffs(knobs, basis) {
-  const c = new Array(basis.length).fill(0);
-  const idx = new Map(basis.map(([a, b], i) => [`${a},${b}`, i]));
-  for (const [name, val] of Object.entries(knobs)) {
-    if (!val || !KNOBS[name]) continue;
-    for (const [[a, b], w] of KNOBS[name].terms) {
-      const i = idx.get(`${a},${b}`);
-      if (i !== undefined) c[i] += val * w;
-    }
-  }
-  return c;
-}
-
-// v at a point, in mm per unit time. Positions scale by R so a coefficient of
-// order 1 moves the interior by order R over the unit-time flow.
-export function psiVelocity(x, y, R, basis, coef) {
-  const xi = x / R, eta = y / R;
-  const rho2 = xi * xi + eta * eta;
-  const w = 1 - rho2;
-  const w2 = w * w;
-  let dxi = 0, deta = 0;
-  for (let k = 0; k < basis.length; k++) {
-    const c = coef[k];
-    if (!c) continue;
-    const [a, b] = basis[k];
-    const xa = Math.pow(xi, a), yb = Math.pow(eta, b);
-    const m = xa * yb;
-    dxi += c * (-4 * xi * w * m + (a ? w2 * a * Math.pow(xi, a - 1) * yb : 0));
-    deta += c * (-4 * eta * w * m + (b ? w2 * b * xa * Math.pow(eta, b - 1) : 0));
-  }
-  return [R * deta, -R * dxi];
-}
-
-function rk4(pt, R, basis, coef, steps, span = 1) {
-  const h = span / steps;
-  let p = pt;
-  for (let s = 0; s < steps; s++) {
-    const k1 = psiVelocity(p[0], p[1], R, basis, coef);
-    const k2 = psiVelocity(p[0] + (h / 2) * k1[0], p[1] + (h / 2) * k1[1], R, basis, coef);
-    const k3 = psiVelocity(p[0] + (h / 2) * k2[0], p[1] + (h / 2) * k2[1], R, basis, coef);
-    const k4 = psiVelocity(p[0] + h * k3[0], p[1] + h * k3[1], R, basis, coef);
-    p = [
-      p[0] + (h / 6) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]),
-      p[1] + (h / 6) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]),
-    ];
-  }
-  return p;
-}
-
-// Flow every node and every control point.
-//
-// The flow itself is exactly area-preserving — verified directly against a
-// dense polygon, to 1e-7%. The only inexact step is the EDGE SHAPE: the image
-// of a quadratic Bezier under a nonlinear flow is not a quadratic Bezier, so
-// it has to be refitted, and a naive refit leaks over 1% on the corner cells.
-//
-// Note that refitting through the flowed parametric midpoint cannot be
-// improved by flowing in stages: the refit puts that material point back at
-// t = 0.5, so a staged flow tracks the same three points and returns the
-// identical curve, bit for bit. The leak has to be closed a different way.
-//
-// So each edge is given the area integral of its TRUE image curve, obtained by
-// flowing a dense sample of the edge and Richardson-extrapolating the polygon
-// rule. The quadratic's own Green's-theorem integral is affine in the control
-// point, so one linear solve along the chord normal makes them agree. Every
-// interior edge is shared by exactly two cells with opposite orientation and
-// every rim arc is its own exact image, so matching each edge integral makes
-// every CELL area exact — which is what lets the curvature knobs be knobs
-// rather than another thing to re-solve.
-export const canFlow = (mesh) =>
-  mesh.bulgeOn || mesh.nodes.some((n) => n.kind === "free");
-
-export function flowMesh(mesh, basis, coef, steps = 24, ns = 16) {
-  if (!coef.some((v) => v) || !canFlow(mesh)) return;
-  const R = mesh.R;
-  const F = (p, n) => rk4(p, R, basis, coef, n);
-
-  // true image area integral of each interior edge, before anything moves
-  const NS = ns; // 2*NS+1 samples, Richardson over NS and 2*NS
-  const Itrue = mesh.edges.map((e, i) => {
-    // Only edges that CARRY a control point may be reshaped. Without this the
-    // flow bent the O-grid's radial dividers, which have no curvature DOF, and
-    // its two ring radii could not undo the damage — 52% area spread from a
-    // slider that is supposed to be exactly area-preserving.
-    if (e.arc || !mesh.bulgeOn) return null;
-    const P = edgeBez(mesh, i);
-    const pts = [];
-    for (let q = 0; q <= 2 * NS; q++) pts.push(F(bezAt(P, q / (2 * NS)), steps));
-    const polyInt = (stride) => {
-      let s = 0;
-      for (let q = 0; q + stride <= 2 * NS; q += stride) {
-        const a = pts[q], b = pts[q + stride];
-        s += a[0] * b[1] - b[0] * a[1];
-      }
-      return s / 2;
-    };
-    const coarse = polyInt(2), fine = polyInt(1);
-    return (4 * fine - coarse) / 3;
-  });
-
-  const mids = mesh.edges.map((e, i) => (e.arc ? null : bezAt(edgeBez(mesh, i), 0.5)));
-  mesh.nodes.forEach((n) => {
-    if (n.kind !== "free") return;
-    const p = F([n.x, n.y], steps);
-    n.x = p[0]; n.y = p[1];
-  });
-  invalidateAll(mesh);
-  if (!mesh.bulgeOn) return;
-  mesh.edges.forEach((e, i) => {
-    if (e.arc) return;
-    const M = F(mids[i], steps);
-    const P0 = nodeXY(mesh, e.a), P2 = nodeXY(mesh, e.b);
-    e.bulge = [2 * M[0] - P0[0] - P2[0], 2 * M[1] - P0[1] - P2[1]];
-    // dI/dP1 = (1/3)(dy, -dx) for the chord d = P2 - P0, so a shift of the
-    // control point along the chord normal moves the integral by |d|/3 per
-    // unit, and the residual closes in one step.
-    const dx = P2[0] - P0[0], dy = P2[1] - P0[1];
-    const L = Math.hypot(dx, dy);
-    if (L < 1e-12) return;
-    mesh.eValid[i] = 0;
-    const sNeed = (3 * (Itrue[i] - edgeAreaInt(mesh, i))) / L;
-    e.bulge = [e.bulge[0] + (sNeed * dy) / L, e.bulge[1] - (sNeed * dx) / L];
-    mesh.eValid[i] = 0;
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // PER-CELL ACOUSTICS
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -1459,8 +1186,11 @@ export function cellRecord(mesh, ci, opts = {}) {
 
   const convex = polyIsConvex(poly);
   const dia = polyDiameter(poly);
+  const m1 = midOfSide(mesh, ci, 1), m3 = midOfSide(mesh, ci, 3);
+  const dl = Math.hypot(m1[0] - m3[0], m1[1] - m3[1]);
   return {
     id: ci, label: cell.label, kind: cell.kind, i: cell.i, j: cell.j,
+    iDir: dl > 1e-9 ? [(m1[0] - m3[0]) / dl, (m1[1] - m3[1]) / dl] : [1, 0],
     block: cell.block, ring: cell.ring,
     poly, area, open, dividerLen,
     centroid: polyCentroid(poly),
@@ -1474,9 +1204,20 @@ export function cellRecord(mesh, ci, opts = {}) {
   };
 }
 
-export function analyseThroat(mesh, opts = {}) {
-  const { c = 343, t = 0, R = mesh.R } = opts;
-  const cells = mesh.cells.map((_, ci) => cellRecord(mesh, ci, { c, t }));
+// Every cell record from every representation lands here, and nothing below
+// this point knows whether the layout came from grid lines or from a mesh.
+export function meshCells(mesh, opts = {}) {
+  return mesh.cells.map((_, ci) => cellRecord(mesh, ci, opts));
+}
+
+export function meshDividerLength(mesh) {
+  let L = 0;
+  mesh.edges.forEach((e, i) => { if (!e.rim) L += edgeLength(mesh, i); });
+  return L;
+}
+
+export function analyseThroat(cells, opts = {}) {
+  const { c = 343, R, dividerTotal = 0 } = opts;
   const N = cells.length;
   const areas = cells.map((x) => x.area);
   const opens = cells.map((x) => x.open);
@@ -1484,27 +1225,23 @@ export function analyseThroat(mesh, opts = {}) {
   const openTotal = opens.reduce((a, b) => a + b, 0);
   const gross = Math.PI * R * R;
 
-  // total divider centreline length in the throat plane — every interior edge
-  // once, not once per adjoining cell
-  let dividerTotal = 0;
-  mesh.edges.forEach((e, i) => { if (!e.rim) dividerTotal += edgeLength(mesh, i); });
-
   let f1min = Infinity, f1minCell = null;
   cells.forEach((x) => { if (x.f1 < f1min) { f1min = x.f1; f1minCell = x; } });
 
-  // isodiametric ceiling: cells would have to be circles, and circles do not tile
-  const dCeiling = (2 * R) / Math.sqrt(N);
+  const blockage = 1 - openTotal / gross;
   return {
     cells, N,
     areaMean: areas.reduce((a, b) => a + b, 0) / N,
+    areaTotal: areas.reduce((a, b) => a + b, 0),
     openMean, openTotal, gross,
     spread: ((Math.max(...opens) - Math.min(...opens)) / openMean) * 100,
+    areaSpread: ((Math.max(...areas) - Math.min(...areas)) / (areas.reduce((a, b) => a + b, 0) / N)) * 100,
     dividerTotal,
-    blockage: 1 - openTotal / gross,
-    shellOversize: 2 * R / Math.sqrt(Math.max(1 - (1 - openTotal / gross), 1e-6)),
+    blockage,
     f1min, f1minCell,
-    f1ceiling: (c * Math.sqrt(N)) / (2 * 2 * R * 1e-3), // c sqrt(N) / (2 D)
-    dCeiling,
+    // isodiametric ceiling: cells would have to be circles, and circles do not tile
+    f1ceiling: (c * Math.sqrt(N)) / (2 * 2 * R * 1e-3),
+    dCeiling: (2 * R) / Math.sqrt(N),
     diaMax: Math.max(...cells.map((x) => x.dia)),
     aspectMax: Math.max(...cells.map((x) => x.aspect)),
     fUndividedAz: (DISC_AZIMUTHAL * c) / (2 * R * 1e-3),
@@ -1591,14 +1328,17 @@ function rmfTransport(pts, tans, r0) {
   return out;
 }
 
-export function mapThroatToMouth(mesh, throat, opts) {
+export function mapThroatToMouth(throat, opts) {
   const {
     c = 343, mouthW = 200, mouthH = 100, apex = 120, depth = 150, flatten = 1,
     exitHalfAngle = 8, tight = 0.55, fTarget = 20000, dividerEndFrac = 0.35,
     stations = 24, wallWidthAt = 10, samples = 64, keepGeometry = false,
   } = opts;
-  if (mesh.family !== "hgrid") return null;
-  const nc = mesh.nc, nr = mesh.nr, R = mesh.R;
+  const { nc, nr, R, rectangular = true } = opts;
+  // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
+  // the H-grid has. An O-grid or butterfly throat has no such match — that is a
+  // property of its topology, not a gap in the tool.
+  if (!rectangular || !nc || !nr) return null;
   const surf = apertureSurface({ apex, depth, flatten });
   // virtual apex of the driver's own exit cone, which sets the launch direction
   const tanE = Math.tan(exitHalfAngle * D2R);
@@ -1653,10 +1393,7 @@ export function mapThroatToMouth(mesh, throat, opts) {
     for (let q = 0; q < M; q++) turn += 0.5 * (kappa[q] + kappa[q + 1]) * (sArr[q + 1] - sArr[q]);
 
     // twist: transport the cell's +i direction and compare with the mouth's +x
-    const iDirT = un3(v3(
-      cellRec.poly.length ? cellRec.sideLen[1] * 0 + 1 : 1, 0, 0));
-    const throatI = un3(s3(
-      v3(...midOfSide(mesh, cellRec.id, 1), 0), v3(...midOfSide(mesh, cellRec.id, 3), 0)));
+    const throatI = v3(cellRec.iDir[0], cellRec.iDir[1], 0);
     let r0 = un3(s3(throatI, m3(tans[0], dot3(throatI, tans[0]))));
     if (!(nrm3(r0) > 0.5)) r0 = un3(cr3(tans[0], v3(0, 0, 1)));
     const frames = rmfTransport(pts, tans, r0);
@@ -1780,8 +1517,10 @@ export function mapThroatToMouth(mesh, throat, opts) {
 }
 
 function midOfSide(mesh, ci, k) {
+  // A disc cell has a single side and a sector cell has empty ones, so this has
+  // to cope with the side simply not being there.
   const side = mesh.cells[ci].sides[k];
-  if (!side.length) return polyCentroid(cellPolygon(mesh, ci, 6));
+  if (!side || !side.length) return polyCentroid(cellPolygon(mesh, ci, 6));
   const { e, rev } = side[Math.floor(side.length / 2)];
   return edgePoint(mesh, e, rev ? 0.5 : 0.5);
 }
@@ -1840,141 +1579,52 @@ export function fabrication({ throat, t, R, c, f, process = "FDM", knifeEdge = 0
 // ═══════════════════════════════════════════════════════════════════════════
 // PIPELINE AND OPTIMISER
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// Objective: maximise the minimum cell first mode, max min f1. Because stage 3
-// satisfies the area constraint by construction, this is an UNCONSTRAINED
-// search over the stream-function coefficients plus the corner angle, which is
-// why a derivative-free method on 10-20 parameters is enough. The softmin
-//     -1/beta log sum exp(-beta f1_i)
-// smooths the min-max so the simplex is not walking on a kink.
-
-// Move every rim division point when the corner angle moves, by the piecewise
-// linear map that carries the four old corners onto the four new ones.
-export function remapAlpha(mesh, aOld, aNew) {
-  const co = [-aOld, aOld, Math.PI - aOld, Math.PI + aOld, TAU - aOld];
-  const cn = [-aNew, aNew, Math.PI - aNew, Math.PI + aNew, TAU - aNew];
-  mesh.nodes.forEach((n) => {
-    if (n.kind !== "rim") return;
-    let k = 0;
-    while (k < 3 && n.th > co[k + 1]) k++;
-    const u = (n.th - co[k]) / (co[k + 1] - co[k]);
-    n.th = cn[k] + u * (cn[k + 1] - cn[k]);
-  });
-  invalidateAll(mesh);
-  mesh.alphaDeg = (aNew * R2D);
-}
-
-// SEEDING, ROBUSTLY.
-//
-// The elliptical map puts its own corners at 45 degrees, so seeding it
-// straight at a small alpha shears the whole grid and the solve stalls — 8x3
-// at the equal-arc 24.5 deg used to end at 42% spread. Walking alpha down from
-// 45 in small steps, re-solving each time, keeps every step inside a good
-// basin.
-//
-// The conformal seed needs none of that — its corners ARE the prevertices — but
-// it has the opposite weakness: its cells start locally square, so on a grid
-// whose index aspect is far from the rectangle's own aspect they start VERY
-// unequal in area (300%+ on a 12x3), and no continuation rescues it. Seeding
-// it at its "conformally natural" alpha is worse still, not better. So when it
-// does not converge the tool falls back to the elliptical path and SAYS SO,
-// rather than quietly reporting a layout whose areas are not equal.
-function seedElliptical({ R, nc, nr, alphaDeg, bulge }, t, equalIters) {
-  const nat = 45;
-  if (Math.abs(alphaDeg - nat) < 8) {
-    const mesh = buildHGrid({ R, nc, nr, alphaDeg, seed: "elliptical", bulge });
-    return { mesh, eq: equaliseAreasStaged(mesh, { t, iters: equalIters }) };
-  }
-  const mesh = buildHGrid({ R, nc, nr, alphaDeg: nat, seed: "elliptical", bulge });
-  let eq = equaliseAreas(mesh, { t, iters: equalIters });
-  const steps = Math.max(2, Math.ceil(Math.abs(alphaDeg - nat) / 5));
-  for (let k = 1; k <= steps; k++) {
-    remapAlpha(mesh, (nat + ((alphaDeg - nat) * (k - 1)) / steps) * D2R,
-      (nat + ((alphaDeg - nat) * k) / steps) * D2R);
-    eq = equaliseAreas(mesh, { t, iters: Math.max(14, equalIters >> 1) });
-  }
-  if (eq.spread > 1e-7) eq = equaliseAreasStaged(mesh, { t, iters: equalIters });
-  mesh.alphaDeg = alphaDeg;
-  return { mesh, eq };
-}
-
-function seedHGridSolved(o, t, equalIters) {
-  const { R, nc, nr, alphaDeg, seed, bulge } = o;
-  if (seed !== "conformal") return seedElliptical(o, t, equalIters);
-  const mesh = buildHGrid({ R, nc, nr, alphaDeg, seed: "conformal", bulge });
-  const eq = equaliseAreasStaged(mesh, { t, iters: equalIters, stages: 6 });
-  if (eq.spread < 1e-7) return { mesh, eq };
-  const fb = seedElliptical(o, t, equalIters);
-  return {
-    ...fb, seedUsed: "elliptical",
-    fallback: `The conformal seed did not reach equal areas at ${alphaDeg.toFixed(1)}° (best ${eq.spread.toFixed(1)}% spread) — its cells start locally square, which on this index aspect makes them start very unequal in area. Fell back to the elliptical seed.`,
-  };
-}
+// PIPELINE
+// ═══════════════════════════════════════════════════════════════════════════
+// One call from the UI. The H-grid runs the line solve; the two comparison
+// families run the mesh solve. Both come back as the same throat record.
 
 export function buildLayout(o) {
   const {
-    family = "hgrid", R, nc = 6, nr = 3, alphaDeg, seed = "elliptical", bulge = true,
-    rings = [1, 6, 12], hubR = 0, rotDeg = 0, m: bm = 2, p: bp = 2, coreFrac = 0.42,
-    basis = null, coef = null, t = 0, c = 343,
-    equalIters = 40, flowSteps = 24, correct = true, quality = 1,
+    family = "hgrid", R, nc = 6, nr = 3, m = 2, symmetric = true,
+    params = null, seed: seedKind = "elliptical", seedObj = null, pStart = null,
+    rings = [1, 6, 12], hubR = 0, rotDeg = 0, bm = 2, bp = 2, coreFrac = 0.42,
+    alphaDeg = null, t = 0, c = 343, solveOpts = {},
   } = o;
 
-  let mesh, eq1, seedDOF, fallback = null;
-  if (family === "ogrid") {
-    mesh = buildOGrid({ R, hubR, rings, rotDeg });
-    seedDOF = getDOF(mesh);
-    eq1 = equaliseAreas(mesh, { t, iters: equalIters });
-  } else if (family === "butterfly") {
-    mesh = buildButterfly({ R, m: bm, p: bp, alphaDeg: alphaDeg ?? 45, coreFrac, bulge });
-    seedDOF = getDOF(mesh);
-    eq1 = equaliseAreasStaged(mesh, { t, iters: equalIters });
-  } else {
-    const a = alphaDeg ?? equalArcAlphaDeg(nc, nr);
-    const r = seedHGridSolved({ R, nc, nr, alphaDeg: a, seed, bulge }, t, equalIters);
-    mesh = r.mesh; eq1 = r.eq; fallback = r.fallback || null;
-    seedDOF = getDOF(mesh);
+  if (family === "hgrid") {
+    const cfg = lineGridConfig({ nc, nr, m, symmetric });
+    const pReq = params ? params.slice() : nominalParams(cfg);
+    if (alphaDeg != null) pReq[cfg.alphaAt] = alphaDeg * D2R;
+    const sol = solveEqualArea(cfg, pReq, { R, seedKind, seed: seedObj, pStart, t, ...solveOpts });
+    const cells = lineGridCells(sol.geometry, { c, t });
+    const throat = analyseThroat(cells, { c, R, dividerTotal: lineGridDividerLength(sol.geometry) });
+    return { family, cfg, solve: sol, geometry: sol.geometry, throat, seedObj: sol.seed, rectangular: true, nc, nr };
   }
-  let drift = null, driftOpen = null;
-  if (basis && coef && coef.some((v) => v) && mesh.dof.length) {
-    // The divergence-free property is a statement about GEOMETRIC area. Open
-    // area is geometric area minus t/2 per shared edge, and the flow does move
-    // edge lengths, so open area legitimately shifts and is corrected after.
-    const before = mesh.cells.map((_, i) => cellArea(mesh, i));
-    const beforeOpen = mesh.cells.map((_, i) => cellOpenArea(mesh, i, t));
-    flowMesh(mesh, basis, coef, flowSteps, quality >= 1 ? 16 : 6);
-    const after = mesh.cells.map((_, i) => cellArea(mesh, i));
-    const afterOpen = mesh.cells.map((_, i) => cellOpenArea(mesh, i, t));
-    drift = Math.max(...after.map((v, i) => Math.abs(v - before[i]) / before[i])) * 100;
-    driftOpen = Math.max(...afterOpen.map((v, i) => Math.abs(v - beforeOpen[i]) / beforeOpen[i])) * 100;
-    if (correct) equaliseAreas(mesh, { t, iters: Math.max(8, quality * 10), tikhonov: 0 });
-  }
-  const now = getDOF(mesh);
-  const scl = mesh.dof.map((d) => dofScale(mesh, d));
-  const disp = mesh.dof.length
-    ? Math.sqrt(now.reduce((s, v, k) => s + ((v - seedDOF[k]) / scl[k]) ** 2, 0) / mesh.dof.length)
-    : 0;
-  return { mesh, seedSpread: eq1.spread, driftPct: drift, driftOpenPct: driftOpen, seedDisp: disp, fallback };
+
+  const mesh = family === "ogrid"
+    ? buildOGrid({ R, hubR, rings, rotDeg })
+    : buildButterfly({ R, m: bm, p: bp, alphaDeg: alphaDeg ?? 45, coreFrac });
+  const eq = equaliseAreasStaged(mesh, { t, iters: 50 });
+  const cells = meshCells(mesh, { c, t });
+  const throat = analyseThroat(cells, { c, R, dividerTotal: meshDividerLength(mesh) });
+  return { family, mesh, solve: { converged: eq.spread < 1e-6, residual: eq.spread / 100, reason: null }, throat, rectangular: false };
 }
 
-// A deep copy, so the optimiser can flow the same equalised base hundreds of
-// times without paying for the base solve each round. `sides` and `dividerEdges`
-// are read-only index lists and are shared.
-export function cloneMesh(src) {
-  const m = {
-    ...src,
-    nodes: src.nodes.map((n) => ({ ...n })),
-    edges: src.edges.map((e) => ({ ...e, bulge: e.bulge.slice() })),
-    cells: src.cells.map((cl) => ({ ...cl })),
-    ringR: src.ringR ? src.ringR.slice() : undefined,
-    eA: Float64Array.from(src.eA),
-    eL: Float64Array.from(src.eL),
-    eValid: Uint8Array.from(src.eValid),
-  };
-  return m;
-}
-
-export function objective(mesh, throat, map, w) {
-  const { aspectTarget = 1.6, wAspect = 0.6, wTwist = 0.5, wSeed = 0.4, beta = 1.2, seedDisp = 0 } = w;
+// The objective is unchanged — maximise the minimum cell first mode — but the
+// search space is now the 7-13 line parameters, so Nelder-Mead is enough. Every
+// candidate goes through the equal-area solve first, so f1 is only ever
+// evaluated on a grid that already has equal areas.
+//
+// TWIST is now a reported diagnostic rather than a penalty by default: a
+// symmetric whole-line warp generates almost no swirl, so weighting it was
+// steering the search against a cost it was not really paying. The weight is
+// still exposed for anyone who wants it back.
+export function objective(throat, map, w = {}) {
+  const {
+    aspectTarget = 1.6, wAspect = 0.6, wTwist = 0, wCorrection = 0.5,
+    beta = 1.2, correction = 0, infeasible = false,
+  } = w;
   const f = throat.cells.map((x) => x.f1 / 1000);
   const fmin = Math.min(...f);
   const soft = fmin - (1 / beta) * Math.log(f.reduce((s, v) => s + Math.exp(-beta * (v - fmin)), 0));
@@ -1983,8 +1633,8 @@ export function objective(mesh, throat, map, w) {
   asp /= throat.cells.length;
   const twist = map ? map.twistMax / 10 : 0;
   return {
-    J: -soft + wAspect * asp + wTwist * twist + wSeed * 10 * seedDisp,
-    soft, fmin, aspectPenalty: asp, twistPenalty: twist, seedPenalty: seedDisp,
+    J: -soft + wAspect * asp + wTwist * twist + wCorrection * correction + (infeasible ? 50 : 0),
+    soft, fmin, aspectPenalty: asp, twistPenalty: twist, correctionPenalty: correction,
   };
 }
 
@@ -2036,4 +1686,1062 @@ export function nelderMead(fn, x0, opts = {}) {
     if (onStep) onStep(evals, fv[0], simplex[0]);
   }
   return { x: simplex[0], f: fv[0], evals };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GRID LINES AS THE PRIMITIVE
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Each latitude and longitude line is ONE continuous curve carrying its own
+// low-order shape parameters, defined in the reference square and pushed
+// through the seed map. Nodes and per-edge control points are gone: a node is
+// now just where two lines cross, and an edge is just the piece of a line
+// between two crossings.
+//
+// This is not a tensor-product grid. Each line carries independent
+// coefficients, so the composite has far more freedom than two division
+// vectors — and far less than free nodes, which is the point. The parameters
+// are legible:
+//
+//     u_i(v) = u0_i + SUM_k a_ik T_2k(v)        longitude line i
+//     v_j(u) = v0_j + SUM_k b_jk T_2k(u)        latitude line j
+//
+//     u0   where the line sits
+//     a_1  HOW MUCH the line bows        (the T_2 term)
+//     a_2  WHERE the bow concentrates    (the T_4 term) — mid-line vs rim
+//     a_3+ finer structure, rarely needed
+//
+// Only even Chebyshev orders appear under mirror symmetry: odd orders break
+// it, and T_0 is a constant already absorbed into u0. T_2k(±1) = 1 for every
+// k, so a bow moves the line's rim endpoints as well as its middle — that is
+// deliberate, and it is how the rim division adapts.
+//
+// WHAT THIS COST US. Free nodes could always reach equal area; whole-line
+// curvature cannot. The solve can genuinely have no solution, and §feasibility
+// below says so rather than returning a converged-looking distorted grid.
+
+// Gauss-Legendre on [0,1], built by Newton on the Legendre roots rather than
+// pasted in, so the order is a parameter and not a transcription risk.
+function gaussLegendre(n) {
+  const x = [], w = [];
+  for (let i = 0; i < n; i++) {
+    let t = Math.cos((Math.PI * (i + 0.75)) / (n + 0.5));
+    let dp = 1;
+    for (let it = 0; it < 100; it++) {
+      let p0 = 1, p1 = 0;
+      for (let j = 0; j < n; j++) { const p2 = p1; p1 = p0; p0 = ((2 * j + 1) * t * p1 - j * p2) / (j + 1); }
+      dp = (n * (t * p0 - p1)) / (t * t - 1);
+      const dt = -p0 / dp;
+      t += dt;
+      if (Math.abs(dt) < 1e-15) break;
+    }
+    x.push((1 - t) / 2);
+    w.push(1 / ((1 - t * t) * dp * dp));
+  }
+  return { x, w };
+}
+const GL_CACHE = new Map();
+const glRule = (n) => {
+  if (!GL_CACHE.has(n)) GL_CACHE.set(n, gaussLegendre(n));
+  return GL_CACHE.get(n);
+};
+const GL32 = glRule(32);
+
+// Chebyshev of the first kind and its derivative, T'_n = n U_(n-1).
+export function chebT(n, x) {
+  if (n === 0) return 1;
+  let a = 1, b = x;
+  for (let k = 2; k <= n; k++) { const c = 2 * x * b - a; a = b; b = c; }
+  return n === 1 ? x : b;
+}
+export function chebTd(n, x) {
+  if (n === 0) return 0;
+  // U_(n-1) by its own recurrence
+  let a = 1, b = 2 * x;
+  if (n === 1) return 1;
+  if (n === 2) return 2 * (2 * x);
+  for (let k = 2; k <= n - 1; k++) { const c = 2 * x * b - a; a = b; b = c; }
+  return n * b;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEED MAPS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A seed map Phi carries the reference square onto the disc. It must:
+//   · send the square's boundary onto the circle, so line endpoints land on
+//     the rim with nothing to enforce;
+//   · put the square's four corners at the requested half-angle alpha, which
+//     is where the topological singularities end up.
+//
+// Both maps expose the same three things: the point, its Jacobian, and — for
+// boundary points only — an UNWRAPPED rim angle running monotonically from
+// -alpha at the (u=1, v=-1) corner all the way round to 2pi-alpha. That angle
+// is what makes rim edges exact: a rim edge's area contribution is R^2 dtheta / 2
+// with no quadrature at all, so the sum over all cells closes on pi R^2 to
+// machine precision no matter how the interior is evaluated.
+
+const SIDE = { R: 0, T: 1, L: 2, B: 3 };
+
+function sideOf(u, v) {
+  const e = 1e-12;
+  if (u >= 1 - e) return SIDE.R;
+  if (v >= 1 - e) return SIDE.T;
+  if (u <= -1 + e) return SIDE.L;
+  if (v <= -1 + e) return SIDE.B;
+  return -1;
+}
+
+// ── elliptical grid map, with the corners moved to ±alpha ──────────────────
+// The closed-form map puts its own corners at 45 degrees whatever alpha is, so
+// the boundary displacement needed to honour alpha is carried inward by a
+// transfinite (Coons) blend. Cheap, and a diffeomorphism over the alpha range
+// the UI allows.
+function ellipticalSeed(R, alpha0) {
+  let alpha = alpha0, spanX = Math.PI - 2 * alpha;
+  const rimTheta = (side, t) => {
+    if (side === SIDE.R) return alpha * t;                       // t = v, -1..1
+    if (side === SIDE.T) return alpha + (spanX * (1 - t)) / 2;   // t = u,  1..-1
+    if (side === SIDE.L) return Math.PI - alpha * t;             // t = v,  1..-1
+    return Math.PI + alpha + (spanX * (1 + t)) / 2;              // t = u, -1..1
+  };
+  const bnd = (side, t) => {
+    const th = rimTheta(side, t);
+    return [R * Math.cos(th), R * Math.sin(th)];
+  };
+  const base = (u, v) => [R * u * Math.sqrt(1 - (v * v) / 2), R * v * Math.sqrt(1 - (u * u) / 2)];
+  const baseJac = (u, v) => {
+    const su = Math.sqrt(1 - (u * u) / 2), sv = Math.sqrt(1 - (v * v) / 2);
+    return [[R * sv, (-R * u * v) / (2 * sv)], [(-R * u * v) / (2 * su), R * su]];
+  };
+  // d(theta)/dt along each side, from the rim parameterisation above
+  const thd = (side) => (side === SIDE.R ? alpha : side === SIDE.T ? -spanX / 2
+    : side === SIDE.L ? -alpha : spanX / 2);
+  // derivative of the boundary displacement along its own side
+  const dispD = (side, t) => {
+    const th = rimTheta(side, t), k = thd(side);
+    const bd = [-R * k * Math.sin(th), R * k * Math.cos(th)];
+    const J = side === SIDE.R ? baseJac(1, t) : side === SIDE.T ? baseJac(t, 1)
+      : side === SIDE.L ? baseJac(-1, t) : baseJac(t, -1);
+    // along R/L the free coordinate is v, along T/B it is u
+    const col = side === SIDE.R || side === SIDE.L ? 1 : 0;
+    return [bd[0] - J[0][col], bd[1] - J[1][col]];
+  };
+  const disp = (side, t) => {
+    const p = side === SIDE.R ? base(1, t) : side === SIDE.T ? base(t, 1)
+      : side === SIDE.L ? base(-1, t) : base(t, -1);
+    const q = bnd(side, t);
+    return [q[0] - p[0], q[1] - p[1]];
+  };
+  // the four corner displacements are constants of alpha, not of (u,v)
+  let K00 = disp(SIDE.B, -1), K10 = disp(SIDE.B, 1);
+  let K01 = disp(SIDE.T, -1), K11 = disp(SIDE.T, 1);
+  const map = (u, v) => {
+    const p = base(u, v);
+    const a = (u + 1) / 2, b = (v + 1) / 2;
+    const dL = disp(SIDE.L, v), dR = disp(SIDE.R, v);
+    const dB = disp(SIDE.B, u), dT = disp(SIDE.T, u);
+    return [
+      p[0] + (1 - a) * dL[0] + a * dR[0] + (1 - b) * dB[0] + b * dT[0]
+        - ((1 - a) * (1 - b) * K00[0] + a * (1 - b) * K10[0] + (1 - a) * b * K01[0] + a * b * K11[0]),
+      p[1] + (1 - a) * dL[1] + a * dR[1] + (1 - b) * dB[1] + b * dT[1]
+        - ((1 - a) * (1 - b) * K00[1] + a * (1 - b) * K10[1] + (1 - a) * b * K01[1] + a * b * K11[1]),
+    ];
+  };
+  // Analytic, not a central difference. A difference quotient is accurate
+  // enough for the areas themselves but is NOT sign-symmetric, so mirrored
+  // cells came out equal only to 1e-10 — and mirrored cells being equal to the
+  // last bit is a property this parameterisation is supposed to guarantee.
+  const jac = (u, v) => {
+    const a = (u + 1) / 2, b = (v + 1) / 2;
+    const B = baseJac(u, v);
+    const dL = disp(SIDE.L, v), dR = disp(SIDE.R, v);
+    const dB = disp(SIDE.B, u), dT = disp(SIDE.T, u);
+    const dLv = dispD(SIDE.L, v), dRv = dispD(SIDE.R, v);
+    const dBu = dispD(SIDE.B, u), dTu = dispD(SIDE.T, u);
+    const out = [[0, 0], [0, 0]];
+    for (let c = 0; c < 2; c++) {
+      const bl_u = -0.5 * (1 - b) * K00[c] + 0.5 * (1 - b) * K10[c]
+        - 0.5 * b * K01[c] + 0.5 * b * K11[c];
+      const bl_v = -0.5 * (1 - a) * K00[c] - 0.5 * a * K10[c]
+        + 0.5 * (1 - a) * K01[c] + 0.5 * a * K11[c];
+      out[c][0] = B[c][0] + 0.5 * (dR[c] - dL[c]) + (1 - b) * dBu[c] + b * dTu[c] - bl_u;
+      out[c][1] = B[c][1] + (1 - a) * dLv[c] + a * dRv[c] + 0.5 * (dT[c] - dB[c]) - bl_v;
+    }
+    return out;
+  };
+  const self = {
+    kind: "elliptical", R, map, rimTheta, jac,
+    get alpha() { return alpha; },
+    // alpha is a SOLVE parameter, so the seed has to move with it rather than
+    // being rebuilt — rebuilding would throw away the conformal seed's warm
+    // start on every iteration
+    setAlpha(a) {
+      if (a === alpha) return;
+      alpha = a; spanX = Math.PI - 2 * alpha;
+      K00 = disp(SIDE.B, -1); K10 = disp(SIDE.B, 1);
+      K01 = disp(SIDE.T, -1); K11 = disp(SIDE.T, 1);
+    },
+    mapJac: (u, v) => ({ P: map(u, v), J: jac(u, v) }),
+  };
+  return self;
+}
+
+// ── conformal (Schwarz-Christoffel) ────────────────────────────────────────
+// Angle-preserving, so cells start locally square — the best shapes available,
+// with the wrong areas, which is what the solve is for. Its corners ARE the
+// prevertices, so it honours any alpha exactly with nothing to blend.
+//
+// Two things make it affordable inside a solver loop. The inverse map is
+// holomorphic with dz/dw = sqrt(Q(z)) in closed form, so the Jacobian is one
+// extra square root rather than another inversion. And consecutive quadrature
+// points along an edge are close together, so each Newton solve warm-starts
+// from the last and converges in a step or two.
+function conformalSeed(R, alpha0) {
+  let alpha = alpha0;
+  let rect = scRect(alpha);
+  let cos2a = Math.cos(2 * alpha);
+  let cTh = [-alpha, alpha, Math.PI - alpha, Math.PI + alpha, TAU - alpha];
+  // Rim angle for a boundary point. Bracket by bisection — the map is monotone
+  // along each side, so bisection cannot miss, unlike the 2-D Newton, which
+  // walks off the disc near a prevertex — then finish with Newton, which has
+  // the derivative in closed form:
+  //     d/dtheta f(e^{i theta}) = i z / sqrt(Q(z))
+  // Sixty bisection steps was the single largest cost in the whole solve; this
+  // reaches the same answer in about a fifth of the map evaluations.
+  const rimTheta = (side, t) => {
+    // Solve only on the positive branch and reflect. f has real coefficients
+    // and Q is even, so f(-z) = -f(z) and f(conj z) = conj f(z); mirrored rim
+    // points therefore have EXACTLY mirrored angles rather than angles that
+    // agree to whatever the iteration happened to converge to. Without this the
+    // mirrored cell areas only matched to 2e-11, and mirrored cells matching
+    // exactly is a property this parameterisation is meant to guarantee.
+    if (t < 0) {
+      const th = rimTheta(side, -t);
+      if (side === SIDE.R) return -th;
+      if (side === SIDE.T) return Math.PI - th;
+      if (side === SIDE.L) return TAU - th;
+      return 3 * Math.PI - th;
+    }
+    const seg = side === SIDE.R ? [cTh[0], cTh[1]] : side === SIDE.T ? [cTh[1], cTh[2]]
+      : side === SIDE.L ? [cTh[2], cTh[3]] : [cTh[3], cTh[4]];
+    // The four corners ARE the prevertices and need no solve. This is not just
+    // a saving: the rim contributions telescope to the corner angles alone, so
+    // area closure on pi R^2 depends on these being exact and on nothing else.
+    if (t >= 1 - 1e-12) return side === SIDE.T || side === SIDE.L ? seg[0] : seg[1];
+    if (t <= -1 + 1e-12) return side === SIDE.T || side === SIDE.L ? seg[1] : seg[0];
+    const comp = side === SIDE.R || side === SIDE.L ? 1 : 0;
+    const want = comp === 1 ? rect.Y * t : rect.X * t;
+    const val = (th) => scMap([Math.cos(th), Math.sin(th)], alpha)[comp];
+    let lo = seg[0], hi = seg[1];
+    const inc = val(hi) > val(lo);
+    for (let k = 0; k < 12; k++) {
+      const mid = 0.5 * (lo + hi);
+      if ((val(mid) < want) === inc) lo = mid; else hi = mid;
+    }
+    // SAFEGUARDED Newton: a proposal outside the bracket becomes a bisection
+    // step rather than an exit. Bailing out instead left the answer at only the
+    // bisection's own accuracy — about 6e-5 rad, which is 1e-2 mm² on a rim
+    // edge, which is FAR above the equal-area solver's finite-difference step.
+    // The Jacobian it computed from that was noise, and a 4x2 grid on the
+    // conformal seed simply would not solve.
+    let th = 0.5 * (lo + hi);
+    for (let k = 0; k < 40; k++) {
+      const z = [Math.cos(th), Math.sin(th)];
+      const f = scMap(z, alpha)[comp] - want;
+      if ((f < 0) === inc) lo = th; else hi = th;
+      const q = cSqrt(scQ(z, cos2a));
+      const d = cDiv([-z[1], z[0]], q)[comp];
+      let nt = Math.abs(d) > 1e-14 ? th - f / d : 0.5 * (lo + hi);
+      if (!(nt > lo && nt < hi)) nt = 0.5 * (lo + hi);
+      const moved = Math.abs(nt - th);
+      th = nt;
+      if (moved < 1e-15 || hi - lo < 1e-15) break;
+    }
+    return th;
+  };
+  // The quadrature only needs sub = 4 here: the endpoint substitution in scMap
+  // exists for the inverse-square-root singularity AT a prevertex, and interior
+  // points never sit on one. Measured worst case over the disc is 2.5e-12,
+  // against 17.75 mm of radius.
+  const SUB = 4;
+  const warm = new Map();
+  const invert = (u, v, key) => {
+    // Same reflection trick as rimTheta, for the same reason: z -> -conj(z)
+    // mirrors u, z -> conj(z) mirrors v, both exactly.
+    if (u < 0 || v < 0) {
+      const z = invert(Math.abs(u), Math.abs(v), key);
+      const zv = v < 0 ? [z[0], -z[1]] : z;
+      return u < 0 ? [-zv[0], zv[1]] : zv;
+    }
+    const w = [rect.X * u, rect.Y * v];
+    let g = null;
+    const prev = key == null ? null : warm.get(key);
+    if (prev) {
+      // Between solver iterations a quadrature point barely moves, so step the
+      // previous answer forward with dz/dw = sqrt(Q) and Newton lands in one.
+      const dw = [rect.X * (u - prev.u), rect.Y * (v - prev.v)];
+      const step = cMul(cSqrt(scQ(prev.z, cos2a)), dw);
+      g = [prev.z[0] + step[0], prev.z[1] + step[1]];
+      const r = Math.hypot(g[0], g[1]);
+      if (!(r < 0.9999999)) g = [(g[0] / r) * 0.9999999, (g[1] / r) * 0.9999999];
+    } else { const e = ellipticalMap(u, v); g = [e[0] * 0.9, e[1] * 0.9]; }
+    const z = scInvert(w, alpha, g, SUB);
+    if (key != null) warm.set(key, { u, v, z });
+    return z;
+  };
+  const map = (u, v, key) => {
+    const s = sideOf(u, v);
+    if (s >= 0) {
+      const th = rimTheta(s, s === SIDE.R || s === SIDE.L ? v : u);
+      return [R * Math.cos(th), R * Math.sin(th)];
+    }
+    const z = invert(u, v, key);
+    return [R * z[0], R * z[1]];
+  };
+  const jacFromZ = (z) => {
+    // the inverse map is holomorphic with dz/dw = sqrt(Q(z)); dw/du = X and
+    // dw/dv = iY, so one square root replaces a second inversion
+    const q = cSqrt(scQ(z, cos2a));
+    const du = cMul([rect.X, 0], q);
+    const dv = cMul([0, rect.Y], q);
+    return [[R * du[0], R * dv[0]], [R * du[1], R * dv[1]]];
+  };
+  // One entry point returning both, so a quadrature point is inverted ONCE.
+  // Asking map() and jac() separately doubled the Newton solves for nothing.
+  const mapJac = (u, v, key) => {
+    const s = sideOf(u, v);
+    if (s >= 0) {
+      const P = map(u, v, key);
+      return { P, J: jacFromZ([P[0] / R, P[1] / R]) };
+    }
+    const z = invert(u, v, key);
+    return { P: [R * z[0], R * z[1]], J: jacFromZ(z) };
+  };
+  return {
+    kind: "conformal", R, map, rimTheta, mapJac,
+    get alpha() { return alpha; },
+    get rect() { return rect; },
+    jac: (u, v, key) => mapJac(u, v, key).J,
+    resetWarm: () => warm.clear(),
+    // The warm cache is deliberately KEPT across an alpha change: alpha moves
+    // by very little per solver step, so the previous inverse is still a good
+    // starting point and Newton lands in one iteration.
+    setAlpha(a) {
+      if (a === alpha) return;
+      alpha = a;
+      rect = scRect(alpha);
+      cos2a = Math.cos(2 * alpha);
+      cTh = [-alpha, alpha, Math.PI - alpha, Math.PI + alpha, TAU - alpha];
+    },
+  };
+}
+
+export function makeSeed(kind, R, alpha) {
+  return kind === "conformal" ? conformalSeed(R, alpha) : ellipticalSeed(R, alpha);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LINE GRID — configuration, parameters, geometry
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Under both mirrors, longitude line i pairs with nc-i and a line at the
+// centre is forced to u == 0; likewise for latitude. So the independent shapes
+// are floor((nc-1)/2) and floor((nr-1)/2) — three of them for a 6x3 grid.
+export function lineGridConfig({ nc, nr, m = 2, symmetric = true }) {
+  const orders = [];
+  if (symmetric) for (let k = 1; k <= m; k++) orders.push(2 * k);
+  else for (let k = 1; k <= 2 * m; k++) orders.push(k);
+  const nLon = symmetric ? Math.floor((nc - 1) / 2) : nc - 1;
+  const nLat = symmetric ? Math.floor((nr - 1) / 2) : nr - 1;
+  const per = 1 + orders.length;
+  const nClasses = symmetric ? Math.ceil(nc / 2) * Math.ceil(nr / 2) : nc * nr;
+  return {
+    nc, nr, m, symmetric, orders, nLon, nLat, per,
+    nParams: (nLon + nLat) * per + 1,
+    nClasses,
+    nConstraints: Math.max(nClasses - 1, 0),
+    spare: (nLon + nLat) * per + 1 - Math.max(nClasses - 1, 0),
+    lonAt: 0, latAt: nLon * per, alphaAt: (nLon + nLat) * per,
+  };
+}
+
+// which shape, and with which sign, a given line index reads
+function lonRef(cfg, i) {
+  const { nc, symmetric } = cfg;
+  if (i === 0) return { fixed: -1 };
+  if (i === nc) return { fixed: 1 };
+  if (!symmetric) return { shape: i - 1, sign: 1 };
+  if (2 * i === nc) return { fixed: 0 };
+  return 2 * i < nc ? { shape: i - 1, sign: 1 } : { shape: nc - i - 1, sign: -1 };
+}
+function latRef(cfg, j) {
+  const { nr, symmetric } = cfg;
+  if (j === 0) return { fixed: -1 };
+  if (j === nr) return { fixed: 1 };
+  if (!symmetric) return { shape: j - 1, sign: 1 };
+  if (2 * j === nr) return { fixed: 0 };
+  return 2 * j < nr ? { shape: j - 1, sign: 1 } : { shape: nr - j - 1, sign: -1 };
+}
+
+export function nominalParams(cfg) {
+  const p = new Array(cfg.nParams).fill(0);
+  for (let s = 0; s < cfg.nLon; s++) p[cfg.lonAt + s * cfg.per] = -1 + (2 * (s + 1)) / cfg.nc;
+  for (let s = 0; s < cfg.nLat; s++) p[cfg.latAt + s * cfg.per] = -1 + (2 * (s + 1)) / cfg.nr;
+  p[cfg.alphaAt] = equalArcAlphaDeg(cfg.nc, cfg.nr) * D2R;
+  return p;
+}
+
+// A readable name for every parameter, because the UI has to show requested
+// against achieved for each one and "p[4]" is not an answer.
+export function paramLabels(cfg) {
+  const out = [];
+  const bow = (k) => `bow T${cfg.orders[k]}`;
+  for (let s = 0; s < cfg.nLon; s++) {
+    out.push({ group: `longitude ${s + 1}`, name: "position", kind: "pos", u: true });
+    cfg.orders.forEach((o, k) => out.push({ group: `longitude ${s + 1}`, name: bow(k), kind: "bow", order: o }));
+  }
+  for (let s = 0; s < cfg.nLat; s++) {
+    out.push({ group: `latitude ${s + 1}`, name: "position", kind: "pos", u: false });
+    cfg.orders.forEach((o, k) => out.push({ group: `latitude ${s + 1}`, name: bow(k), kind: "bow", order: o }));
+  }
+  out.push({ group: "seed map", name: "corner half-angle α", kind: "alpha" });
+  return out;
+}
+
+// the diagonal of the norm the solve minimises. Positions are cheap to move so
+// the solver spends them first; a bow is the user's actual shape request and is
+// held expensive, so it is preserved wherever the constraint leaves room.
+export const paramWeights = (cfg) =>
+  paramLabels(cfg).map((l) => (l.kind === "pos" ? 0.12 : l.kind === "alpha" ? 0.6 : 1));
+
+const ALPHA_MIN = 5 * D2R, ALPHA_MAX = 85 * D2R;
+
+// ── the lines themselves ───────────────────────────────────────────────────
+function lineVal(cfg, p, ref, base, t) {
+  if (ref.fixed !== undefined) return ref.fixed;
+  const o = base + ref.shape * cfg.per;
+  let s = p[o];
+  for (let k = 0; k < cfg.orders.length; k++) s += p[o + 1 + k] * chebT(cfg.orders[k], t);
+  return ref.sign * s;
+}
+function lineSlope(cfg, p, ref, base, t) {
+  if (ref.fixed !== undefined) return 0;
+  const o = base + ref.shape * cfg.per;
+  let s = 0;
+  for (let k = 0; k < cfg.orders.length; k++) s += p[o + 1 + k] * chebTd(cfg.orders[k], t);
+  return ref.sign * s;
+}
+
+// `gl` is the quadrature order for the interior edges. It is 32 everywhere the
+// numbers are reported — the spec's figure, and far more than the integrand
+// needs — and dropped for the OPTIMISER's inner evaluations only, where a few
+// hundred solves are being ranked against each other and the winner is then
+// re-solved at full order before anything is shown or exported.
+export function lineGrid(cfg, p, seed, tWall = 0, gl = 32) {
+  const { nc, nr } = cfg;
+  const GL = glRule(gl);
+  const U = (i, v) => lineVal(cfg, p, lonRef(cfg, i), cfg.lonAt, v);
+  const Ud = (i, v) => lineSlope(cfg, p, lonRef(cfg, i), cfg.lonAt, v);
+  const V = (j, u) => lineVal(cfg, p, latRef(cfg, j), cfg.latAt, u);
+  const Vd = (j, u) => lineSlope(cfg, p, latRef(cfg, j), cfg.latAt, u);
+
+  // A corner is just where two lines cross. Newton on
+  //   u - u_i(v) = 0,  v - v_j(u) = 0
+  // converges in a handful of steps while the lines are not near-tangent, and
+  // near-tangency is exactly what the monotonicity guard rules out.
+  const corners = [];
+  for (let i = 0; i <= nc; i++) {
+    corners.push([]);
+    for (let j = 0; j <= nr; j++) {
+      const ri = lonRef(cfg, i), rj = latRef(cfg, j);
+      const bi = i === 0 ? -1 : i === nc ? 1 : null;
+      const bj = j === 0 ? -1 : j === nr ? 1 : null;
+      if (bi !== null && bj !== null) { corners[i].push([bi, bj]); continue; }
+      if (bi !== null) { corners[i].push([bi, V(j, bi)]); continue; }
+      if (bj !== null) { corners[i].push([U(i, bj), bj]); continue; }
+      let u = U(i, 0), v = V(j, 0);
+      for (let it = 0; it < 40; it++) {
+        const f1 = u - U(i, v), f2 = v - V(j, u);
+        const a = -Ud(i, v), b = -Vd(j, u);
+        const det = 1 - a * b;
+        if (Math.abs(det) < 1e-14) break;
+        // solve [[1,a],[b,1]] d = -[f1,f2]
+        const d0 = (-f1 * 1 - a * -f2) / det;
+        const d1 = (1 * -f2 - b * -f1) / det;
+        u += d0; v += d1;
+        if (Math.abs(d0) + Math.abs(d1) < 1e-15) break;
+      }
+      corners[i].push([u, v]);
+    }
+  }
+
+  // ── edge integrals ───────────────────────────────────────────────────────
+  // A rim edge is exact: its area contribution is R² dθ / 2 with no quadrature
+  // at all. That is what makes the total close on πR² to machine precision for
+  // ANY parameter vector — every interior edge is traversed twice with
+  // opposite sign and cancels identically, so only the rim survives, and the
+  // rim telescopes to a full turn.
+  const R = seed.R;
+  const rimEdge = (side, tA, tB) => {
+    const thA = seed.rimTheta(side, tA), thB = seed.rimTheta(side, tB);
+    const dth = thB - thA;
+    return { area: 0.5 * R * R * dth, len: R * Math.abs(dth), rim: true, side, tA, tB, thA, thB };
+  };
+  const curveEdge = (along, idx, tA, tB, key) => {
+    // along "u": latitude line idx, u runs tA->tB.  along "v": longitude line.
+    const dt = tB - tA;
+    let A = 0, L = 0;
+    for (let q = 0; q < gl; q++) {
+      const s = GL.x[q], w = GL.w[q];
+      const t = tA + s * dt;
+      let u, v, du, dv;
+      if (along === "u") { u = t; v = V(idx, t); du = dt; dv = Vd(idx, t) * dt; }
+      else { v = t; u = U(idx, t); dv = dt; du = Ud(idx, t) * dt; }
+      const k = key == null ? null : `${key}_${q}`;
+      const { P, J } = seed.mapJac(u, v, k);
+      const dx = J[0][0] * du + J[0][1] * dv;
+      const dy = J[1][0] * du + J[1][1] * dv;
+      A += w * (P[0] * dy - P[1] * dx);
+      L += w * Math.hypot(dx, dy);
+    }
+    return { area: 0.5 * A, len: L, rim: false, along, idx, tA, tB };
+  };
+
+  const latE = [], lonE = [];
+  for (let i = 0; i < nc; i++) {
+    latE.push([]);
+    for (let j = 0; j <= nr; j++) {
+      const uA = corners[i][j][0], uB = corners[i + 1][j][0];
+      latE[i].push(j === 0 ? rimEdge(SIDE.B, uA, uB)
+        : j === nr ? rimEdge(SIDE.T, uA, uB)
+        : curveEdge("u", j, uA, uB, `lat${i}_${j}`));
+    }
+  }
+  for (let i = 0; i <= nc; i++) {
+    lonE.push([]);
+    for (let j = 0; j < nr; j++) {
+      const vA = corners[i][j][1], vB = corners[i][j + 1][1];
+      lonE[i].push(i === 0 ? rimEdge(SIDE.L, vA, vB)
+        : i === nc ? rimEdge(SIDE.R, vA, vB)
+        : curveEdge("v", i, vA, vB, `lon${i}_${j}`));
+    }
+  }
+
+  const areas = [], opens = [], cells = [];
+  for (let i = 0; i < nc; i++)
+    for (let j = 0; j < nr; j++) {
+      const A = latE[i][j].area + lonE[i + 1][j].area - latE[i][j + 1].area - lonE[i][j].area;
+      // Open area is what the air sees: the cell loses t/2 along every edge it
+      // shares with a divider. That is what the equal-area solve is asked to
+      // equalise once the walls have thickness, exactly as the O-grid does.
+      let dl = 0;
+      for (const e of [latE[i][j], lonE[i + 1][j], latE[i][j + 1], lonE[i][j]]) if (!e.rim) dl += e.len;
+      areas.push(A);
+      opens.push(A - (tWall / 2) * dl);
+      cells.push({ i, j, area: A, dividerLen: dl, open: A - (tWall / 2) * dl });
+    }
+  return { cfg, p, seed, U, Ud, V, Vd, corners, latE, lonE, areas, opens, cells, R, tWall };
+}
+
+// ── monotonicity ───────────────────────────────────────────────────────────
+// Whole-line curvature cannot always reach equal area, and the way it fails is
+// by trying to push one line through another. Phi is a diffeomorphism, so
+// checking the order in PARAMETER space is enough to guarantee non-crossing in
+// the disc.
+export function monotonicity(cfg, p, samples = 64) {
+  const U = (i, v) => lineVal(cfg, p, lonRef(cfg, i), cfg.lonAt, v);
+  const V = (j, u) => lineVal(cfg, p, latRef(cfg, j), cfg.latAt, u);
+  let worst = Infinity, where = null;
+  for (let q = 0; q <= samples; q++) {
+    const t = -1 + (2 * q) / samples;
+    for (let i = 0; i < cfg.nc; i++) {
+      const g = U(i + 1, t) - U(i, t);
+      if (g < worst) { worst = g; where = { kind: "longitude", between: [i, i + 1], at: t }; }
+    }
+    for (let j = 0; j < cfg.nr; j++) {
+      const g = V(j + 1, t) - V(j, t);
+      if (g < worst) { worst = g; where = { kind: "latitude", between: [j, j + 1], at: t }; }
+    }
+  }
+  return { gap: worst, ok: worst > 1e-9, where };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EQUAL-AREA SOLVE — sliders are requests, not settings
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//     minimise    || p - p_requested ||²_W
+//     subject to  area_residuals(p) = 0
+//
+// The user asks for a shape; the solver returns the NEAREST shape that has
+// equal areas. W weights positions low so they move freely and bows high so
+// the actual shape request survives wherever the constraint leaves room. Both
+// the request and what was achieved are reported for every parameter — a
+// slider the user set is never silently moved.
+//
+// Solved as an equality-constrained QP per step (Lagrange-Newton / SQP):
+//     W(d0 + delta) + Jᵀ lambda = 0,   J delta = -g
+//   → lambda = (J W⁻¹ Jᵀ)⁻¹ (g - J d0),  delta = -d0 - W⁻¹ Jᵀ lambda
+// with d0 = p - p_requested. The system is 5x5 for a 6x3 grid; nothing here
+// needs a real NLP package.
+
+// One residual per distinct cell class, minus one: the areas sum to pi R^2
+// identically, so the last class is implied by the others.
+function classIndex(cfg) {
+  const seen = new Map(), reps = [];
+  for (let i = 0; i < cfg.nc; i++)
+    for (let j = 0; j < cfg.nr; j++) {
+      const key = cfg.symmetric
+        ? `${Math.min(i, cfg.nc - 1 - i)},${Math.min(j, cfg.nr - 1 - j)}`
+        : `${i},${j}`;
+      if (!seen.has(key)) { seen.set(key, reps.length); reps.push({ i, j, key, n: 0 }); }
+      reps[seen.get(key)].n++;
+    }
+  return reps;
+}
+
+const clampAlpha = (a) => Math.min(ALPHA_MAX, Math.max(ALPHA_MIN, a));
+
+export function solveEqualArea(cfg, pRequested, opts = {}) {
+  const {
+    R, seedKind = "elliptical", seed: seedIn = null, pStart = null, t: tWall = 0,
+    maxIter = 80, tol = 1e-12, refreshEvery = 8, maxGeom = 900, weights = null,
+    continuation = true, continuationSteps = 5, gl = 32,
+  } = opts;
+  const W = weights || paramWeights(cfg);
+  const reps = classIndex(cfg);
+  const nCon = Math.max(reps.length - 1, 0);
+  const nP = cfg.nParams;
+  const Abar = (Math.PI * R * R) / (cfg.nc * cfg.nr);
+  const seed = seedIn || makeSeed(seedKind, R, clampAlpha(pRequested[cfg.alphaAt]));
+
+  const pReq = pRequested.slice();
+  pReq[cfg.alphaAt] = clampAlpha(pReq[cfg.alphaAt]);
+
+  let geomCalls = 0;
+  const geometry = (p) => {
+    geomCalls++;
+    seed.setAlpha(clampAlpha(p[cfg.alphaAt]));
+    return lineGrid(cfg, p, seed, tWall, gl);
+  };
+  const residuals = (p, g) => {
+    const G = g || geometry(p);
+    // when the walls have thickness the target is the running mean of the OPEN
+    // areas, which moves with the divider lengths; with t = 0 it is exactly
+    // pi R^2 / N and the residual is exact
+    const mean = tWall
+      ? G.opens.reduce((a, b) => a + b, 0) / G.opens.length
+      : Abar;
+    const r = new Array(nCon);
+    for (let k = 0; k < nCon; k++) {
+      const rep = reps[k];
+      const cell = G.cells[rep.i * cfg.nr + rep.j];
+      r[k] = (tWall ? cell.open : cell.area) / mean - 1;
+    }
+    return r;
+  };
+  const normInf = (r) => r.reduce((a, b) => Math.max(a, Math.abs(b)), 0);
+  const norm1 = (r) => r.reduce((a, b) => a + Math.abs(b), 0);
+
+  // A slider can be dragged straight past the point where two lines would
+  // cross. Starting the solve there means every trial step is rejected by the
+  // monotonicity guard and the answer comes back "infeasible" without a single
+  // step having been tried. So the START point is pulled back along the line
+  // from the nominal grid until it is monotone, while the TARGET stays the
+  // request the user actually made — the solve then lands on the nearest
+  // monotone equal-area grid, which is the honest answer to an over-request.
+  const reqMono = monotonicity(cfg, pReq);
+  // The optimiser moves the request in small steps, so it hands back the
+  // previous solution to start from: three iterations instead of ten.
+  let p = pStart && monotonicity(cfg, pStart).ok ? pStart.slice() : pReq.slice();
+  if (!monotonicity(cfg, p).ok) {
+    const nom = nominalParams(cfg);
+    nom[cfg.alphaAt] = pReq[cfg.alphaAt];
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2;
+      const q = nom.map((v, i) => v + mid * (pReq[i] - v));
+      if (monotonicity(cfg, q).ok) lo = mid; else hi = mid;
+    }
+    p = nom.map((v, i) => v + lo * 0.9 * (pReq[i] - v));
+  }
+  let G = geometry(p);
+  let r = residuals(p, G);
+
+  if (nCon === 0) return finish(true, "trivial");
+
+  const jacobian = (p0, r0) => {
+    const J = [];
+    for (let k = 0; k < nCon; k++) J.push(new Array(nP).fill(0));
+    for (let q = 0; q < nP; q++) {
+      const h = 1e-6 * (q === cfg.alphaAt ? 1 : 1);
+      const pp = p0.slice();
+      pp[q] += h;
+      const rr = residuals(pp);
+      for (let k = 0; k < nCon; k++) J[k][q] = (rr[k] - r0[k]) / h;
+    }
+    return J;
+  };
+
+  let J = jacobian(p, r);
+  let it = 0, mu = 1, sinceJ = 0;
+  const wnorm2 = (d) => d.reduce((a, v, k) => a + W[k] * v * v, 0);
+  const objOf = (q) => 0.5 * wnorm2(q.map((v, k) => v - pReq[k]));
+
+  // The best EQUAL-AREA point seen, kept separately. Without it the search can
+  // walk off the feasible manifold chasing the request, hit the non-crossing
+  // boundary and never get back — which reported layouts as infeasible even
+  // when the solve had already stood on a perfectly good answer, and even when
+  // it was handed one as its starting point.
+  let best = null;
+  const remember = () => {
+    if (normInf(r) >= 1e-9) return;
+    const o = objOf(p);
+    if (!best || o < best.obj) best = { p: p.slice(), r: r.slice(), G, obj: o };
+  };
+
+  // Shrink a step to the last point that keeps every pair of lines apart, so
+  // the iterate can slide ALONG the boundary instead of being pinned against it.
+  const clampStep = (t, delta) => {
+    const at = (tt) => {
+      const q = p.map((v, kk) => v + tt * delta[kk]);
+      q[cfg.alphaAt] = clampAlpha(q[cfg.alphaAt]);
+      return q;
+    };
+    // A step may approach the non-crossing boundary but never consume the whole
+    // gap: it has to leave a quarter of what it started with. Clamping merely to
+    // "still monotone" let the very first Gauss-Newton step land 1e-9 from a
+    // crossing, after which every later step was rejected and a layout that a
+    // slow walk reaches comfortably came back as infeasible.
+    const margin = Math.max(0.25 * monotonicity(cfg, p).gap, 1e-7);
+    const okAt = (q) => monotonicity(cfg, q).gap >= margin;
+    let pt = at(t);
+    if (okAt(pt)) return pt;
+    let lo = 0, hi = t;
+    for (let k = 0; k < 30; k++) {
+      const mid = (lo + hi) / 2;
+      if (okAt(at(mid))) lo = mid; else hi = mid;
+    }
+    if (lo < 1e-9) return null;
+    pt = at(lo);
+    return monotonicity(cfg, pt).ok ? pt : null;
+  };
+
+  const broyden = (pt, rt) => {
+    const dp = pt.map((v, k) => v - p[k]);
+    const dpp = dp.reduce((a, v) => a + v * v, 0);
+    if (dpp <= 1e-24) return;
+    for (let a2 = 0; a2 < nCon; a2++) {
+      let jd = 0;
+      for (let q = 0; q < nP; q++) jd += J[a2][q] * dp[q];
+      const cf = (rt[a2] - r[a2] - jd) / dpp;
+      for (let q = 0; q < nP; q++) J[a2][q] += cf * dp[q];
+    }
+  };
+
+  // Normal-equation solve shared by both phases:
+  //   lambda = (J W⁻¹ Jᵀ)⁻¹ rhs
+  const solveLambda = (rhs) => {
+    const A = [];
+    for (let a2 = 0; a2 < nCon; a2++) {
+      A.push(new Array(nCon).fill(0));
+      for (let cc = 0; cc < nCon; cc++) {
+        let sum = 0;
+        for (let q = 0; q < nP; q++) sum += (J[a2][q] * J[cc][q]) / W[q];
+        A[a2][cc] = sum;
+      }
+      A[a2][a2] += 1e-13;
+    }
+    return solveDense(A, rhs);
+  };
+
+  // RESTORATION: pure minimum-norm Gauss-Newton back onto the equal-area
+  // manifold, with the objective ignored entirely. There is nothing for the
+  // step to fight, so it converges where the full SQP stalls. Used both as the
+  // opening phase and after every tangential step below.
+  const restore = (budget) => {
+    for (let k = 0; k < budget && it < maxIter; k++, it++) {
+      if (normInf(r) < tol) return true;
+      if (sinceJ >= refreshEvery) { J = jacobian(p, r); sinceJ = 0; }
+      const lam = solveLambda(r.slice());
+      if (!lam) { if (sinceJ === 0) return false; J = jacobian(p, r); sinceJ = 0; continue; }
+      const delta = new Array(nP);
+      for (let q = 0; q < nP; q++) {
+        let jt = 0;
+        for (let a2 = 0; a2 < nCon; a2++) jt += J[a2][q] * lam[a2];
+        delta[q] = -jt / W[q];
+      }
+      let stepped = false;
+      for (let t = 1; t > 1 / 256; t *= 0.5) {
+        const pt = clampStep(t, delta);
+        if (!pt) continue;
+        const Gt = geometry(pt);
+        const rt = residuals(pt, Gt);
+        if (!rt.every((v) => isFinite(v)) || norm1(rt) >= norm1(r)) continue;
+        broyden(pt, rt);
+        p = pt; r = rt; G = Gt; stepped = true; sinceJ++;
+        break;
+      }
+      if (!stepped) {
+        if (sinceJ === 0) return normInf(r) < tol;
+        J = jacobian(p, r); sinceJ = 0;
+      }
+      if (geomCalls > maxGeom) break;
+    }
+    return normInf(r) < tol;
+  };
+
+  restore(maxIter);
+  remember();
+
+  // ── PHASE 2: move toward the request along the manifold. Full SQP with an
+  // exact L1 penalty; judging a step on the residual alone made the two halves
+  // of the step fight each other.
+  const phase2 = Math.min(maxIter, it + maxIter);
+  for (; it < phase2; it++) {
+    if (sinceJ >= refreshEvery) { J = jacobian(p, r); sinceJ = 0; }
+    const d0 = p.map((v, k) => v - pReq[k]);
+    const rhs = new Array(nCon);
+    for (let a2 = 0; a2 < nCon; a2++) {
+      let jd = 0;
+      for (let q = 0; q < nP; q++) jd += J[a2][q] * d0[q];
+      rhs[a2] = r[a2] - jd;
+    }
+    const lam = solveLambda(rhs);
+    if (!lam) break;
+    const delta = new Array(nP);
+    for (let q = 0; q < nP; q++) {
+      let jt = 0;
+      for (let a2 = 0; a2 < nCon; a2++) jt += J[a2][q] * lam[a2];
+      delta[q] = -d0[q] - jt / W[q];
+    }
+    if (normInf(r) < tol && Math.sqrt(wnorm2(delta)) < 1e-10) break;
+
+    // An exact L1 penalty alone deadlocks here. With the iterate already ON the
+    // manifold, r is ~0 while the pull toward the request is large, so the QP
+    // multipliers — and with them mu — blow up; every step then has to beat a
+    // penalty that no first-order objective gain can pay for, and the solve
+    // sits still. Warm-started from the previous slider position it returned
+    // that previous answer unchanged, which looks exactly like a working tool.
+    //
+    // So a step is taken on its own terms and feasibility is RESTORED after it,
+    // rather than being priced into one merit.
+    mu = Math.min(Math.max(mu, 2 * lam.reduce((a2, v) => Math.max(a2, Math.abs(v)), 0) + 1), 1e4);
+    const phi0 = mu * norm1(r) + objOf(p);
+    const obj0 = objOf(p);
+    let stepped = false;
+    for (let t = 1; t > 1 / 256; t *= 0.5) {
+      const pt = clampStep(t, delta);
+      if (!pt) continue;
+      const Gt = geometry(pt);
+      const rt = residuals(pt, Gt);
+      if (!rt.every((v) => isFinite(v))) continue;
+      const objt = objOf(pt);
+      const phit = mu * norm1(rt) + objt;
+      const merits = phit < phi0 - 1e-10 * t * (Math.abs(phi0) + 1);
+      // a tangential move: closer to the request, and near enough to the
+      // manifold that restoration can pull it back
+      const tangential = objt < obj0 - 1e-14 && normInf(rt) < Math.max(1e-4, 20 * normInf(r));
+      if (!merits && !tangential) continue;
+      const keepP = p, keepR = r, keepG = G;
+      broyden(pt, rt);
+      p = pt; r = rt; G = Gt;
+      if (normInf(r) >= tol) restore(6);
+      if (normInf(r) < 1e-9 && objOf(p) < obj0 - 1e-14) { stepped = true; remember(); break; }
+      if (merits && normInf(r) < normInf(keepR) + 1e-12) { stepped = true; remember(); break; }
+      p = keepP; r = keepR; G = keepG;   // restoration failed to pay for it
+    }
+    if (!stepped) {
+      if (sinceJ === 0) break;
+      J = jacobian(p, r); sinceJ = 0;
+    }
+    if (geomCalls > maxGeom) break;
+  }
+
+  // Never return worse than the best equal-area point actually found.
+  if (normInf(r) >= 1e-9 && best) { p = best.p; r = best.r; G = best.G; }
+
+  // CONTINUATION FALLBACK. A single Gauss-Newton step from a cold start can
+  // walk straight into the non-crossing boundary and jam there, on requests a
+  // slow walk reaches comfortably — 6x3 at m=2 failed on a bow of 0.25 that
+  // m=1 solved, which is backwards and was the solver, not the geometry.
+  // So when the direct solve fails, the request is approached from the nominal
+  // grid in steps, each warm-started from the last. Only on failure, and
+  // bounded, so the normal path pays nothing for it.
+  // Note this runs even when the REQUEST crosses: the solver is free to move
+  // line positions, so a crossing request can still have a non-crossing
+  // equal-area answer, and m=1 was already finding those directly.
+  if (normInf(r) >= 1e-9 && continuation) {
+    const nom = nominalParams(cfg);
+    nom[cfg.alphaAt] = pReq[cfg.alphaAt];
+    const along = (u) => nom.map((v, i) => v + u * (pReq[i] - v));
+    // Intermediate rungs of the walk exist only to carry a warm start forward,
+    // so they run at reduced quadrature; the rung that targets the request
+    // itself — the one whose answer is returned — runs at full order.
+    const trySub = (u, warm, full) => {
+      const sub = solveEqualArea(cfg, along(u), {
+        R, seed, pStart: warm, t: tWall, maxIter, tol, refreshEvery, maxGeom,
+        weights: W, continuation: false, gl: full ? gl : Math.min(gl, 16),
+      });
+      geomCalls += sub.geomCalls;
+      return sub;
+    };
+    let warm = null, reached = null, reachedU = 0, failedU = 1;
+    for (let k = 1; k <= continuationSteps; k++) {
+      const u = k / continuationSteps;
+      const sub = trySub(u, warm, k === continuationSteps);
+      if (!sub.converged) { failedU = u; break; }
+      warm = sub.p; reached = sub; reachedU = u;
+      if (k === continuationSteps) return { ...sub, geomCalls, viaContinuation: true, reachedFraction: 1 };
+    }
+    // The walk stopped short. Bisect for how far it CAN go, so the render is a
+    // real equal-area grid rather than the degenerate one the direct solve
+    // jammed into, and the user is told what fraction of the request was met.
+    for (let k = 0; k < 4 && failedU - reachedU > 0.03; k++) {
+      const mid = (reachedU + failedU) / 2;
+      const sub = trySub(mid, warm, true);
+      if (sub.converged) { warm = sub.p; reached = sub; reachedU = mid; } else failedU = mid;
+    }
+    if (reached) {
+      p = reached.p; G = reached.geometry; r = residuals(p, G);
+      return { ...finish(false, null), geomCalls, reachedFraction: reachedU };
+    }
+  }
+
+  return finish(normInf(r) < 1e-9, null);
+
+  function finish(ok, why) {
+    const mono = monotonicity(cfg, p);
+    const corr = Math.sqrt(p.reduce((s, v, k) => s + W[k] * (v - pReq[k]) ** 2, 0));
+    let reason = null;
+    const nameOf = (w) => `${w.kind === "longitude" ? "u" : "v"}${w.between[0]} and ${w.kind === "longitude" ? "u" : "v"}${w.between[1]}`;
+    if (!ok) {
+      if (nP < nCon)
+        reason = `Only ${nP} free parameters against ${nCon} independent area constraints — this parameterisation cannot be equal-area at all. Raise the shape order m.`;
+      else if (!reqMono.ok)
+        reason = `The requested shape itself crosses: lines ${nameOf(reqMono.where)} would meet at ${reqMono.where.at.toFixed(3)}. Shown is the furthest equal-area grid along the way to that request. Ease the bow.`;
+      else if (mono.gap < 5e-3)
+        reason = `Lines ${nameOf(mono.where)} are touching at ${mono.where.at.toFixed(3)} (gap ${mono.gap.toExponential(2)}) — the monotonicity limit is binding, so no equal-area grid exists for this corner angle and bow request.`;
+      else
+        reason = `The bow request cannot be met with equal areas at m = ${cfg.m}: ${cfg.spare} spare parameter(s) is not enough shape freedom here. Raise m, or ease the request.`;
+    }
+    return {
+      p, pRequested: pReq, geometry: G, seed, converged: ok, why, reason,
+      residual: normInf(r), iters: it, geomCalls,
+      correction: corr,
+      delta: p.map((v, k) => v - pReq[k]),
+      monotone: mono, requestMonotone: reqMono, nConstraints: nCon,
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LINE GRID → CELL RECORDS
+// ═══════════════════════════════════════════════════════════════════════════
+// The same record the mesh families produce, so the acoustic model, the mouth
+// mapping, the fabrication figures and every export are shared and none of
+// them know which representation they came from.
+
+function edgeSample(lg, e, n) {
+  const out = [];
+  if (e.rim) {
+    for (let q = 0; q <= n; q++) {
+      const th = e.thA + ((e.thB - e.thA) * q) / n;
+      out.push([lg.R * Math.cos(th), lg.R * Math.sin(th)]);
+    }
+    return out;
+  }
+  for (let q = 0; q <= n; q++) {
+    const t = e.tA + ((e.tB - e.tA) * q) / n;
+    const u = e.along === "u" ? t : lg.U(e.idx, t);
+    const v = e.along === "u" ? lg.V(e.idx, t) : t;
+    out.push(lg.seed.map(u, v));
+  }
+  return out;
+}
+
+// Curvature from the circumradius of three consecutive samples: robust, and it
+// does not need the second derivative of a composed map.
+function edgeMinRadius(lg, e, n = 12) {
+  if (e.rim) return lg.R;
+  const P = edgeSample(lg, e, n);
+  let best = Infinity;
+  for (let q = 1; q < P.length - 1; q++) {
+    const A = P[q - 1], B = P[q], C = P[q + 1];
+    const a = Math.hypot(B[0] - C[0], B[1] - C[1]);
+    const b = Math.hypot(A[0] - C[0], A[1] - C[1]);
+    const cc = Math.hypot(A[0] - B[0], A[1] - B[1]);
+    const ar = Math.abs((B[0] - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (B[1] - A[1])) / 2;
+    if (ar < 1e-14) continue;
+    best = Math.min(best, (a * b * cc) / (4 * ar));
+  }
+  return best;
+}
+
+export function lineGridCells(lg, opts = {}) {
+  const { c = 343, t = 0, per = 16 } = opts;
+  const { cfg, latE, lonE } = lg;
+  const out = [];
+  for (let i = 0; i < cfg.nc; i++)
+    for (let j = 0; j < cfg.nr; j++) {
+      const sides = [
+        { e: latE[i][j], rev: false },
+        { e: lonE[i + 1][j], rev: false },
+        { e: latE[i][j + 1], rev: true },
+        { e: lonE[i][j], rev: true },
+      ];
+      const poly = [];
+      for (const { e, rev } of sides) {
+        const P = edgeSample(lg, e, per);
+        const walk = rev ? P.slice().reverse() : P;
+        for (let q = 0; q < walk.length - 1; q++) poly.push(walk[q]);
+      }
+      const sideLen = sides.map(({ e }) => e.len);
+      let dividerLen = 0;
+      for (const { e } of sides) if (!e.rim) dividerLen += e.len;
+      const area = lg.areas[i * cfg.nr + j];
+      const open = t ? area - (t / 2) * dividerLen : area;
+      const minCurvR = Math.min(...sides.map(({ e }) => edgeMinRadius(lg, e)));
+
+      // opposing pairs: 0/2 run along u (the cell's width), 1/3 along v (its height)
+      const La = (sideLen[0] + sideLen[2]) / 2;
+      const Lb = (sideLen[1] + sideLen[3]) / 2;
+      const Llong = Math.max(La, Lb), Lshort = Math.min(La, Lb);
+
+      const midOf = (k) => {
+        const { e, rev } = sides[k];
+        const P = edgeSample(lg, e, 2);
+        return rev ? P[1] : P[1];
+      };
+      const m1 = midOf(1), m3 = midOf(3);
+      const dirLen = Math.hypot(m1[0] - m3[0], m1[1] - m3[1]) || 1;
+      const convex = polyIsConvex(poly);
+      const dia = polyDiameter(poly);
+      out.push({
+        id: i * cfg.nr + j, label: `${i + 1},${j + 1}`, kind: "quad", i, j,
+        poly, area, open, dividerLen,
+        centroid: polyCentroid(poly),
+        iDir: [(m1[0] - m3[0]) / dirLen, (m1[1] - m3[1]) / dirLen],
+        sideLen, Llong, Lshort,
+        aspect: Lshort > 1e-9 ? Llong / Lshort : Infinity,
+        dia, convex,
+        pwFloor: convex ? c / (2 * dia * 1e-3) : null,
+        minCurvR,
+        curvatureSensitive: minCurvR < 2 * Lshort,
+        f1: c / (2 * Math.max(Llong, 1e-9) * 1e-3),
+        f1model: "curved quad, flat-rectangle estimate",
+      });
+    }
+  return out;
+}
+
+export function lineGridDividerLength(lg) {
+  const { cfg, latE, lonE } = lg;
+  let L = 0;
+  for (let i = 0; i < cfg.nc; i++)
+    for (let j = 1; j < cfg.nr; j++) L += latE[i][j].len;
+  for (let i = 1; i < cfg.nc; i++)
+    for (let j = 0; j < cfg.nr; j++) L += lonE[i][j].len;
+  return L;
 }
