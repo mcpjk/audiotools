@@ -9,7 +9,7 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Horn Profile Calculator | `horn-calculator.html` | Hypex-family horn profiles, S(x) = St·(cosh(mx) + T·sinh(mx))² |
 | Annular FLH Calculator | `annular-flh.html` | Wall-primitive sectional area tool for square annular folded horns |
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
-| CD Exit Cell Division | `cd-exit-divider.html` | Equal open-area partition of a compression driver exit; layout chosen to raise the HOM-free limit |
+| CD Exit Cell Division | `cd-exit-divider.html` | Equal open-area partition of a compression driver exit; layout chosen to raise the HOM-free limit — **superseded, unlinked from the landing page** |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
 | H-Grid Throat Partition | `h-grid-throat.html` | Equal-area row-and-column partition of a CD exit, per-line curvature control, lofted cell-for-cell to a rectangular mouth |
 
@@ -28,7 +28,7 @@ index.html                landing page — plain HTML/CSS, no React
 horn-calculator.html      entry → src/horn-main.jsx       → HornCalculator
 annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalculator
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
-cd-exit-divider.html      entry → src/cd-exit-main.jsx     → CDExitCellDivider
+cd-exit-divider.html      entry → src/cd-exit-main.jsx     → CDExitCellDivider (unlinked)
 aperture-wavefield.html   entry → src/aperture-main.jsx    → ApertureWavefield
 h-grid-throat.html        entry → src/hgrid-main.jsx       → HGridThroat
 src/

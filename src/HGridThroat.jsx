@@ -139,6 +139,23 @@ const SEED_NOTE = {
   conformal: "Schwarz–Christoffel. Angle-preserving, so cells start locally square — the best shapes available, with the wrong areas. Its corners ARE the prevertices, so it honours any α exactly. Several times slower to solve.",
 };
 
+// The equal-area solve is deferred off the render pass so this can actually
+// paint; without that a spinner would be frozen for exactly as long as it was
+// needed. Keyframes live in a <style> tag because the tools carry no CSS file.
+const SPIN_CSS = "@keyframes hgSpin{to{transform:rotate(360deg)}}";
+
+function Solving({ label = "solving" }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: C.mono, fontSize: 10, color: C.accent, whiteSpace: "nowrap" }}>
+      <span style={{
+        width: 9, height: 9, borderRadius: "50%", display: "inline-block", boxSizing: "border-box",
+        border: `1.5px solid ${C.border}`, borderTopColor: C.accent, animation: "hgSpin 0.7s linear infinite", willChange: "transform",
+      }} />
+      {label}
+    </span>
+  );
+}
+
 export default function HGridThroat() {
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
@@ -181,6 +198,7 @@ export default function HGridThroat() {
   const [running, setRunning] = useState(false);
 
   const [hover, setHover] = useState(null);
+  const [hoverSide, setHoverSide] = useState("right");
   const [showLabels, setShowLabels] = useState(true);
   const busy = useRef(false);
 
@@ -206,20 +224,51 @@ export default function HGridThroat() {
   const seedObj = useMemo(() => G.makeSeed(seed, R, pReq[cfg.alphaAt]), [seed, R, cfg]);
   const lastP = useRef(null);
 
-  const layout = useMemo(() => {
+  // The equal-area solve costs 0.1-1 s and used to run inside the render pass,
+  // which meant the browser could not paint anything — not even a "solving"
+  // mark — until it returned. So the inputs are gathered here and the build is
+  // deferred to a timeout: the previous grid stays on screen, dimmed, with
+  // `computing` set, until the new one is ready. The cleanup also coalesces a
+  // slider drag, so only the last request in a burst is ever solved.
+  const layoutInput = useMemo(() => ({
+    family, R, nc, nr, m: shapeOrder, symmetric,
+    params: pReq, seed, seedObj,
+    rings: rings.length ? rings : [1, 6, 12], bm, bp,
+    t: thickness, c, nParams: cfg.nParams,
+  }), [family, R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, ringSpec, bm, bp, thickness, c, cfg]);
+
+  const buildFrom = (inp) => {
     const L = G.buildLayout({
-      family, R, nc, nr, m: shapeOrder, symmetric,
-      params: pReq, seed, seedObj,
-      pStart: lastP.current && lastP.current.length === cfg.nParams ? lastP.current : null,
-      rings: rings.length ? rings : [1, 6, 12], bm, bp,
-      t: thickness, c,
+      ...inp,
+      pStart: lastP.current && lastP.current.length === inp.nParams ? lastP.current : null,
     });
     if (L.solve && L.solve.p) lastP.current = L.solve.p;
     return L;
-  }, [family, R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, ringSpec, bm, bp, thickness, c, cfg]);
+  };
+
+  // The first build is synchronous: there is nothing to keep on screen yet, so
+  // deferring it would only show an empty frame.
+  const [layout, setLayout] = useState(() => buildFrom(layoutInput));
+  const [computing, setComputing] = useState(false);
+  const builtFor = useRef(layoutInput);
+
+  useEffect(() => {
+    if (builtFor.current === layoutInput) return;
+    setComputing(true);
+    const id = setTimeout(() => {
+      builtFor.current = layoutInput;
+      setLayout(buildFrom(layoutInput));
+      setComputing(false);
+    }, 30);
+    return () => clearTimeout(id);
+  }, [layoutInput]);
 
   const throat = layout.throat;
   const solve = layout.solve;
+  // While a build is deferred, cfg can already describe a different parameter
+  // vector than the layout on screen, so the achieved vector is read only when
+  // the two agree — otherwise the request stands in for one frame.
+  const pOut = solve.p && solve.p.length === cfg.nParams ? solve.p : pReq;
   // Where the number of cells meeting is not four. For the H-grid these are the
   // four corners of the reference square, wherever the seed map puts them.
   const singular = useMemo(() => {
@@ -228,7 +277,7 @@ export default function HGridThroat() {
     if (layout.mesh) return layout.mesh.singular.map((ni) => G.nodeXY(layout.mesh, ni));
     return [];
   }, [layout]);
-  const alphaEff = family === "hgrid" && solve.p ? solve.p[cfg.alphaAt] * R2D : 45;
+  const alphaEff = family === "hgrid" && solve.p ? pOut[cfg.alphaAt] * R2D : 45;
 
   const map = useMemo(() => G.mapThroatToMouth(throat, {
     c, nc, nr, R, rectangular: layout.rectangular,
@@ -375,7 +424,7 @@ export default function HGridThroat() {
         freeParameters: cfg.nParams, independentConstraints: cfg.nConstraints, spare: cfg.spare,
         parameters: labels.map((l, i) => ({
           group: l.group, name: l.name, kind: l.kind,
-          requested: +pReq[i].toFixed(8), achieved: +solve.p[i].toFixed(8),
+          requested: +pReq[i].toFixed(8), achieved: +pOut[i].toFixed(8),
         })),
       } : undefined,
     },
@@ -466,7 +515,7 @@ export default function HGridThroat() {
       els.push(<path key={`c${cc.id}`} d={pathOf(cc.poly)} fill={cellFill(cc)}
         fillOpacity={hover === cc.id ? 0.85 : 0.5}
         stroke={isMin ? C.series5 : C.inkDim} strokeWidth={isMin ? sw * 3 : sw * 1.4}
-        onMouseEnter={() => setHover(cc.id)} onMouseLeave={() => setHover(null)}
+        onMouseEnter={hoverEnter(cc.id)} onMouseLeave={() => setHover(null)}
         style={{ cursor: "crosshair" }} />);
     });
     els.push(<circle key="rim" cx={0} cy={0} r={R} fill="none" stroke={C.accent} strokeWidth={sw * 2.4} />);
@@ -500,7 +549,7 @@ export default function HGridThroat() {
       const p = r.mouthCorners.map((q) => [q[0], q[1]]);
       els.push(<path key={`m${r.id}`} d={pathOf(p)} fill={cellFill(cc)}
         fillOpacity={hover === r.id ? 0.85 : 0.5} stroke={C.inkDim} strokeWidth={sw * 1.4}
-        onMouseEnter={() => setHover(r.id)} onMouseLeave={() => setHover(null)}
+        onMouseEnter={hoverEnter(r.id)} onMouseLeave={() => setHover(null)}
         style={{ cursor: "crosshair" }} />);
       if (showLabels) els.push(
         <text key={`ml${r.id}`} x={r.mouthCentroid[0]} y={-r.mouthCentroid[1]} fill={C.ink}
@@ -534,7 +583,7 @@ export default function HGridThroat() {
       const cc = throat.cells.find((x) => x.id === r.id);
       els.push(<rect key={`r${k}`} x={X(lo)} y={y} width={Math.max(X(r.Lpath) - X(lo), 0.5)} height={10}
         fill={cellFill(cc)} fillOpacity={hover === r.id ? 0.95 : 0.6}
-        onMouseEnter={() => setHover(r.id)} onMouseLeave={() => setHover(null)} />);
+        onMouseEnter={hoverEnter(r.id)} onMouseLeave={() => setHover(null)} />);
       els.push(<text key={`rl${k}`} x={pl - 6} y={y + 8} fill={C.inkDim} fontSize={9}
         fontFamily={C.mono} textAnchor="end">{cc.label}</text>);
       els.push(<text key={`rv${k}`} x={W - pr + 6} y={y + 8} fill={C.inkMuted} fontSize={9} fontFamily={C.mono}>
@@ -560,6 +609,18 @@ export default function HGridThroat() {
     return out;
   }, [labels]);
 
+  // The readout panel is fixed to the viewport and never enters the document
+  // flow. In flow it sat above the path chart and the cell table, so showing it
+  // pushed the very row the pointer was on downward — the pointer left, the
+  // panel unmounted, the row sprang back, and the two states chased each other.
+  // Fixed position removes the cause. It also parks on whichever half of the
+  // viewport the pointer is NOT on, so it never covers what is being read, and
+  // pointer-events: none keeps it from becoming a second hover trap.
+  const hoverEnter = (id) => (e) => {
+    setHover(id);
+    setHoverSide(e.clientX > window.innerWidth / 2 ? "left" : "right");
+  };
+
   const hoverCell = hover != null ? throat.cells.find((x) => x.id === hover) : null;
   const hoverRow = hover != null && map ? map.rows.find((x) => x.id === hover) : null;
   const presets = [["1″", 25.4], ["1.4″", 35.5], ["1.5″", 38.1], ["2″", 50.8]];
@@ -567,6 +628,7 @@ export default function HGridThroat() {
 
   return (
     <div style={{ background: C.page, color: C.ink, fontFamily: C.sans, padding: "16px 18px", minHeight: "100vh", boxSizing: "border-box" }}>
+      <style>{SPIN_CSS}</style>
       <div style={{ marginBottom: 14 }}>
         <h1 style={{ fontFamily: C.mono, fontSize: 16, fontWeight: 600, color: C.accent, margin: 0, letterSpacing: "0.05em" }}>
           H-GRID THROAT PARTITION
@@ -700,7 +762,7 @@ export default function HGridThroat() {
                   {grp.items.map(({ i, l }) => {
                     const isAlpha = l.kind === "alpha";
                     const val = isAlpha ? pReq[i] * R2D : pReq[i];
-                    const got = isAlpha ? solve.p[i] * R2D : solve.p[i];
+                    const got = isAlpha ? pOut[i] * R2D : pOut[i];
                     const lim = l.kind === "pos" ? 1 : l.kind === "alpha" ? null : 0.6;
                     const moved = Math.abs(got - val) > (isAlpha ? 0.05 : 5e-4);
                     return (
@@ -761,7 +823,8 @@ export default function HGridThroat() {
               </div>
             </div>
 
-            <div style={{ marginTop: 8, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+            <div style={{ marginTop: 8, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", fontFamily: C.mono, fontSize: 11 }}>
+              {computing && <Solving label="re-solving — figures below are the previous grid" />}
               <span><span style={{ color: C.inkMuted }}>status </span>
                 <span style={{ color: solve.converged ? C.series4 : C.series5 }}>
                   {solve.converged
@@ -793,13 +856,16 @@ export default function HGridThroat() {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 1fr) minmax(300px, 1.15fr)", gap: 14, marginBottom: 14 }}>
         <div style={{ ...card, marginBottom: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={secTitle}>Throat plane · looking into the driver</span>
+            <span style={{ ...secTitle, display: "flex", alignItems: "baseline", gap: 8 }}>
+              Throat plane · looking into the driver
+              {computing && <Solving />}
+            </span>
             <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11 }}>
               <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} style={{ accentColor: C.series4 }} />
               <span style={{ color: C.inkDim }}>labels</span>
             </label>
           </div>
-          {throatSVG()}
+          <div style={{ opacity: computing ? 0.35 : 1 }}>{throatSVG()}</div>
           <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 4, flexWrap: "wrap", fontSize: 10 }}>
             <span style={{ color: C.series3 }}>▮ low f₁</span>
             <span style={{ color: C.series1 }}>▮ high f₁</span>
@@ -809,7 +875,10 @@ export default function HGridThroat() {
         </div>
 
         <div style={{ ...card, marginBottom: 0 }}>
-          <div style={secTitle}>Mouth aperture · same colour identity</div>
+          <div style={{ ...secTitle, display: "flex", alignItems: "baseline", gap: 8 }}>
+            Mouth aperture · same colour identity
+            {computing && <Solving />}
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "0 10px" }}>
             <NumInput label="Mouth width" value={mouthW} onChange={setMouthW} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
             <NumInput label="Mouth height" value={mouthH} onChange={setMouthH} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
@@ -818,7 +887,7 @@ export default function HGridThroat() {
             <NumInput label="Oblate flatten" value={flatten} onChange={setFlatten} min={1} max={3} step={0.05} />
             <NumInput label="Target f" value={fTarget} onChange={setFTarget} unit="Hz" min={2000} max={40000} step={500} accent={C.series5} />
           </div>
-          {mouthSVG()}
+          <div style={{ opacity: computing ? 0.35 : 1 }}>{mouthSVG()}</div>
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
             Choose the aperture surface from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement — apparent apex position and
             coverage angle — then equalise the paths <em>to</em> it, then close what is left with S-bend padding. A surface shaped for routing
@@ -828,9 +897,17 @@ export default function HGridThroat() {
         </div>
       </div>
 
-      {/* HOVER READOUT */}
+      {/* HOVER READOUT — fixed to the viewport, out of flow; see hoverEnter */}
       {hoverCell && (
-        <div style={{ ...card, borderColor: C.accent, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, fontFamily: C.mono, fontSize: 11 }}>
+        <div style={{
+          ...card, marginBottom: 0, borderColor: C.accent,
+          position: "fixed", bottom: 16, zIndex: 20,
+          left: hoverSide === "left" ? 16 : "auto",
+          right: hoverSide === "right" ? 16 : "auto",
+          width: "min(420px, 46vw)", boxSizing: "border-box", pointerEvents: "none",
+          boxShadow: `0 6px 20px ${C.page}cc`,
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, fontFamily: C.mono, fontSize: 11,
+        }}>
           <div><span style={{ color: C.inkMuted }}>cell </span><span style={{ color: C.accent }}>{hoverCell.label}</span></div>
           <div><span style={{ color: C.inkMuted }}>f₁ </span>{fmt(hoverCell.f1 / 1000, 2)} kHz</div>
           <div><span style={{ color: C.inkMuted }}>model </span><span style={{ fontSize: 10 }}>{hoverCell.f1model}</span></div>
@@ -861,7 +938,7 @@ export default function HGridThroat() {
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{(dividerEndFrac * 100).toFixed(0)}% of the run</span>
             </div>
           </div>
-          {pathSVG()}
+          <div style={{ opacity: computing ? 0.35 : 1 }}>{pathSVG()}</div>
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 4, lineHeight: 1.5 }}>
             Padding lengthens short paths — it cannot shorten long ones, so the longest cell sets the budget for every other cell.
             ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past λ/4 the cells are fighting each other.
@@ -937,7 +1014,7 @@ export default function HGridThroat() {
                 const isMin = cc.id === throat.f1minCell.id;
                 const td = (v, col) => <td style={{ textAlign: "right", padding: "3px 9px", color: col || C.ink, whiteSpace: "nowrap" }}>{v}</td>;
                 return (
-                  <tr key={i} onMouseEnter={() => setHover(cc.id)} onMouseLeave={() => setHover(null)}
+                  <tr key={i} onMouseEnter={hoverEnter(cc.id)} onMouseLeave={() => setHover(null)}
                     style={{ background: hover === cc.id ? C.panelAlt : i % 2 ? C.page + "60" : "transparent" }}>
                     {td(cc.label, isMin ? C.series5 : C.inkDim)}
                     {td(fmt(cc.open, 2), C.series1)}
