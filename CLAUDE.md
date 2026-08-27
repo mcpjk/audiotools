@@ -232,6 +232,15 @@ Report findings rather than silently patching things that were not asked about.
   reported a bow of 0.25 infeasible while m=1 solved it — more shape freedom
   failing where less succeeded, which is always the solver and never the
   geometry. If a layout ever comes back infeasible, check that first.
+- **The H-grid solve is deferred, so the inputs run ahead of the layout.**
+  `buildLayout` is too slow to sit in the render pass — nothing could paint,
+  not even a "solving" mark — so it runs in a timeout and the previous layout
+  stays on screen meanwhile. Everything downstream of `throat` therefore has to
+  read `shown` (the input the layout on screen was built FROM), never the live
+  state. Reading live `nc` handed the mouth mapping 18 throat cells and a
+  5-column grid to place them in, and the render died on the sixth column's
+  undefined corners — a blank page, not a glitch. Only *shrinking* the grid
+  crashes; growing it silently mismatches instead, which is worse.
 - **Two things must never be tested on the residual alone.** The Schwarz–
   Christoffel inversion converges on its STEP, because its residual has a
   quadrature floor; and the equal-area solve converges on the residual AND the

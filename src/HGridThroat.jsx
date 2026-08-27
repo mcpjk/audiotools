@@ -227,14 +227,17 @@ export default function HGridThroat() {
   // The equal-area solve costs 0.1-1 s and used to run inside the render pass,
   // which meant the browser could not paint anything — not even a "solving"
   // mark — until it returned. So the inputs are gathered here and the build is
-  // deferred to a timeout: the previous grid stays on screen, dimmed, with
-  // `computing` set, until the new one is ready. The cleanup also coalesces a
-  // slider drag, so only the last request in a burst is ever solved.
+  // deferred to a timeout: the previous grid stays on screen, dimmed, until the
+  // new one is ready. The cleanup also coalesces a slider drag, so only the
+  // last request in a burst is ever solved.
+  //
+  // alphaAt rides along because everything downstream reads the built layout,
+  // never the live inputs — see `shown` below.
   const layoutInput = useMemo(() => ({
     family, R, nc, nr, m: shapeOrder, symmetric,
     params: pReq, seed, seedObj,
     rings: rings.length ? rings : [1, 6, 12], bm, bp,
-    t: thickness, c, nParams: cfg.nParams,
+    t: thickness, c, nParams: cfg.nParams, alphaAt: cfg.alphaAt,
   }), [family, R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, ringSpec, bm, bp, thickness, c, cfg]);
 
   const buildFrom = (inp) => {
@@ -247,28 +250,30 @@ export default function HGridThroat() {
   };
 
   // The first build is synchronous: there is nothing to keep on screen yet, so
-  // deferring it would only show an empty frame.
-  const [layout, setLayout] = useState(() => buildFrom(layoutInput));
-  const [computing, setComputing] = useState(false);
-  const builtFor = useRef(layoutInput);
+  // deferring it would only show an empty frame. The input is kept WITH the
+  // layout it produced, because a deferred build means the two can disagree.
+  const [built, setBuilt] = useState(() => ({ in: layoutInput, out: buildFrom(layoutInput) }));
+  const stale = built.in !== layoutInput;
 
   useEffect(() => {
-    if (builtFor.current === layoutInput) return;
-    setComputing(true);
-    const id = setTimeout(() => {
-      builtFor.current = layoutInput;
-      setLayout(buildFrom(layoutInput));
-      setComputing(false);
-    }, 30);
+    if (!stale) return;
+    const id = setTimeout(() => setBuilt({ in: layoutInput, out: buildFrom(layoutInput) }), 30);
     return () => clearTimeout(id);
-  }, [layoutInput]);
+  }, [layoutInput, stale]);
 
+  const layout = built.out;
+  // EVERYTHING that describes the grid on screen must read `shown`, not the
+  // live inputs. The inputs update on the keystroke; the layout is one deferred
+  // build behind them. Pairing live n_cols with the previous throat handed the
+  // mouth mapping 18 cells and a 5-column grid to put them in, and the render
+  // died on the sixth column's undefined corners — a blank page, not a glitch.
+  const shown = built.in;
   const throat = layout.throat;
   const solve = layout.solve;
-  // While a build is deferred, cfg can already describe a different parameter
-  // vector than the layout on screen, so the achieved vector is read only when
-  // the two agree — otherwise the request stands in for one frame.
-  const pOut = solve.p && solve.p.length === cfg.nParams ? solve.p : pReq;
+  // The sliders are the one exception: they are the request UI, so they render
+  // from the live cfg. Their "achieved" column has to fall back to the request
+  // until the solve that answers it exists.
+  const pOut = !stale && solve.p && solve.p.length === cfg.nParams ? solve.p : pReq;
   // Where the number of cells meeting is not four. For the H-grid these are the
   // four corners of the reference square, wherever the seed map puts them.
   const singular = useMemo(() => {
@@ -277,14 +282,14 @@ export default function HGridThroat() {
     if (layout.mesh) return layout.mesh.singular.map((ni) => G.nodeXY(layout.mesh, ni));
     return [];
   }, [layout]);
-  const alphaEff = family === "hgrid" && solve.p ? pOut[cfg.alphaAt] * R2D : 45;
+  const alphaEff = shown.family === "hgrid" && solve.p ? solve.p[shown.alphaAt] * R2D : 45;
 
   const map = useMemo(() => G.mapThroatToMouth(throat, {
-    c, nc, nr, R, rectangular: layout.rectangular,
+    c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
     mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
     tight, fTarget, dividerEndFrac, stations, keepGeometry: true,
-    wallWidthAt: mouthW / nc,
-  }), [layout, throat, c, nc, nr, R, mouthW, mouthH, apex, depth, flatten, exitAngle, tight, fTarget, dividerEndFrac, stations]);
+    wallWidthAt: mouthW / shown.nc,
+  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, tight, fTarget, dividerEndFrac, stations]);
 
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
@@ -365,22 +370,22 @@ export default function HGridThroat() {
     if (map && map.band !== "ok")
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
     if (map && map.turnMax > map.turnLimitDeg)
-      w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
+      w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
     if (map && map.aimMax > map.aimLimitDeg)
       w.push(`Aim error reaches ${fmt(map.aimMax, 1)}° against a ${fmt(map.aimLimitDeg, 1)}° tangency tolerance. Shape the aperture surface from the directivity requirement first — a surface chosen for routing radiates its own curvature error phase-coherently and no EQ removes it.`);
-    if (family === "hgrid" && solve.converged && solve.monotone && solve.monotone.gap < 0.02)
+    if (shown.family === "hgrid" && solve.converged && solve.monotone && solve.monotone.gap < 0.02)
       w.push(`Two grid lines come within ${solve.monotone.gap.toExponential(2)} of each other in parameter space — the areas are equal but a cell is pinched to nearly nothing there, which will not print and will not behave like a duct. Ease the bow, raise the shape order m, or move the corner angle.`);
     if (throat.curvatureFlagged)
       w.push(`${throat.curvatureFlagged} cell(s) have edge curvature strong relative to their own short dimension. The flat-rectangle first-mode model errs as O((L/r_curv)²) with the sign not established — verify these in ABEC.`);
     if (map && map.rows.some((r) => r.runNeeded && r.straightAvail < r.runNeeded))
       w.push(`Some cells have less straight run before the trailing edge than the three evanescent decay lengths they need. Below cut-on the field decays as exp(−α x) with α = (2π/c)·√(f1²−f²); a bend inside that distance re-excites what the duct just suppressed.`);
-    if (family !== "hgrid")
-      w.push(`${family === "ogrid" ? "An O-grid" : "A butterfly"} throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
+    if (shown.family !== "hgrid")
+      w.push(`${shown.family === "ogrid" ? "An O-grid" : "A butterfly"} throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
     return w;
-  }, [solve, throat, family, alphaEff, nc, nr, thickness, fab, map, fTarget, mouthW]);
+  }, [solve, throat, shown, alphaEff, thickness, fab, map, fTarget, mouthW]);
 
   // ── exports ────────────────────────────────────────────────────────────────
-  const stem = `hgrid_${fmt(exitDia, 1)}mm_${family === "hgrid" ? `${nc}x${nr}` : family}_${throat.N}cells`;
+  const stem = `hgrid_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
 
   const buildDXF = () => {
     const L = [];
@@ -415,11 +420,12 @@ export default function HGridThroat() {
     units: "mm, Hz, degrees",
     driver: { exitDiameter: exitDia, exitHalfAngle: exitAngle, temperature, speedOfSound: c },
     topology: {
-      family, nCols: nc, nRows: nr, rings: family === "ogrid" ? rings : undefined,
-      core: family === "butterfly" ? { m: bm, p: bp } : undefined,
-      cornerAlphaDeg: alphaEff, equalArcAlphaDeg: G.equalArcAlphaDeg(nc, nr),
+      family: shown.family, nCols: shown.nc, nRows: shown.nr,
+      rings: shown.family === "ogrid" ? shown.rings : undefined,
+      core: shown.family === "butterfly" ? { m: shown.bm, p: shown.bp } : undefined,
+      cornerAlphaDeg: alphaEff, equalArcAlphaDeg: G.equalArcAlphaDeg(shown.nc, shown.nr),
       seed, singularVertices: singular.length,
-      lineShapes: family === "hgrid" ? {
+      lineShapes: shown.family === "hgrid" ? {
         shapeOrder, symmetric, chebyshevOrders: cfg.orders,
         freeParameters: cfg.nParams, independentConstraints: cfg.nConstraints, spare: cfg.spare,
         parameters: labels.map((l, i) => ({
@@ -843,7 +849,7 @@ export default function HGridThroat() {
             </div>
 
             <div style={{ marginTop: 8, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", fontFamily: C.mono, fontSize: 11 }}>
-              {computing && <Solving label="re-solving — figures below are the previous grid" />}
+              {stale && <Solving label="re-solving — figures below are the previous grid" />}
               <span><span style={{ color: C.inkMuted }}>status </span>
                 <span style={{ color: solve.converged ? C.series4 : C.series5 }}>
                   {solve.converged
@@ -877,14 +883,14 @@ export default function HGridThroat() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ ...secTitle, display: "flex", alignItems: "baseline", gap: 8 }}>
               Throat plane · looking into the driver
-              {computing && <Solving />}
+              {stale && <Solving />}
             </span>
             <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11 }}>
               <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} style={{ accentColor: C.series4 }} />
               <span style={{ color: C.inkDim }}>labels</span>
             </label>
           </div>
-          <div style={{ opacity: computing ? 0.35 : 1 }}>{throatSVG()}</div>
+          <div style={{ opacity: stale ? 0.35 : 1 }}>{throatSVG()}</div>
           <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 4, flexWrap: "wrap", fontSize: 10 }}>
             <span style={{ color: C.series3 }}>▮ low f₁</span>
             <span style={{ color: C.series1 }}>▮ high f₁</span>
@@ -896,7 +902,7 @@ export default function HGridThroat() {
         <div style={{ ...card, marginBottom: 0 }}>
           <div style={{ ...secTitle, display: "flex", alignItems: "baseline", gap: 8 }}>
             Mouth aperture · same colour identity
-            {computing && <Solving />}
+            {stale && <Solving />}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "0 10px" }}>
             <NumInput label="Mouth width" value={mouthW} onChange={setMouthW} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
@@ -906,7 +912,7 @@ export default function HGridThroat() {
             <NumInput label="Oblate flatten" value={flatten} onChange={setFlatten} min={1} max={3} step={0.05} />
             <NumInput label="Target f" value={fTarget} onChange={setFTarget} unit="Hz" min={2000} max={40000} step={500} accent={C.series5} />
           </div>
-          <div style={{ opacity: computing ? 0.35 : 1 }}>{mouthSVG()}</div>
+          <div style={{ opacity: stale ? 0.35 : 1 }}>{mouthSVG()}</div>
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
             Choose the aperture surface from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement — apparent apex position and
             coverage angle — then equalise the paths <em>to</em> it, then close what is left with S-bend padding. A surface shaped for routing
@@ -957,7 +963,7 @@ export default function HGridThroat() {
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{(dividerEndFrac * 100).toFixed(0)}% of the run</span>
             </div>
           </div>
-          <div style={{ opacity: computing ? 0.35 : 1 }}>{pathSVG()}</div>
+          <div style={{ opacity: stale ? 0.35 : 1 }}>{pathSVG()}</div>
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 4, lineHeight: 1.5 }}>
             Padding lengthens short paths — it cannot shorten long ones, so the longest cell sets the budget for every other cell.
             ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past λ/4 the cells are fighting each other.
@@ -967,7 +973,7 @@ export default function HGridThroat() {
 
       {/* METRICS */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(158px, 1fr))", gap: 8, marginBottom: 14 }}>
-        <Metric label="Cells N" value={`${throat.N}`} sub={family === "hgrid" ? `${nc} × ${nr}` : family === "ogrid" ? rings.join(" + ") : `${bm}² + 4·${bm}·${bp}`} />
+        <Metric label="Cells N" value={`${throat.N}`} sub={shown.family === "hgrid" ? `${shown.nc} × ${shown.nr}` : shown.family === "ogrid" ? shown.rings.join(" + ") : `${shown.bm}² + 4·${shown.bm}·${shown.bp}`} />
         <Metric label="Open area / cell" value={`${fmt(throat.openMean, 2)} mm²`} sub={`gross ${fmt(throat.areaMean, 2)} mm²`} />
         <Metric label="Open-area spread" value={throat.spread < 1e-6 ? `${throat.spread.toExponential(1)}%` : `${fmt(throat.spread, 3)}%`}
           sub={throat.spread < 1e-6 ? "achieved, not assumed" : "no equal-area solution"} color={throat.spread < 1e-6 ? C.series4 : C.series5} />
