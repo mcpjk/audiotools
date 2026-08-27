@@ -1405,52 +1405,88 @@ export function mapThroatToMouth(throat, opts) {
     const sTw = un3(cr3(tans[M], rEnd));
     const twist = Math.atan2(dot3(mI, sTw), dot3(mI, rEnd)) * R2D;
 
-    // cross-section area schedule, interpolating the throat and mouth outlines
-    // in the transported frame — the loft Shapr3D would build.
-    // (frames[] above is the rotation-minimising frame this rides on.)
-    const mouthPoly = [];
-    const CX = (xs[i] + xs[i + 1]) / 2, CY = (ys[j] + ys[j + 1]) / 2;
+    // ── SECTION GEOMETRY: EVERY BOUNDARY POINT FLOWS ON ITS OWN ─────────────
+    // A point's trajectory depends only on where that POINT starts in the
+    // throat plane and where it lands on the aperture — never on which cell it
+    // belongs to. Two neighbours share their boundary points exactly, so they
+    // share the whole boundary at every station and can neither gap nor
+    // interpenetrate. That is the entire reason for doing it this way.
+    //
+    // What this replaced: each cell used to blend its own outline from throat
+    // to mouth inside its own rotation-minimising frame, eighteen independent
+    // constructions with nothing coupling them. They tiled at the two ends,
+    // where both grids tile by construction, and in between they drifted
+    // through each other — 2.8 to 5.8 mm deep, about a fifth of every section's
+    // boundary points inside the neighbour, from station 1 onward. That made
+    // the duct set unrealisable as separate passages and the area schedule
+    // optimistic, because it summed cross-sections sharing the same space.
+    //
+    // A flowed section is NOT planar in general, and should not be: the mouth
+    // outline already lies on a curved aperture. Areas are the magnitude of the
+    // vector area, which reduces to the planar area when the section is planar.
     const nMs = 16; // 64 points round the outline — coarser under-measures a curved throat cell
+    const mouthXY = [];
     for (let e = 0; e < 4; e++) {
       const A = [[xs[i], ys[j]], [xs[i + 1], ys[j]], [xs[i + 1], ys[j + 1]], [xs[i], ys[j + 1]]][e];
       const B = [[xs[i], ys[j]], [xs[i + 1], ys[j]], [xs[i + 1], ys[j + 1]], [xs[i], ys[j + 1]]][(e + 1) % 4];
       for (let q = 0; q < nMs; q++) {
         const u = q / nMs;
-        mouthPoly.push([A[0] + (B[0] - A[0]) * u - CX, A[1] + (B[1] - A[1]) * u - CY]);
+        mouthXY.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u]);
       }
     }
     // Corner MUST map to corner. The mouth outline above is laid down a side at
     // a time, nMs points each, so its four corners sit at 0, nMs, 2nMs, 3nMs.
     // Resampling the throat outline round the whole loop by arc length instead
     // puts its corners wherever the side lengths land — for a 2.5:1 cell that
-    // is index 22.8 against the mouth's 16 — and the loft then blends a throat
-    // CORNER into the middle of a mouth EDGE. Resample side by side instead.
+    // is index 22.8 against the mouth's 16 — and a throat CORNER would then
+    // flow to the middle of a mouth EDGE. Resample side by side instead.
     const centred = cellRec.poly.map((p) => [p[0] - cellRec.centroid[0], p[1] - cellRec.centroid[1]]);
-    const sides = cellSides(centred);
-    const throatPoly = sides
-      ? sides.flatMap((sd) => resampleOpen(sd, nMs))
-      : resamplePoly(centred, mouthPoly.length);
+    const sidesOf = cellSides(centred);
+    const throatLocal = sidesOf
+      ? sidesOf.flatMap((sd) => resampleOpen(sd, nMs))
+      : resamplePoly(centred, mouthXY.length);
+
+    // one Hermite per boundary point, launched down the exit cone and aimed at
+    // the apparent apex, exactly as the centreline is
+    const traj = throatLocal.map((p, k) => {
+      const A = v3(p[0] + cellRec.centroid[0], p[1] + cellRec.centroid[1], 0);
+      const B = surf.point(mouthXY[k][0], mouthXY[k][1]);
+      const ch = nrm3(s3(B, A));
+      return {
+        A, B,
+        TA: m3(un3(s3(A, v3(0, 0, zLaunch))), tight * ch * 3),
+        TB: m3(surf.wavefront(B), tight * ch * 3),
+      };
+    });
+
     const sched = [];
     for (let q = 0; q <= stations; q++) {
       const u = q / stations;
-      const blended = throatPoly.map((p, k) => [
-        p[0] + (mouthPoly[k][0] - p[0]) * u,
-        p[1] + (mouthPoly[k][1] - p[1]) * u,
-      ]);
-      let A2 = 0;
-      for (let k = 0; k < blended.length; k++) {
-        const a = blended[k], b = blended[(k + 1) % blended.length];
-        A2 += a[0] * b[1] - b[0] * a[1];
+      const ring = traj.map((tr) => hermite(tr.A, tr.TA, tr.B, tr.TB, u));
+      // vector area of a closed space polygon: half the sum of p_k x p_(k+1)
+      let ax = 0, ay = 0, az = 0;
+      for (let k = 0; k < ring.length; k++) {
+        const a = ring[k], b = ring[(k + 1) % ring.length];
+        ax += a[1] * b[2] - a[2] * b[1];
+        ay += a[2] * b[0] - a[0] * b[2];
+        az += a[0] * b[1] - a[1] * b[0];
       }
       const idx = Math.round(u * M);
+      // `area` is the section's OWN area. `axial` is its projection on the
+      // direction of travel — the flux-carrying cross-section, and the one the
+      // duct's volume integrates. The two differ because a flowed section is a
+      // level set of the flow, not a perpendicular cut: the gap between them
+      // is exactly how oblique the section is, and it is reported rather than
+      // hidden by pretending the cut is square to the path.
+      const T = tans[idx];
       sched.push({
-        s: u, area: Math.abs(A2) / 2, z: pts[idx][2], sLen: sArr[idx],
-        // the loft cross-section, in the cell's own transported frame — kept
-        // only when something is going to export or draw it
-        local: keepGeometry ? blended : null,
+        s: u, area: Math.hypot(ax, ay, az) / 2,
+        axial: Math.abs(ax * T[0] + ay * T[1] + az * T[2]) / 2,
+        z: pts[idx][2], sLen: sArr[idx],
+        // the flowed section, in world coordinates — kept only when something
+        // is going to export or draw it
+        pts: keepGeometry ? ring : null,
         origin: keepGeometry ? pts[idx] : null,
-        u: keepGeometry ? frames[idx] : null,
-        v: keepGeometry ? cr3(tans[idx], frames[idx]) : null,
       });
     }
 
@@ -1488,26 +1524,28 @@ export function mapThroatToMouth(throat, opts) {
   rows.forEach((r) => { r.pad = Lmax - r.Lpath; });
   const dL = Lmax - Lmin;
 
-  // 3-D station outlines, rebuilt from the stored local sections
+  // 3-D station outlines. Nothing to rebuild any more — the flowed points are
+  // already in world coordinates, and are shared with the neighbouring cells.
   const sectionAt = (q) => rows.map((r) => {
     const st = r.sched[q];
-    if (!st.local) return null;
-    return {
-      id: r.id, label: r.label,
-      pts: st.local.map((p) => [
-        st.origin[0] + p[0] * st.u[0] + p[1] * st.v[0],
-        st.origin[1] + p[0] * st.u[1] + p[1] * st.v[1],
-        st.origin[2] + p[0] * st.u[2] + p[1] * st.v[2],
-      ]),
-    };
+    if (!st.pts) return null;
+    return { id: r.id, label: r.label, pts: st.pts };
   });
 
   // sum of cross-sections at each station, for a Hornresp / ABEC handoff
+  // Both areas are carried. `area` is the sum of the sections' own areas;
+  // `axial` is the sum of their projections on the direction of travel, which
+  // is the flux-carrying cross-section and therefore the one a 1-D horn area
+  // schedule means. They differ by the sections' obliquity — up to 14.5% at
+  // 6x3 — so which one is handed to Hornresp is not a detail.
   const sigma = [];
   for (let q = 0; q <= stations; q++) {
-    let A = 0, z = 0, sl = 0;
-    rows.forEach((r) => { A += r.sched[q].area; z += r.sched[q].z; sl += r.sched[q].sLen; });
-    sigma.push({ s: q / stations, area: A, zMean: z / rows.length, sMean: sl / rows.length });
+    let A = 0, Ax = 0, z = 0, sl = 0;
+    rows.forEach((r) => {
+      A += r.sched[q].area; Ax += r.sched[q].axial;
+      z += r.sched[q].z; sl += r.sched[q].sLen;
+    });
+    sigma.push({ s: q / stations, area: A, axial: Ax, zMean: z / rows.length, sMean: sl / rows.length });
   }
 
   const turnLimitDeg = ((lam / 8) / wallWidthAt) * R2D;
@@ -2864,6 +2902,57 @@ export function insetPolygon(poly, dPerSide) {
   return out;
 }
 
+// Inset a flowed section. It is a space polygon, so the offset is done in its
+// own best-fit plane and each point keeps whatever off-plane offset it had.
+// The inset only bites between the throat and dividerEndFrac, where sections
+// are still nearly flat, so the plane is a close fit exactly where it matters.
+export function insetSection3(pts, dPerSide) {
+  const n = pts.length;
+  const o = [0, 0, 0];
+  for (const p of pts) { o[0] += p[0] / n; o[1] += p[1] / n; o[2] += p[2] / n; }
+  let ax = 0, ay = 0, az = 0;
+  for (let k = 0; k < n; k++) {
+    const a = pts[k], b = pts[(k + 1) % n];
+    ax += (a[1] - o[1]) * (b[2] - o[2]) - (a[2] - o[2]) * (b[1] - o[1]);
+    ay += (a[2] - o[2]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[2] - o[2]);
+    az += (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  }
+  const nl = Math.hypot(ax, ay, az) || 1;
+  const N = [ax / nl, ay / nl, az / nl];
+  let e1 = [pts[0][0] - o[0], pts[0][1] - o[1], pts[0][2] - o[2]];
+  const dp = e1[0] * N[0] + e1[1] * N[1] + e1[2] * N[2];
+  e1 = [e1[0] - dp * N[0], e1[1] - dp * N[1], e1[2] - dp * N[2]];
+  const e1l = Math.hypot(...e1) || 1;
+  e1 = e1.map((x) => x / e1l);
+  const e2 = [N[1] * e1[2] - N[2] * e1[1], N[2] * e1[0] - N[0] * e1[2], N[0] * e1[1] - N[1] * e1[0]];
+  const flat = [], off = [];
+  for (const p of pts) {
+    const d = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+    flat.push([d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2], d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2]]);
+    off.push(d[0] * N[0] + d[1] * N[1] + d[2] * N[2]);
+  }
+  const ins = insetPolygon(flat, dPerSide);
+  if (!ins) return pts;
+  return ins.map((q, k) => [
+    o[0] + q[0] * e1[0] + q[1] * e2[0] + off[k] * N[0],
+    o[1] + q[0] * e1[1] + q[1] * e2[1] + off[k] * N[1],
+    o[2] + q[0] * e1[2] + q[1] * e2[2] + off[k] * N[2],
+  ]);
+}
+
+// Magnitude of the vector area of a closed space polygon; the planar area when
+// the polygon happens to be planar.
+export function polyArea3(pts) {
+  let ax = 0, ay = 0, az = 0;
+  for (let k = 0; k < pts.length; k++) {
+    const a = pts[k], b = pts[(k + 1) % pts.length];
+    ax += a[1] * b[2] - a[2] * b[1];
+    ay += a[2] * b[0] - a[0] * b[2];
+    az += a[0] * b[1] - a[1] * b[0];
+  }
+  return Math.hypot(ax, ay, az) / 2;
+}
+
 export function polyArea2(poly) {
   let A2 = 0;
   for (let k = 0; k < poly.length; k++) {
@@ -2875,35 +2964,26 @@ export function polyArea2(poly) {
 
 // The inset 3-D sections of one duct, throat to mouth.
 //
-// Station 0 is a special case and has to be. Every other station is cut
-// PERPENDICULAR to that duct's own centreline, which is what a duct wants —
-// but at the throat the centreline already leaves along the driver's exit-cone
-// direction, so the perpendicular section is tilted by up to 6.85 deg and
-// straddles z = +-0.5 mm. Eighteen ducts each tilted their own way have no
-// common face: there is nothing flat to seat against the driver exit, and two
-// neighbours' tilted first sections close to 0.03 mm where they lean together.
-// So station 0 is laid flat in the true throat plane at z = 0, exactly as the
-// DXF's STATION_00_THROAT layer already is. The first wall segment is then
-// very slightly oblique, which is the honest price of a flat mating face.
+// Station 0 needs no special case any more. Under the flowed construction the
+// section at s = 0 IS the throat outline, in the throat plane, because every
+// boundary point starts there — so the mating face against the driver is flat
+// by construction and neighbours meet along exactly one shared curve. Before
+// the flow, station 0 was cut perpendicular to each duct's own centreline,
+// which at the throat already points down the exit cone: the section came out
+// tilted by up to 6.85 deg, straddling z = +-0.5 mm, and eighteen ducts each
+// tilted their own way had no common face to seat on at all.
 export function ductSections(cellRec, row, { t = 0, dividerEndFrac = 0.35 } = {}) {
   const Q = row.sched.length - 1;
   const rim = cellRec.rimSide || [false, false, false, false];
   const out = [];
   for (let q = 0; q <= Q; q++) {
     const st = row.sched[q];
-    if (!st.local) return null;
+    if (!st.pts) return null;
     // full t/2 at the throat, gone by the station where the dividers end
     const taper = dividerEndFrac > 1e-9 ? Math.max(0, 1 - st.s / dividerEndFrac) : 0;
     const d = rim.map((isRim) => (isRim ? 0 : (t / 2) * taper));
-    const flat = d.some((v) => v > 0) ? insetPolygon(st.local, d) : st.local;
-    const pts = q === 0
-      ? flat.map((p) => [p[0] + cellRec.centroid[0], p[1] + cellRec.centroid[1], 0])
-      : flat.map((p) => [
-        st.origin[0] + p[0] * st.u[0] + p[1] * st.v[0],
-        st.origin[1] + p[0] * st.u[1] + p[1] * st.v[1],
-        st.origin[2] + p[0] * st.u[2] + p[1] * st.v[2],
-      ]);
-    out.push({ s: st.s, area: polyArea2(flat), pts, origin: st.origin });
+    const pts = d.some((v) => v > 0) ? insetSection3(st.pts, d) : st.pts;
+    out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
   }
   return out;
 }

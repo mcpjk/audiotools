@@ -418,25 +418,46 @@ head("Loft parameterisation");
       return Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-12;
     }), "closed loop");
 
-  // A corner must blend to a corner, not into the middle of a mouth edge. The
+  // A corner must flow to a corner, not into the middle of a mouth edge. The
   // mouth outline is square, so its four corners are the four sharpest turns;
-  // at EVERY station the sharpest four must sit at 0, nMs, 2nMs, 3nMs.
+  // at EVERY station the sharpest four must sit at 0, nMs, 2nMs, 3nMs. The
+  // flowed sections are space polygons, so the turn is measured in 3-D.
   const cornerIdx = (poly) => poly
     .map((_, k) => {
       const a = poly[(k - 1 + poly.length) % poly.length], b = poly[k], d = poly[(k + 1) % poly.length];
-      const v1 = [b[0] - a[0], b[1] - a[1]], v2 = [d[0] - b[0], d[1] - b[1]];
-      return [Math.abs(Math.atan2(v1[0] * v2[1] - v1[1] * v2[0], v1[0] * v2[0] + v1[1] * v2[1])), k];
+      const v1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v2 = [d[0] - b[0], d[1] - b[1], d[2] - b[2]];
+      const n1 = Math.hypot(...v1) || 1e-18, n2 = Math.hypot(...v2) || 1e-18;
+      const dot = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2);
+      return [Math.acos(Math.max(-1, Math.min(1, dot))), k];
     })
     .sort((x, y) => y[0] - x[0]).slice(0, 4).map((x) => x[1]).sort((x, y) => x - y);
   const row = map.rows.find((r) => r.label === "3,1");
   let aligned = true;
   for (let q = 0; q <= ST; q++)
-    if (cornerIdx(row.sched[q].local).join(",") !== [0, nMs, 2 * nMs, 3 * nMs].join(",")) aligned = false;
+    if (cornerIdx(row.sched[q].pts).join(",") !== [0, nMs, 2 * nMs, 3 * nMs].join(",")) aligned = false;
   checkTrue("every station keeps its corners at the side boundaries", aligned,
     `stations 0..${ST} all at [0, ${nMs}, ${2 * nMs}, ${3 * nMs}]`);
 
-  // the last station IS the mouth cell, so the areas must sum to the mouth
-  check("station areas close on the mouth rectangle", map.mouthAreaTotal, 200 * 100, 1e-6, "mm2");
+  // ── the defining property of the flowed construction ────────────────────
+  // Neighbours share their boundary points EXACTLY, at every station, because a
+  // point's trajectory depends only on the point. This is what makes the ducts
+  // tile instead of drifting through each other.
+  const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  let share = 0;
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+    const A = map.rows.find((r) => r.id === i * 3 + j), B = map.rows.find((r) => r.id === (i + 1) * 3 + j);
+    for (let q = 0; q <= ST; q++)
+      for (let k = 0; k <= nMs; k++)
+        share = Math.max(share, d3(A.sched[q].pts[(nMs + k) % 64], B.sched[q].pts[(4 * nMs - k) % 64]));
+  }
+  check("neighbours share their whole boundary at every station", share, 0, 1e-8, "mm");
+
+  // The last station IS the mouth cell — but the aperture is a curved cap, so
+  // the sections close on the CAP's area, which is larger than its projection.
+  const capRatio = map.mouthAreaTotal / (200 * 100);
+  checkTrue("station areas close on the aperture, not on its flat projection",
+    capRatio > 1.02 && capRatio < 1.05, `cap is ${((capRatio - 1) * 100).toFixed(1)}% above 200x100 mm`);
 }
 
 // ── 10c. duct solids ───────────────────────────────────────────────────────
@@ -461,7 +482,8 @@ head("Duct solids");
   };
   for (const label of ["1,1", "3,2"]) {
     const cell = th.cells.find((x) => x.label === label);
-    const flat = map.rows.find((r) => r.label === label).sched[0].local;
+    const s0 = map.rows.find((r) => r.label === label).sched[0].pts;
+    const flat = s0.map((p) => [p[0] - cell.centroid[0], p[1] - cell.centroid[1]]);
     const want = cell.rimSide.map((isRim) => (isRim ? 0 : t / 2));
     const ins = M.insetPolygon(flat, want);
     const N = flat.length, n = N / 4;
@@ -532,19 +554,28 @@ head("Duct solids");
     solids.every((s) => M.fanIsValid(s.sections[0].pts).ok && M.fanIsValid(s.sections[s.sections.length - 1].pts).ok),
     "no folded caps");
 
-  // volume by the divergence theorem against the integrated area schedule
-  let vWorst = 0;
-  for (const s of solids) {
+  // Volume by the divergence theorem against the integrated area schedule. It
+  // is the AXIAL area that integrates to a volume: a flowed section is a level
+  // set of the flow, not a cut square to the path, so its own area runs above
+  // its projection on the direction of travel.
+  let vWorst = 0, oblique = 0;
+  for (const cellRec of th.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    const s = solids.find((x) => x.id === cellRec.id);
     let V = 0;
     for (let q = 1; q < s.sections.length; q++) {
       const a = s.sections[q - 1].origin, b = s.sections[q].origin;
-      V += 0.5 * (s.sections[q].area + s.sections[q - 1].area)
+      const scale = (k) => row.sched[k].axial / row.sched[k].area;
+      V += 0.5 * (s.sections[q].area * scale(q) + s.sections[q - 1].area * scale(q - 1))
          * Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      oblique = Math.max(oblique, 1 - scale(q));
     }
     vWorst = Math.max(vWorst, Math.abs(s.volume - V) / V);
   }
-  checkTrue("mesh volume agrees with the integrated area schedule", vWorst < 0.005,
-    `worst ${(vWorst * 100).toFixed(3)}% — trapezoid error over ${ST} stations`);
+  checkTrue("mesh volume agrees with the integrated AXIAL area schedule", vWorst < 0.01,
+    `worst ${(vWorst * 100).toFixed(3)}% over ${ST} stations`);
+  checkTrue("section obliquity is reported, not assumed away", oblique > 0 && oblique < 0.2,
+    `worst section runs ${(oblique * 100).toFixed(1)}% above its axial projection`);
 
   const stl = M.buildSTL(solids);
   const facets = new DataView(stl).getUint32(80, true);

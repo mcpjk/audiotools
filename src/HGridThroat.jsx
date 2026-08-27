@@ -460,7 +460,7 @@ export default function HGridThroat() {
         twistDeg: r ? +r.twistDeg.toFixed(3) : null,
         aimErrorDeg: r ? +r.aimErrDeg.toFixed(3) : null,
         areaSchedule: r ? r.sched.map((st) => ({ s: +st.s.toFixed(4), area: +st.area.toFixed(3), z: +st.z.toFixed(3), sLength: +st.sLen.toFixed(3) })) : null,
-        stations: r ? r.sched.map((st, q) => (st.local && map ? (map.sectionAt(q).find((x) => x && x.id === cc.id) || {}).pts.map((p) => p.map((v) => +v.toFixed(4))) : null)) : null,
+        stations: r ? r.sched.map((st, q) => (st.pts && map ? (map.sectionAt(q).find((x) => x && x.id === cc.id) || {}).pts.map((p) => p.map((v) => +v.toFixed(4))) : null)) : null,
       };
     }),
   }, null, 1);
@@ -493,14 +493,19 @@ export default function HGridThroat() {
 
   const buildSigmaCSV = () => {
     if (!map) return "";
-    const head = "station,s,axial_z_mm,developed_s_mm,total_area_mm2,equivalent_diameter_mm";
+    const head = "station,s,axial_z_mm,developed_s_mm,section_area_mm2,flux_area_mm2,equivalent_diameter_mm";
     const rows = map.sigma.map((g, q) =>
       [q, g.s.toFixed(4), g.zMean.toFixed(3), g.sMean.toFixed(3), g.area.toFixed(3),
-       (2 * Math.sqrt(g.area / Math.PI)).toFixed(3)].join(","));
+       g.axial.toFixed(3), (2 * Math.sqrt(g.axial / Math.PI)).toFixed(3)].join(","));
     return [
       "# Sum of cell cross-sections along the loft, for Hornresp / ABEC.",
       "# s is the fraction of each cell's own developed centreline, so axial_z",
       "# and developed_s are MEANS across cells whose paths differ in length.",
+      "# section_area is the sections' own area; flux_area is their projection",
+      "# on the direction of travel. A flowed section is a level set of the",
+      "# flow, not a cut square to the path, so the two differ by the section's",
+      "# obliquity. USE flux_area for a 1-D horn schedule — it is the one that",
+      "# integrates to the duct volume. equivalent_diameter follows flux_area.",
       head, ...rows,
     ].join("\n");
   };

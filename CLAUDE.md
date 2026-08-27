@@ -212,6 +212,26 @@ rather than just running commands. Metric units, SGD for costs.
 
 Report findings rather than silently patching things that were not asked about.
 
+## Why the multicell exists at all
+
+**Maximising impedance transformation is a motivating reason for the multicell
+construction, not a side effect.** That makes the expansion profile a first
+class design variable, and the tool does not yet have one — see below. The two
+are connected: a horn's expansion law is a 1-D plane-wave argument, and above
+f1 the throat wave is not planar, so the law stops describing what happens.
+The partition is what keeps propagation planar high enough in frequency for
+the chosen expansion to mean anything. Having no control over the profile is
+therefore doubly wrong here: the partition is the thing that makes a profile
+work, and there is no profile to work.
+
+Note where the tool stands today: the area schedule is an emergent by-product
+of linear outline blending and Hermite routing, not a choice. Measured at 6x3,
+the local flare dlnA/dx falls from 29 to 6.7 per metre, sqrt(A) is linear in x
+to R^2 = 0.9915 against an exponential fit's 0.9583 — so it is close to a CONE,
+which is the classic poorly-loaded case. `horn-calculator.html` in this repo
+already computes the Hypex family; the machinery exists and is simply not
+connected to this tool.
+
 ## Known findings worth not re-deriving
 
 - **H-grid f₁ is set by rows, not columns.** The binding cell's long dimension
@@ -241,24 +261,33 @@ Report findings rather than silently patching things that were not asked about.
   5-column grid to place them in, and the render died on the sixth column's
   undefined corners — a blank page, not a glitch. Only *shrinking* the grid
   crashes; growing it silently mismatches instead, which is worse.
-- **The mapped ducts interpenetrate everywhere except at the two ends.** Each
-  cell is blended and routed to its own mouth cell independently — its own
-  Hermite centreline, its own rotation-minimising frame, its own local shape
-  blend — and nothing couples neighbours. They tile exactly at the throat and
-  at the mouth, and in between they both gap (up to 7.5 mm at 6x3, about a cell
-  width) AND overlap. Measured at 6x3 with a point-in-mesh ray cast: about
-  17-21 of the 64 boundary points per section lie inside the neighbour, from
-  station 1 (z ~ 14 mm) onward, to a depth of 2.8-5.8 mm. Stations 0 and 16
-  come back exactly zero, which is the control that says the test is sound.
-  This is a property of the mapping model, not of the mesh code. It means the
-  duct set is not physically realisable as separate passages, so a solid export
-  of the ducts cannot be subtracted from a blank to give a divider web.
-- **`sectionAt(0)` is NOT the throat plane.** Every station is cut
-  perpendicular to that duct's own centreline, and at the throat the centreline
-  already leaves along the driver's exit-cone direction — so station 0 is
-  tilted by up to 6.85 deg and straddles z = +-0.5 mm. `buildDXF` and
-  `ductSections` both lay station 0 flat at z = 0 for this reason; anything
-  else that needs a throat face must do the same or it will not seat.
+- **Sections are FLOWED per boundary point, and that is what makes them tile.**
+  A point's trajectory depends only on where that point starts in the throat
+  plane and where it lands on the aperture — never on which cell owns it. Since
+  neighbours share their boundary points exactly, they share the whole boundary
+  at every station: measured worst mismatch 6.6e-10 mm over all pairs and all
+  stations, and the wall between two inset ducts comes out at exactly t x taper
+  with min = mean = max across every pair. Do not go back to blending each
+  cell's outline in its own transported frame. That is what it did before, and
+  eighteen independent constructions with nothing coupling them drifted through
+  each other 2.8-5.8 mm deep, about a fifth of every section's boundary points
+  inside the neighbour, from station 1 onward — invisible on screen, fatal to
+  any solid export, and it made the area schedule up to ~30% optimistic because
+  it summed cross-sections sharing the same space.
+- **A flowed section is not planar, and its area is not its cross-section.** It
+  is a level set of the flow, not a cut square to the path, so it runs oblique
+  — up to 14.5% at 6x3. `sched[].area` is the section's own area; `axial` is its
+  projection on the direction of travel. **`axial` is the one that integrates
+  to the duct volume and the one a 1-D horn schedule means**, and it is what
+  the SigmaA CSV's `flux_area` column and equivalent diameter now use. Testing
+  a volume against `area` instead of `axial` fails by ~5%, which is the
+  obliquity, not an error.
+- **Station 0 needs no special case now, but it used to.** Under the flow the
+  section at s = 0 IS the throat outline in the throat plane, so the driver
+  mating face is flat by construction. Before the flow, every station was cut
+  perpendicular to its own centreline, and at the throat that already points
+  down the exit cone: station 0 came out tilted by up to 6.85 deg, straddling
+  z = +-0.5 mm, with no common face across the eighteen ducts to seat on.
 - **Two things must never be tested on the residual alone.** The Schwarz–
   Christoffel inversion converges on its STEP, because its residual has a
   quadrature floor; and the equal-area solve converges on the residual AND the
