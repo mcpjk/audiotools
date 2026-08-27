@@ -1419,7 +1419,17 @@ export function mapThroatToMouth(throat, opts) {
         mouthPoly.push([A[0] + (B[0] - A[0]) * u - CX, A[1] + (B[1] - A[1]) * u - CY]);
       }
     }
-    const throatPoly = resamplePoly(cellRec.poly.map((p) => [p[0] - cellRec.centroid[0], p[1] - cellRec.centroid[1]]), mouthPoly.length);
+    // Corner MUST map to corner. The mouth outline above is laid down a side at
+    // a time, nMs points each, so its four corners sit at 0, nMs, 2nMs, 3nMs.
+    // Resampling the throat outline round the whole loop by arc length instead
+    // puts its corners wherever the side lengths land — for a 2.5:1 cell that
+    // is index 22.8 against the mouth's 16 — and the loft then blends a throat
+    // CORNER into the middle of a mouth EDGE. Resample side by side instead.
+    const centred = cellRec.poly.map((p) => [p[0] - cellRec.centroid[0], p[1] - cellRec.centroid[1]]);
+    const sides = cellSides(centred);
+    const throatPoly = sides
+      ? sides.flatMap((sd) => resampleOpen(sd, nMs))
+      : resamplePoly(centred, mouthPoly.length);
     const sched = [];
     for (let q = 0; q <= stations; q++) {
       const u = q / stations;
@@ -1544,11 +1554,54 @@ function resamplePoly(poly, n) {
   return out;
 }
 
+// Resample ONE SIDE — an open polyline from corner to corner — to n points,
+// the first at the starting corner and the last one step short of the end, so
+// four of these concatenate into a closed loop with the corners at known
+// indices. The closed-loop resampler above cannot do this: it walks arc length
+// round the whole cell from an arbitrary start, which lands the four corners
+// wherever the side lengths happen to put them.
+function resampleOpen(pts, n) {
+  const L = [0];
+  for (let i = 0; i < pts.length - 1; i++)
+    L.push(L[i] + Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]));
+  const tot = L[L.length - 1];
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const target = (tot * k) / n;
+    let i = 0;
+    while (i < pts.length - 2 && L[i + 1] < target) i++;
+    const u = (target - L[i]) / Math.max(L[i + 1] - L[i], 1e-12);
+    const a = pts[i], b = pts[i + 1];
+    out.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]);
+  }
+  return out;
+}
+
+// The four sides of a line-grid cell, as separate corner-to-corner polylines.
+// lineGridCells lays the outline down one side at a time with an equal sample
+// count each, so the corners sit at exact multiples of poly.length / 4.
+export function cellSides(poly) {
+  const n = poly.length / 4;
+  if (!Number.isInteger(n)) return null;
+  const out = [];
+  for (let e = 0; e < 4; e++) {
+    const side = [];
+    for (let q = 0; q <= n; q++) side.push(poly[(e * n + q) % poly.length]);
+    out.push(side);
+  }
+  return out;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FABRICATION
 // ═══════════════════════════════════════════════════════════════════════════
+// tMin is the thinnest wall the process prints RELIABLY, not the thinnest it
+// can be made to produce once. FDM's 0.4 mm is Arachne variable-width on a
+// 0.4 mm nozzle, which is a measured result rather than the old single-bead
+// 0.8 mm rule. Ra is unchanged by nozzle diameter — on FDM it is set by layer
+// height, so a finer nozzle buys wall thickness, not smoothness.
 export const PROCESSES = {
-  FDM: { label: "FDM", tMin: 0.8, ra: 27.5 },
+  FDM: { label: "FDM", tMin: 0.4, ra: 27.5 },
   MSLA: { label: "MSLA resin", tMin: 0.4, ra: 5 },
 };
 
@@ -2718,6 +2771,9 @@ export function lineGridCells(lg, opts = {}) {
       out.push({
         id: i * cfg.nr + j, label: `${i + 1},${j + 1}`, kind: "quad", i, j,
         poly, area, open, dividerLen,
+        // per side, in the same order as poly's four runs: true where the side
+        // is the disc rim, which carries no divider and must not be inset
+        rimSide: sides.map(({ e }) => !!e.rim),
         centroid: polyCentroid(poly),
         iDir: [(m1[0] - m3[0]) / dirLen, (m1[1] - m3[1]) / dirLen],
         sideLen, Llong, Lshort,
@@ -2741,4 +2797,243 @@ export function lineGridDividerLength(lg) {
   for (let i = 1; i < cfg.nc; i++)
     for (let j = 0; j < cfg.nr; j++) L += lonE[i][j].len;
   return L;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOLID EXPORT — DUCT MESHES
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// WHAT THIS EMITS, AND WHY IT IS DUCTS AND NOT A DIVIDER WEB
+// Adjacent cells tile the disc at the throat and tile the rectangle at the
+// mouth, but each is blended and routed to its own mouth cell independently,
+// so in between they PULL APART — measured at 6x3, up to 7.5 mm at mid-path,
+// about one cell width, never overlapping. There is therefore no wall of
+// thickness t to model beyond the throat: the material between two ducts is a
+// wedge that thickens downstream. So this emits the N ducts, and the divider
+// web is whatever is left when they are subtracted from a blank. The blank
+// needs an outer horn wall between throat and mouth, which this tool does not
+// model and must not invent — that is the horn profile calculator's job.
+//
+// THE INSET
+// A cell outline is the grid-line CENTRELINE, so two neighbours share one
+// curve. Lofting those directly and subtracting would leave no divider at all.
+// Each section is therefore inset by t/2 along its divider sides only, leaving
+// the rim untouched, which puts exactly t of material between two neighbours
+// at the throat. The inset TAPERS to zero at dividerEndFrac, because that is
+// where the dividers physically stop: holding it further would shrink the duct
+// below its own area schedule for a wall that is not there.
+//
+// The acoustic numbers are untouched by any of this. sched[].area stays the
+// geometric centreline area it always was; the inset lives only in the export.
+
+// Offset a closed polygon inward by a distance that may differ side to side.
+// The outline is K equal runs of n points with corners at multiples of n, so a
+// corner is where two offset lines have to be MITRED rather than displaced —
+// displacing each side along its own normal would leave the corner open.
+export function insetPolygon(poly, dPerSide) {
+  const N = poly.length, K = dPerSide.length, n = N / K;
+  if (!Number.isInteger(n)) return null;
+  let A2 = 0;
+  for (let k = 0; k < N; k++) {
+    const a = poly[k], b = poly[(k + 1) % N];
+    A2 += a[0] * b[1] - b[0] * a[1];
+  }
+  const sgn = A2 >= 0 ? 1 : -1; // +1 when the outline runs counter-clockwise
+  // segment k joins point k to k+1 and belongs to side floor(k / n)
+  const lineOf = (k) => {
+    const a = poly[k % N], b = poly[(k + 1) % N];
+    let tx = b[0] - a[0], ty = b[1] - a[1];
+    const L = Math.hypot(tx, ty) || 1e-12;
+    tx /= L; ty /= L;
+    const d = dPerSide[Math.floor((k % N) / n)];
+    return { px: a[0] - ty * sgn * d, py: a[1] + tx * sgn * d, tx, ty };
+  };
+  const out = [];
+  for (let k = 0; k < N; k++) {
+    const L1 = lineOf((k - 1 + N) % N), L2 = lineOf(k);
+    const den = L1.tx * L2.ty - L1.ty * L2.tx;
+    if (Math.abs(den) < 1e-7) {
+      // the two segments are collinear: no corner to mitre, displace instead
+      const d = dPerSide[Math.floor(k / n)];
+      out.push([poly[k][0] - L2.ty * sgn * d, poly[k][1] + L2.tx * sgn * d]);
+    } else {
+      const u = ((L2.px - L1.px) * L2.ty - (L2.py - L1.py) * L2.tx) / den;
+      out.push([L1.px + L1.tx * u, L1.py + L1.ty * u]);
+    }
+  }
+  return out;
+}
+
+export function polyArea2(poly) {
+  let A2 = 0;
+  for (let k = 0; k < poly.length; k++) {
+    const a = poly[k], b = poly[(k + 1) % poly.length];
+    A2 += a[0] * b[1] - b[0] * a[1];
+  }
+  return Math.abs(A2) / 2;
+}
+
+// The inset 3-D sections of one duct, throat to mouth.
+//
+// Station 0 is a special case and has to be. Every other station is cut
+// PERPENDICULAR to that duct's own centreline, which is what a duct wants —
+// but at the throat the centreline already leaves along the driver's exit-cone
+// direction, so the perpendicular section is tilted by up to 6.85 deg and
+// straddles z = +-0.5 mm. Eighteen ducts each tilted their own way have no
+// common face: there is nothing flat to seat against the driver exit, and two
+// neighbours' tilted first sections close to 0.03 mm where they lean together.
+// So station 0 is laid flat in the true throat plane at z = 0, exactly as the
+// DXF's STATION_00_THROAT layer already is. The first wall segment is then
+// very slightly oblique, which is the honest price of a flat mating face.
+export function ductSections(cellRec, row, { t = 0, dividerEndFrac = 0.35 } = {}) {
+  const Q = row.sched.length - 1;
+  const rim = cellRec.rimSide || [false, false, false, false];
+  const out = [];
+  for (let q = 0; q <= Q; q++) {
+    const st = row.sched[q];
+    if (!st.local) return null;
+    // full t/2 at the throat, gone by the station where the dividers end
+    const taper = dividerEndFrac > 1e-9 ? Math.max(0, 1 - st.s / dividerEndFrac) : 0;
+    const d = rim.map((isRim) => (isRim ? 0 : (t / 2) * taper));
+    const flat = d.some((v) => v > 0) ? insetPolygon(st.local, d) : st.local;
+    const pts = q === 0
+      ? flat.map((p) => [p[0] + cellRec.centroid[0], p[1] + cellRec.centroid[1], 0])
+      : flat.map((p) => [
+        st.origin[0] + p[0] * st.u[0] + p[1] * st.v[0],
+        st.origin[1] + p[0] * st.u[1] + p[1] * st.v[1],
+        st.origin[2] + p[0] * st.u[2] + p[1] * st.v[2],
+      ]);
+    out.push({ s: st.s, area: polyArea2(flat), pts, origin: st.origin });
+  }
+  return out;
+}
+
+// Signed volume of a closed triangle soup, by the divergence theorem. Positive
+// when every facet winds counter-clockwise seen from outside.
+export function meshVolume(verts, tris) {
+  let V = 0;
+  for (const [a, b, c] of tris) {
+    const A = verts[a], B = verts[b], C = verts[c];
+    V += (A[0] * (B[1] * C[2] - C[1] * B[2])
+        - A[1] * (B[0] * C[2] - C[0] * B[2])
+        + A[2] * (B[0] * C[1] - C[0] * B[1])) / 6;
+  }
+  return V;
+}
+
+// Every edge of a closed orientable surface is walked exactly twice, once in
+// each direction. Anything else is a hole, a duplicated facet or a flipped one.
+export function meshManifold(tris) {
+  const use = new Map();
+  for (const [a, b, c] of tris)
+    for (const [p, q] of [[a, b], [b, c], [c, a]]) {
+      const key = p < q ? `${p}_${q}` : `${q}_${p}`;
+      const dir = p < q ? 1 : -1;
+      const e = use.get(key) || { n: 0, net: 0 };
+      e.n += 1; e.net += dir;
+      use.set(key, e);
+    }
+  let bad = 0, wrong = 0;
+  for (const e of use.values()) { if (e.n !== 2) bad++; else if (e.net !== 0) wrong++; }
+  return { edges: use.size, notPaired: bad, notOpposed: wrong, ok: bad === 0 && wrong === 0 };
+}
+
+// One duct as a closed triangle mesh: a quad strip up the wall, a fan across
+// each end. The fan is only valid if the section is star-shaped about its own
+// centroid, which is checked rather than assumed — most cells here are NOT
+// convex, so this is a real question and not a formality.
+export function ductMesh(sections) {
+  const Q = sections.length - 1, N = sections[0].pts.length;
+  const verts = [];
+  for (const sec of sections) for (const p of sec.pts) verts.push(p);
+  const centroidOf = (pts) => {
+    const c = [0, 0, 0];
+    for (const p of pts) { c[0] += p[0] / pts.length; c[1] += p[1] / pts.length; c[2] += p[2] / pts.length; }
+    return c;
+  };
+  const c0 = verts.push(centroidOf(sections[0].pts)) - 1;
+  const cQ = verts.push(centroidOf(sections[Q].pts)) - 1;
+  const at = (q, k) => q * N + (k % N);
+  const tris = [];
+  for (let q = 0; q < Q; q++)
+    for (let k = 0; k < N; k++) {
+      tris.push([at(q, k), at(q, k + 1), at(q + 1, k + 1)]);
+      tris.push([at(q, k), at(q + 1, k + 1), at(q + 1, k)]);
+    }
+  for (let k = 0; k < N; k++) tris.push([c0, at(0, k + 1), at(0, k)]);
+  for (let k = 0; k < N; k++) tris.push([cQ, at(Q, k), at(Q, k + 1)]);
+  // orientation is decided by measurement, not by assuming the winding of the
+  // transported frame — flip the whole soup if it came out inside-out
+  if (meshVolume(verts, tris) < 0) for (const tr of tris) { const s = tr[1]; tr[1] = tr[2]; tr[2] = s; }
+  return { verts, tris };
+}
+
+// Is the end cap's fan legitimate? Every fan triangle must wind the same way
+// about the section's own plane; a mixed sign means the centroid sees the
+// outline from outside somewhere and the fan folds over itself.
+export function fanIsValid(pts) {
+  const n = pts.length;
+  const c = [0, 0, 0];
+  for (const p of pts) { c[0] += p[0] / n; c[1] += p[1] / n; c[2] += p[2] / n; }
+  let ref = null, worst = Infinity;
+  for (let k = 0; k < n; k++) {
+    const a = pts[k], b = pts[(k + 1) % n];
+    const u = [a[0] - c[0], a[1] - c[1], a[2] - c[2]];
+    const v = [b[0] - c[0], b[1] - c[1], b[2] - c[2]];
+    const cr = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    if (!ref) { const L = Math.hypot(...cr) || 1; ref = cr.map((x) => x / L); }
+    const d = cr[0] * ref[0] + cr[1] * ref[1] + cr[2] * ref[2];
+    worst = Math.min(worst, d);
+  }
+  return { ok: worst > 0, worst };
+}
+
+// Binary STL. One solid per duct is not a thing STL can express — the format
+// is a bare triangle soup — so the ducts are concatenated and a slicer splits
+// them by connectivity. The header records what they are.
+export function buildSTL(meshes, note = "") {
+  let n = 0;
+  for (const m of meshes) n += m.tris.length;
+  const buf = new ArrayBuffer(84 + n * 50);
+  const dv = new DataView(buf);
+  const head = new Uint8Array(buf, 0, 80);
+  const txt = `h-grid throat partition${note ? " " + note : ""}`;
+  for (let i = 0; i < Math.min(79, txt.length); i++) head[i] = txt.charCodeAt(i) & 0x7f;
+  dv.setUint32(80, n, true);
+  let o = 84;
+  for (const m of meshes)
+    for (const [a, b, c] of m.tris) {
+      const A = m.verts[a], B = m.verts[b], C = m.verts[c];
+      const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+      const v = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+      const nx = u[1] * v[2] - u[2] * v[1], ny = u[2] * v[0] - u[0] * v[2], nz = u[0] * v[1] - u[1] * v[0];
+      const L = Math.hypot(nx, ny, nz) || 1;
+      dv.setFloat32(o, nx / L, true); dv.setFloat32(o + 4, ny / L, true); dv.setFloat32(o + 8, nz / L, true);
+      o += 12;
+      for (const P of [A, B, C]) {
+        dv.setFloat32(o, P[0], true); dv.setFloat32(o + 4, P[1], true); dv.setFloat32(o + 8, P[2], true);
+        o += 12;
+      }
+      dv.setUint16(o, 0, true); o += 2;
+    }
+  return buf;
+}
+
+// Every duct, meshed and checked.
+export function ductSolids(throat, map, opts = {}) {
+  if (!map) return null;
+  const out = [];
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const sections = ductSections(cellRec, row, opts);
+    if (!sections) return null;
+    const mesh = ductMesh(sections);
+    out.push({
+      id: cellRec.id, label: cellRec.label, sections, ...mesh,
+      volume: meshVolume(mesh.verts, mesh.tris),
+      manifold: meshManifold(mesh.tris),
+    });
+  }
+  return out;
 }

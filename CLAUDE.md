@@ -241,6 +241,24 @@ Report findings rather than silently patching things that were not asked about.
   5-column grid to place them in, and the render died on the sixth column's
   undefined corners — a blank page, not a glitch. Only *shrinking* the grid
   crashes; growing it silently mismatches instead, which is worse.
+- **The mapped ducts interpenetrate everywhere except at the two ends.** Each
+  cell is blended and routed to its own mouth cell independently — its own
+  Hermite centreline, its own rotation-minimising frame, its own local shape
+  blend — and nothing couples neighbours. They tile exactly at the throat and
+  at the mouth, and in between they both gap (up to 7.5 mm at 6x3, about a cell
+  width) AND overlap. Measured at 6x3 with a point-in-mesh ray cast: about
+  17-21 of the 64 boundary points per section lie inside the neighbour, from
+  station 1 (z ~ 14 mm) onward, to a depth of 2.8-5.8 mm. Stations 0 and 16
+  come back exactly zero, which is the control that says the test is sound.
+  This is a property of the mapping model, not of the mesh code. It means the
+  duct set is not physically realisable as separate passages, so a solid export
+  of the ducts cannot be subtracted from a blank to give a divider web.
+- **`sectionAt(0)` is NOT the throat plane.** Every station is cut
+  perpendicular to that duct's own centreline, and at the throat the centreline
+  already leaves along the driver's exit-cone direction — so station 0 is
+  tilted by up to 6.85 deg and straddles z = +-0.5 mm. `buildDXF` and
+  `ductSections` both lay station 0 flat at z = 0 for this reason; anything
+  else that needs a throat face must do the same or it will not seat.
 - **Two things must never be tested on the residual alone.** The Schwarz–
   Christoffel inversion converges on its STEP, because its residual has a
   quadrature floor; and the equal-area solve converges on the residual AND the

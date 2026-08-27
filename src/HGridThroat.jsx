@@ -161,7 +161,7 @@ export default function HGridThroat() {
   const [exitDia, setExitDia] = useState(35.5);
   const [exitAngle, setExitAngle] = useState(8);
   const [temperature, setTemperature] = useState(30);
-  const [thickness, setThickness] = useState(0.8);
+  const [thickness, setThickness] = useState(0.4);
   const [process, setProcess] = useState("FDM");
 
   // ── topology ──
