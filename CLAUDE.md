@@ -4,13 +4,15 @@ Working notes for this repo. Read before changing anything.
 
 ## What this is
 
-Six loudspeaker design calculators served as a static multi-page site at
-`audiotools.kiiworkshop.com`. Five are linked from the landing page: the CD
-Exit Cell Division tool is superseded by the H-Grid Throat Partition and its
-card was removed, but the page itself is still in the `input` map and still
-builds, so old links keep working. `index.html` therefore has five cards where
-`vite.config.js` has six inputs — that mismatch is deliberate. Everything computes client-side — no backend, no
+Five loudspeaker design calculators served as a static multi-page site at
+`audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
+
+A sixth, CD Exit Cell Division, was deleted once the H-Grid Throat Partition
+superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
+defaults `not_found_handling` to none — but `npm run preview` falls back to the
+landing page instead, so a 200 there is not the deployed behaviour. If that
+link ever needs to live again, the tool is in the history.
 
 Tools are usually iterated **one at a time in separate sessions**. Assume you
 are touching one tool and that the others must come out byte-identical.
@@ -22,7 +24,6 @@ index.html                landing page — plain HTML/CSS, no React
 horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
-cd-exit-divider.html      → src/cd-exit-main.jsx     → CDExitCellDivider (unlinked)
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
 h-grid-throat.html        → src/hgrid-main.jsx       → HGridThroat
 src/hgrid-model.js        that tool's physics, split out so node can test it
