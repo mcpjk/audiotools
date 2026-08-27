@@ -765,6 +765,13 @@ export default function HGridThroat() {
                     const got = isAlpha ? pOut[i] * R2D : pOut[i];
                     const lim = l.kind === "pos" ? 1 : l.kind === "alpha" ? null : 0.6;
                     const moved = Math.abs(got - val) > (isAlpha ? 0.05 : 5e-4);
+                    // Per-slider reset. Every bow parameter is nominally zero, so on
+                    // those this is literally a zero button and says so; a position is
+                    // nominally its even spacing and alpha the equal-arc angle, and
+                    // zero is meaningless for one and outside the range of the other,
+                    // so there it returns that slider to its own nominal instead.
+                    const nomVal = isAlpha ? nominal[i] * R2D : nominal[i];
+                    const atNom = Math.abs(val - nomVal) <= (isAlpha ? 5e-3 : 5e-5);
                     return (
                       <div key={i} style={{ marginBottom: 6 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
@@ -775,6 +782,18 @@ export default function HGridThroat() {
                             <span style={{ color: moved ? C.series5 : C.series4 }}>{got.toFixed(isAlpha ? 2 : 4)}</span>
                             {isAlpha && <span style={{ color: C.inkMuted }}>°</span>}
                           </span>
+                          <button
+                            onClick={() => { const q = pReq.slice(); q[i] = nominal[i]; setRequest(q); }}
+                            disabled={atNom}
+                            title={`reset this slider to ${nomVal.toFixed(isAlpha ? 2 : 4)}${isAlpha ? "°" : ""}`}
+                            style={{
+                              ...btn(false, C.series5), padding: "0 5px", lineHeight: 1.6, minWidth: 18,
+                              color: atNom ? C.inkMuted : C.series5,
+                              borderColor: atNom ? C.border : C.series5,
+                              opacity: atNom ? 0.35 : 1, cursor: atNom ? "default" : "pointer",
+                            }}>
+                            {nomVal === 0 ? "0" : "\u21ba"}
+                          </button>
                         </div>
                         <input type="range"
                           min={isAlpha ? 5 : -lim} max={isAlpha ? 85 : lim} step={isAlpha ? 0.25 : 0.002}
