@@ -128,6 +128,15 @@ const dl = (name, text, mime) => {
   URL.revokeObjectURL(u);
 };
 
+// Binary STL is bytes, not text, so it cannot go through dl() — a Blob built
+// from a string would UTF-8 encode every byte above 0x7f and corrupt the file.
+const dlBin = (name, buf, mime) => {
+  const u = URL.createObjectURL(new Blob([buf], { type: mime }));
+  const a = document.createElement("a");
+  a.href = u; a.download = name; a.click();
+  URL.revokeObjectURL(u);
+};
+
 const ORDER_HINT = [
   "how much the line bows",
   "where the bow concentrates — mid-line against toward the rim",
@@ -1017,14 +1026,19 @@ export default function HGridThroat() {
         <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(), "application/json")}>JSON cell definition</button>
         <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(), "text/csv")}>CSV · per cell</button>
         <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(), "text/csv")}>ΣA(x) CSV</button>
+        <button style={expBtn} disabled={!map} onClick={() => {
+          const solids = G.ductSolids(throat, map, { t: thickness, dividerEndFrac });
+          if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
+        }}>STL · cell ducts</button>
         <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center", marginLeft: 8 }}>
           stations
           <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
             style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
         </label>
         <span style={{ fontSize: 10, color: C.inkMuted, flex: "1 1 260px", lineHeight: 1.45 }}>
-          The JSON is what makes the Shapr3D loft tractable — loft cell <em>n</em>'s throat profile to its own mouth profile, one cell at a time.
-          Station 0 is the true throat plane at z = 0; the rest are sections perpendicular to each cell's own centreline, so they are tilted.
+          The STL is the one that needs no CAD work: it carries the {throat.N} ducts as closed solids, already inset by half the
+          divider thickness where the dividers are and tapering to nothing where they stop. Loft a blank from the throat circle to the
+          mouth and subtract them — what is left is the divider web. DXF is 2-D per plane, so only the throat layer will import as a sketch.
         </span>
       </div>
 
