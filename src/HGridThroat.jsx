@@ -146,7 +146,6 @@ export default function HGridThroat() {
   const [temperature, setTemperature] = useState(30);
   const [thickness, setThickness] = useState(0.8);
   const [process, setProcess] = useState("FDM");
-  const [knifeEdge, setKnifeEdge] = useState(3);
 
   // ── topology ──
   const [family, setFamily] = useState("hgrid");
@@ -239,8 +238,8 @@ export default function HGridThroat() {
   }), [layout, throat, c, nc, nr, R, mouthW, mouthH, apex, depth, flatten, exitAngle, tight, fTarget, dividerEndFrac, stations]);
 
   const fab = useMemo(() => G.fabrication({
-    throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process, knifeEdge,
-  }), [throat, thickness, R, c, fTarget, process, knifeEdge]);
+    throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
+  }), [throat, thickness, R, c, fTarget, process]);
 
   // ── objective, live ──
   const obj = useMemo(
@@ -598,7 +597,6 @@ export default function HGridThroat() {
           <NumInput label="Exit half-angle" value={exitAngle} onChange={setExitAngle} unit="°" min={0} max={45} step={0.5} />
           <NumInput label="Temperature" value={temperature} onChange={setTemperature} unit="°C" min={-20} max={60} step={1} />
           <NumInput label="Divider thickness" value={thickness} onChange={setThickness} unit="mm" min={0} max={4} step={0.1} accent={C.series6} />
-          <NumInput label="Knife-edge taper" value={knifeEdge} onChange={setKnifeEdge} unit="mm" min={0} max={30} step={0.5} />
           <div>
             <label style={sLabel}>Process</label>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
