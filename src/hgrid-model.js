@@ -1552,21 +1552,18 @@ export const PROCESSES = {
   MSLA: { label: "MSLA resin", tMin: 0.4, ra: 5 },
 };
 
-export function fabrication({ throat, t, R, c, f, process = "FDM", knifeEdge = 0 }) {
+export function fabrication({ throat, t, R, c, f, process = "FDM" }) {
   const proc = PROCESSES[process] || PROCESSES.FDM;
   const blockage = throat.blockage;
   // the shell has to grow to give back the area the dividers took
   const dShell = (2 * R) / Math.sqrt(Math.max(1 - blockage, 1e-6));
   const deltaV = Math.sqrt((2 * NU) / (TAU * Math.max(f, 1))) * 1000; // mm
-  // knife-edge taper: the trailing edge thins from t to zero over this length
-  const taperLen = knifeEdge;
   return {
     process: proc, tMin: proc.tMin, tooThin: t < proc.tMin,
     blockage, dShell, oversize: dShell - 2 * R,
     dividerTotal: throat.dividerTotal,
     deltaV, ra: proc.ra / 1000,
     roughRatio: proc.ra / 1000 / deltaV,
-    taperLen,
     // wide-tube Kirchhoff, smooth wall — a LOWER bound once Ra approaches delta_v
     lossPerMm: (dh) => {
       const a = dh / 2 / 1000;
