@@ -288,18 +288,26 @@ connected to this tool.
   perpendicular to its own centreline, and at the throat that already points
   down the exit cone: station 0 came out tilted by up to 6.85 deg, straddling
   z = +-0.5 mm, with no common face across the eighteen ducts to seat on.
-- **Divergence never separates two cells that share a throat divider, and it
-  is not supposed to.** `buildTrajectory`'s straight launch moves a boundary
-  point along `dirA`, a pure function of that point's own position — so a
-  divider-shared point (identical, by construction, for both neighbours) gets
-  the identical ray under either cell's own call. Measured: shared-boundary
-  mismatch stays ~7e-10 mm at every divergeLen from 0 to 30 mm. The build spec
-  for this feature assumed divergence would need to "give neighbouring ducts
-  room to separate" — it doesn't, because they are glued at the shared wall
-  for as long as that wall exists; what divergence actually buys is a straight
-  run before the CURVATURE toward each cell's own, necessarily different,
-  mouth target begins. Don't add a neighbour-separation metric expecting it to
-  move with divergeLen; it won't, correctly.
+- **Radial launch EXPANDS cells; it does not separate them. Those are two
+  different mechanisms and the tool currently only has the first.**
+  `buildTrajectory`'s straight run moves each boundary point along `dirA`, the
+  ray from the virtual apex through that point, so the cell grows as a pure
+  radial fan: measured cell 3,2 goes 56.20 -> 84.14 mm2 over 28.2 mm of
+  straight run, against a closed-form fan prediction of
+  ((126.3+28.2)/126.3)^2 = 1.4965 versus 1.497 measured. But a divider-shared
+  point is identical for both neighbours, so it gets the identical ray from
+  either cell's call and the shared wall stays exactly shared — mismatch
+  ~7e-10 mm at every divergeLen from 0 to 30 mm. **The cells expand INTO
+  contact, not apart.**
+  Gaps between ducts — what a conventional multicell has, and what gives
+  snaking room for independent path lengths — need a separate DETACHMENT
+  mechanism. The only thing currently holding two ducts apart is the t/2
+  divider inset, and it runs the wrong way for that purpose: it tapers to
+  ZERO at dividerEndFrac (measured gap 0.40 -> 0.26 -> 0.11 -> 0.00, then
+  0.00 to the mouth), so past the divider region the tool MERGES ducts rather
+  than separating them. A clearance metric between neighbouring ducts is
+  therefore wanted — just keyed to the detachment/gap parameter and the snake
+  amplitude, never to divergeLen, which cannot move it.
 - **Two things must never be tested on the residual alone.** The Schwarz–
   Christoffel inversion converges on its STEP, because its residual has a
   quadrature floor; and the equal-area solve converges on the residual AND the
