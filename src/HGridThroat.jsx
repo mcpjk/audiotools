@@ -193,9 +193,13 @@ export default function HGridThroat() {
   const [apex, setApex] = useState(120);
   const [depth, setDepth] = useState(150);
   const [flatten, setFlatten] = useState(1);
+  const [divergeLen, setDivergeLen] = useState(0);
   const [tight, setTight] = useState(0.55);
   const [fTarget, setFTarget] = useState(20000);
   const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
+  // null = no expansion law, the emergent schedule. A number is the Hypex T:
+  // 0 hyperbolic (cosh), 1 exponential.
+  const [profileT, setProfileT] = useState(null);
   const [stations, setStations] = useState(16);
 
   // ── optimiser ──
@@ -296,9 +300,9 @@ export default function HGridThroat() {
   const map = useMemo(() => G.mapThroatToMouth(throat, {
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
     mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
-    tight, fTarget, dividerEndFrac, stations, keepGeometry: true,
+    divergeLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true, profileT,
     wallWidthAt: mouthW / shown.nc,
-  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, tight, fTarget, dividerEndFrac, stations]);
+  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, tight, fTarget, dividerEndFrac, stations, profileT]);
 
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
@@ -342,7 +346,7 @@ export default function HGridThroat() {
         const th = G.analyseThroat(cells, { c, R, dividerTotal: G.lineGridDividerLength(sol.geometry) });
         const mp = wTwist > 0 ? G.mapThroatToMouth(th, {
           c, nc, nr, R, rectangular: true, mouthW, mouthH, apex, depth, flatten,
-          exitHalfAngle: exitAngle, tight, fTarget, samples: 16, stations: 6, wallWidthAt: mouthW / nc,
+          exitHalfAngle: exitAngle, divergeLen, tight, fTarget, samples: 16, stations: 6, wallWidthAt: mouthW / nc,
         }) : null;
         return G.objective(th, mp, {
           wAspect, wTwist, wCorrection,
@@ -380,6 +384,8 @@ export default function HGridThroat() {
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
     if (map && map.turnMax > map.turnLimitDeg)
       w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
+    if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
+      w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.`);
     if (map && map.aimMax > map.aimLimitDeg)
       w.push(`Aim error reaches ${fmt(map.aimMax, 1)}° against a ${fmt(map.aimLimitDeg, 1)}° tangency tolerance. Shape the aperture surface from the directivity requirement first — a surface chosen for routing radiates its own curvature error phase-coherently and no EQ removes it.`);
     if (shown.family === "hgrid" && solve.converged && solve.monotone && solve.monotone.gap < 0.02)
@@ -967,8 +973,12 @@ export default function HGridThroat() {
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <span style={secTitle}>Developed path length per cell against the ΔL budget</span>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 10, color: C.inkMuted }}>bend tightness</span>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, color: C.inkMuted }}>divergence run</span>
+              <input type="range" min={0} max={40} step={0.5} value={divergeLen} onChange={(e) => setDivergeLen(parseFloat(e.target.value))}
+                style={{ width: 110, accentColor: C.series7 }} />
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(divergeLen, 1)} mm</span>
+              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 4 }}>bend tightness</span>
               <input type="range" min={0.25} max={1.2} step={0.01} value={tight} onChange={(e) => setTight(parseFloat(e.target.value))}
                 style={{ width: 110, accentColor: C.series2 }} />
               <span style={{ fontSize: 10, color: C.inkMuted }}>divider end</span>
@@ -981,6 +991,55 @@ export default function HGridThroat() {
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 4, lineHeight: 1.5 }}>
             Padding lengthens short paths — it cannot shorten long ones, so the longest cell sets the budget for every other cell.
             ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past λ/4 the cells are fighting each other.
+            {" "}Divergence run is a straight launch of that exact length, along the local wavefront normal, before any bend starts — direction
+            only, it does not hold the cross-section at its throat size; the profile expands from the very first station regardless.
+          </div>
+
+          {/* EXPANSION PROFILE */}
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ ...secTitle, marginBottom: 0 }}>Expansion profile</span>
+              <button onClick={() => setProfileT(profileT == null ? 1 : null)}
+                style={btn(profileT != null, C.series3)}>
+                {profileT == null ? "emergent — no law imposed" : "Hypex"}
+              </button>
+              {profileT != null && <>
+                <span style={{ fontSize: 10, color: C.inkMuted }}>T</span>
+                <input type="range" min={0} max={1} step={0.01} value={profileT}
+                  onChange={(e) => setProfileT(parseFloat(e.target.value))}
+                  style={{ width: 130, accentColor: C.series3 }} />
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
+                  {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
+                </span>
+                {map.profFcMin != null && (
+                  <span style={{ fontFamily: C.mono, fontSize: 10, marginLeft: 6 }}>
+                    <span style={{ color: C.inkMuted }}>f_c </span>
+                    <span style={{ color: C.series4 }}>{fmt(map.profFcMin, 0)}–{fmt(map.profFcMax, 0)} Hz</span>
+                  </span>
+                )}
+              </>}
+            </div>
+            {profileT != null && map.clearance && (
+              <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+                <span><span style={{ color: C.inkMuted }}>widest duct gap </span>
+                  <span style={{ color: C.series4 }}>{fmt(Math.max(...map.clearance.perStation), 2)} mm</span></span>
+                <span><span style={{ color: C.inkMuted }}>section scale k </span>
+                  <span style={{ color: map.profScaleMax > 1 + 1e-6 ? C.series5 : C.ink }}>
+                    {fmt(map.profScaleMin, 3)} – {fmt(map.profScaleMax, 3)}</span></span>
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
+              {profileT == null
+                ? <>No expansion law is imposed: the area schedule is whatever the routing happens to produce, and because it comes out
+                  near-linear in <em>√A</em> the cells tile the whole way with no gap between them. Impedance transformation is the
+                  motivating reason for a multicell, so this is the setting to move off.</>
+                : <>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
+                  set to land each cell exactly on its own mouth area at its own path length. That makes the scale <em>k</em> = 1 at both ends,
+                  leaving the throat mating face and the mouth tiling untouched, and turns f_c into a readout of the loading you got.
+                  Every cell has the same expansion ratio, so f_c differs between them only through path length — equalising ΔL equalises the cutoff too.
+                  {" "}The gap between ducts is not a separate feature: it is the convex profile dipping below the near-linear fan of the centrelines,
+                  which are pinned together at both ends. T sets both.</>}
+            </div>
           </div>
         </div>
       )}

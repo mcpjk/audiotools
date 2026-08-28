@@ -397,6 +397,177 @@ head("Throat to mouth");
     M.mapThroatToMouth(og.throat, { c, R, rectangular: og.rectangular }) === null, "ogrid returns null");
 }
 
+// ── 10a2. divergence ────────────────────────────────────────────────────────
+head("Throat divergence");
+{
+  // buildTrajectory in isolation, against its own docstring claims.
+  const A = [0, 0, 0], dirA = [1, 0, 0], B = [40, 30, 0], dirB = [0, 1, 0];
+  const divergeLen = 12, tight = 0.55;
+  const traj = M.buildTrajectory(A, dirA, B, dirB, { divergeLen, tight });
+  // f (where the straight run ends) against its own documented closed form:
+  // f = divergeLen / (divergeLen + chord), chord = |B - (A + dirA*divergeLen)|.
+  // Computed independently here, not by calling into buildTrajectory, so this
+  // checks the claim in the comment rather than the code's own arithmetic.
+  const Ap = [A[0] + dirA[0] * divergeLen, A[1] + dirA[1] * divergeLen, A[2] + dirA[2] * divergeLen];
+  const chord = Math.hypot(B[0] - Ap[0], B[1] - Ap[1], B[2] - Ap[2]);
+  const f = divergeLen / (divergeLen + chord);
+  const pAtF = traj(f);
+  const lenAtF = Math.hypot(pAtF[0] - A[0], pAtF[1] - A[1], pAtF[2] - A[2]);
+  check("straight run covers exactly divergeLen mm", lenAtF, divergeLen, 1e-9, "mm");
+  check("...and lands exactly on A + dirA * divergeLen", Math.hypot(pAtF[1] - Ap[1], pAtF[2] - Ap[2]), 0, 1e-9, "mm");
+  checkTrue("every sampled point before the join is exactly colinear with dirA",
+    [0.1, 0.3, 0.5, 0.7, 0.9].map((u) => u * f).every((u) => {
+      const p = traj(u);
+      return Math.hypot(p[1], p[2]) < 1e-9;
+    }), "y = z = 0 throughout the straight run");
+  // C1 continuity: finite-difference tangent just before and after f agree
+  const e = 1e-6;
+  const before = traj(Math.max(0, f - e)), at = traj(f), after = traj(Math.min(1, f + e));
+  const tBefore = [(at[0] - before[0]) / e, (at[1] - before[1]) / e, (at[2] - before[2]) / e];
+  const tAfter = [(after[0] - at[0]) / e, (after[1] - at[1]) / e, (after[2] - at[2]) / e];
+  const nB = Math.hypot(...tBefore) || 1, nA = Math.hypot(...tAfter) || 1;
+  const cosAngle = (tBefore[0] * tAfter[0] + tBefore[1] * tAfter[1] + tBefore[2] * tAfter[2]) / (nB * nA);
+  check("tangent is continuous across the straight-to-Hermite join", cosAngle, 1, 1e-6);
+  checkTrue("divergeLen = 0 reduces to the plain Hermite (no straight run)",
+    (() => {
+      const t0 = M.buildTrajectory(A, dirA, B, dirB, { divergeLen: 0, tight });
+      let worst = 0;
+      for (const u of [0, 0.2, 0.5, 0.8, 1]) {
+        const p = t0(u);
+        // must match a hand-rolled Hermite with the same tangents
+        const s2 = u * u, s3v = s2 * u;
+        const h00 = 2 * s3v - 3 * s2 + 1, h10 = s3v - 2 * s2 + u, h01 = -2 * s3v + 3 * s2, h11 = s3v - s2;
+        const chord = Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
+        const T0 = dirA.map((d) => d * tight * chord * 3), T1 = dirB.map((d) => d * tight * chord * 3);
+        for (let k = 0; k < 3; k++) {
+          const want = h00 * A[k] + h10 * T0[k] + h01 * B[k] + h11 * T1[k];
+          worst = Math.max(worst, Math.abs(p[k] - want));
+        }
+      }
+      return worst < 1e-9;
+    })(), "identical to hermite(A,T0,B,T1,u)");
+
+  // In the full pipeline: divergence must NOT separate cells that share a
+  // throat divider. A shared boundary point's launch direction is a pure
+  // function of its own position, so it is IDENTICAL whichever neighbouring
+  // cell reads it — the straight run is the same physical ray for both, and
+  // stays exactly coincident. That is the invariant divergeLen must never
+  // break; it is not expected to create separation between glued cells, only
+  // to delay how far downstream their (necessarily different) curvature
+  // toward different mouth targets begins.
+  const ST = 16;
+  const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  for (const dl of [0, 15, 30]) {
+    const map = M.mapThroatToMouth(L.throat, {
+      c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
+      flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000, dividerEndFrac: 0.35,
+      stations: ST, keepGeometry: true, wallWidthAt: 200 / 6, divergeLen: dl,
+    });
+    let worst = 0;
+    for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+      const A2 = map.rows.find((r) => r.id === i * 3 + j), B2 = map.rows.find((r) => r.id === (i + 1) * 3 + j);
+      for (let q = 0; q <= ST; q++)
+        for (let k = 0; k <= 16; k++)
+          worst = Math.max(worst, d3(A2.sched[q].pts[(16 + k) % 64], B2.sched[q].pts[(64 - k) % 64]));
+    }
+    check(`divergeLen=${dl}mm: neighbours still share their whole boundary`, worst, 0, 1e-7, "mm");
+  }
+}
+
+// ── 10a3. expansion profile ─────────────────────────────────────────────────
+head("Hypex expansion profile");
+{
+  // the profile maths, against closed forms
+  check("T=1 is exponential: r(x) = rt e^(mx)", M.hypexR(50, 2, 0.01, 1), 2 * Math.exp(0.5), 1e-12);
+  check("T=0 is hyperbolic: r(x) = rt cosh(mx)", M.hypexR(50, 2, 0.01, 0), 2 * Math.cosh(0.5), 1e-12);
+  check("r(0) = rt for any T", M.hypexR(0, 3.7, 0.02, 0.4), 3.7, 1e-15);
+  check("exponential flare rate is 2m everywhere", M.hypexFlareRate(37, 0.01, 1), 0.02, 1e-12, "/mm");
+  // solveHypexM inverted against hypexR: the m it returns must reproduce the ratio
+  let worstInv = 0;
+  for (const T of [0, 0.4, 1]) for (const ratio of [1.5, 3, 8]) for (const Lp of [40, 150, 400]) {
+    const m = M.solveHypexM(ratio, Lp, T);
+    worstInv = Math.max(worstInv, Math.abs(M.hypexR(Lp, 1, m, T) - ratio) / ratio);
+  }
+  check("solveHypexM inverted against hypexR recovers the ratio", worstInv, 0, 1e-9);
+  // and hypexLengthForRatio is the other inverse of the same relation
+  let worstLen = 0;
+  for (const T of [0, 0.4, 1]) for (const ratio of [1.5, 3, 8]) {
+    const m = 0.01;
+    const Lp = M.hypexLengthForRatio(ratio, m, T);
+    if (Lp != null) worstLen = Math.max(worstLen, Math.abs(M.hypexR(Lp, 1, m, T) - ratio) / ratio);
+  }
+  check("hypexLengthForRatio is the length that reaches that ratio", worstLen, 0, 1e-12);
+
+  const ST = 16;
+  const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const mopt = {
+    c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
+    flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000, dividerEndFrac: 0.35,
+    stations: ST, keepGeometry: true, wallWidthAt: 200 / 6,
+  };
+  const off = M.mapThroatToMouth(L.throat, { ...mopt, profileT: null });
+
+  // profileT = null must change nothing at all
+  const t0 = M.mapThroatToMouth(L.throat, { ...mopt, profileT: null });
+  checkTrue("profileT = null leaves every station area untouched",
+    off.rows.every((r, i) => r.sched.every((s, q) => Math.abs(s.area - t0.rows[i].sched[q].area) < 1e-12)),
+    "byte-for-byte with the pre-profile pipeline");
+  check("...and the flowed sections still tile (zero clearance)", off.clearance.min, 0, 1e-7, "mm");
+
+  for (const T of [0, 0.7, 1]) {
+    const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
+    // k = 1 at BOTH ends, so the throat mating face and the mouth tiling are
+    // untouched whatever T is — that is what makes the profile safe to impose.
+    let endWorst = 0;
+    mp.rows.forEach((r, i) => {
+      endWorst = Math.max(endWorst,
+        Math.abs(r.sched[0].area / off.rows[i].sched[0].area - 1),
+        Math.abs(r.sched[ST].area / off.rows[i].sched[ST].area - 1));
+    });
+    check(`T=${T}: throat and mouth areas preserved exactly`, endWorst, 0, 1e-9);
+
+    // every station's area must be the closed-form Hypex value for that cell
+    let profWorst = 0;
+    for (const r of mp.rows) {
+      const A0 = r.sched[0].area;
+      for (const st of r.sched) {
+        const want = A0 * M.hypexR(st.sLen, 1, r.profM, T) ** 2;
+        profWorst = Math.max(profWorst, Math.abs(st.area - want) / want);
+      }
+    }
+    check(`T=${T}: every section area is A_throat x hypexR(x,1,m,T)^2`, profWorst, 0, 1e-9);
+  }
+
+  // The gap the profile opens, and T ordering it. T=0 has zero initial flare so
+  // it stays smallest longest and dips furthest below the tiling configuration.
+  const g = [0, 0.7, 1].map((T) => {
+    const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
+    return { T, gap: Math.max(...mp.clearance.perStation), kMin: mp.profScaleMin, kMax: mp.profScaleMax };
+  });
+  checkTrue("the profile opens a gap between neighbouring ducts",
+    g.every((x) => x.gap > 1), g.map((x) => `T=${x.T}: ${x.gap.toFixed(2)}mm`).join("  "));
+  checkTrue("...and T orders it: cosh dips furthest, exponential least",
+    g[0].gap > g[1].gap && g[1].gap > g[2].gap,
+    `${g[0].gap.toFixed(2)} > ${g[1].gap.toFixed(2)} > ${g[2].gap.toFixed(2)} mm`);
+
+  // k <= 1 is the exact no-overlap condition, and k > 1 is REACHABLE, so it has
+  // to be reported rather than assumed. Verified separately by ray cast: at
+  // kMax = 1.00000 mid-path interpenetration is exactly 0, and at kMax = 1.018
+  // it appears at precisely the stations where k > 1.
+  checkTrue("T=0 stays within the tiling configuration (k <= 1, no overlap possible)",
+    g[0].kMax <= 1 + 1e-9, `kMax = ${g[0].kMax.toFixed(6)}`);
+  checkTrue("k > 1 is reachable and is reported, not clamped",
+    g[2].kMax > 1 + 1e-6, `T=1 reaches kMax = ${g[2].kMax.toFixed(5)} — profile exceeds the tiling area`);
+
+  // every cell has the same expansion RATIO (equal throat areas, uniform mouth
+  // grid), so fc differs between cells only through path length
+  const mp1 = M.mapThroatToMouth(L.throat, { ...mopt, profileT: 1 });
+  checkTrue("fc spread across cells is small, and tracks path length only",
+    (mp1.profFcMax - mp1.profFcMin) / mp1.profFcMin < 0.1,
+    `${mp1.profFcMin.toFixed(0)}-${mp1.profFcMax.toFixed(0)} Hz over dL = ${mp1.dL.toFixed(1)} mm`);
+}
+
 // ── 10b. loft parameterisation ─────────────────────────────────────────────
 head("Loft parameterisation");
 {

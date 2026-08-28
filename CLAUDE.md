@@ -288,6 +288,59 @@ connected to this tool.
   perpendicular to its own centreline, and at the throat that already points
   down the exit cone: station 0 came out tilted by up to 6.85 deg, straddling
   z = +-0.5 mm, with no common face across the eighteen ducts to seat on.
+- **Radial launch EXPANDS cells; it does not separate them. Those are two
+  different mechanisms and the tool currently only has the first.**
+  `buildTrajectory`'s straight run moves each boundary point along `dirA`, the
+  ray from the virtual apex through that point, so the cell grows as a pure
+  radial fan: measured cell 3,2 goes 56.20 -> 84.14 mm2 over 28.2 mm of
+  straight run, against a closed-form fan prediction of
+  ((126.3+28.2)/126.3)^2 = 1.4965 versus 1.497 measured. But a divider-shared
+  point is identical for both neighbours, so it gets the identical ray from
+  either cell's call and the shared wall stays exactly shared — mismatch
+  ~7e-10 mm at every divergeLen from 0 to 30 mm. **The cells expand INTO
+  contact, not apart.**
+  Gaps between ducts — what a conventional multicell has, and what gives
+  snaking room for independent path lengths — need a separate DETACHMENT
+  mechanism. The only thing currently holding two ducts apart is the t/2
+  divider inset, and it runs the wrong way for that purpose: it tapers to
+  ZERO at dividerEndFrac (measured gap 0.40 -> 0.26 -> 0.11 -> 0.00, then
+  0.00 to the mouth), so past the divider region the tool MERGES ducts rather
+  than separating them. A clearance metric between neighbouring ducts is
+  therefore wanted — just keyed to the detachment/gap parameter and the snake
+  amplitude, never to divergeLen, which cannot move it.
+- **The expansion profile and the gaps between ducts are ONE mechanism.**
+  Adjacent centrelines fan apart roughly LINEARLY (a radial fan from the
+  virtual apex) while a Hypex profile grows CONVEXLY, and both are pinned equal
+  at the two ends because the cells tile the disc at the throat and tile the
+  rectangle at the mouth. A convex curve pinned to a straight line at two
+  points lies below it in between, and that dip is the gap. Measured at 6x3:
+  widest duct gap 7.99 mm at T=0, 5.46 mm at T=0.7, 4.72 mm at T=1 — so **T
+  sets the loading characteristic and the duct separation with one number**.
+  The tool had no gaps before the profile existed for exactly this reason: its
+  emergent schedule had sqrt(A) linear in x to R^2 = 0.9915, and a straight
+  line pinned to a straight line has no dip. Do not build "gaps" as a separate
+  feature with its own parameter.
+- **The profile is applied by SCALING the flowed section about its centroid,
+  not by rebuilding it in a frame.** Reframing past a detach station is exactly
+  the architecture that caused the 2.8-5.8 mm interpenetration. Scaling keeps
+  the flowed construction supplying shape, position and orientation, and
+  scales the vector area by exactly k^2 even though the section is not planar.
+- **`m` is solved, never asked for; `k <= 1` is an exact overlap detector.**
+  (fc, T) and the geometry are over-determined — pick both and the profile
+  misses the cell's mouth area, leaving an area step at the aperture. Solving m
+  so the profile lands on the mouth area at that cell's own path length makes
+  k = 1 at BOTH ends, so the throat mating face and the mouth tiling survive
+  any T, and fc becomes a readout. Because equal-area cells and a uniform mouth
+  grid give every cell the SAME expansion ratio, fc differs between cells only
+  through path length — equalising dL equalises the cutoff too.
+  Scaling by k <= 1 maps a section strictly inside itself, so from a merely
+  tiling configuration every cell can only move AWAY from its neighbours and
+  overlap is impossible; k > 1 is the only way this construction can push two
+  ducts together. It IS reachable (1.094 at 8x3, 400x200 mouth, apex 60, T=1),
+  and verified by ray cast: at kMax = 1.00000 mid-path interpenetration is
+  exactly 0, at kMax = 1.018 it appears at precisely the stations where k > 1.
+  Reported, never clamped — clamping would keep the geometry legal by quietly
+  abandoning the expansion law the number exists to deliver.
 - **Two things must never be tested on the residual alone.** The Schwarz–
   Christoffel inversion converges on its STEP, because its residual has a
   quadrature floor; and the equal-area solve converges on the residual AND the
