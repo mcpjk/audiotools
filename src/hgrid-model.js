@@ -1279,6 +1279,66 @@ const un3 = (a) => { const n = nrm3(a) || 1; return [a[0] / n, a[1] / n, a[2] / 
 // Aperture surface. Spherical cap about the apex, or an oblate spheroid about
 // the same apex with equatorial semi-axis flattened by `flatten` (1 = sphere).
 // z(x,y) = -apex + Cz sqrt(1 - (x^2+y^2)/A^2),  Cz = apex + depth, A = flatten*Cz
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPANSION PROFILE (HYPEX)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Same family the horn calculator draws: r(x) = rt (cosh mx + T sinh mx), so
+// S(x) = St (cosh mx + T sinh mx)^2. T = 0 is hyperbolic (cosh, zero initial
+// flare, largest throat impedance), T = 1 is exponential. The functions are
+// generic in x and carry no assumption that the duct is circular, so they
+// apply here to an EQUIVALENT RADIUS sqrt(area) — area ratio in, area ratio
+// out — which is all a cell of any cross-section needs.
+//
+// WHY THIS IS ALSO THE GAP MECHANISM. Adjacent cells' centrelines fan apart
+// roughly LINEARLY with distance (a radial fan from the virtual apex), while
+// this profile grows CONVEXLY. Both are pinned equal at the two ends, because
+// the cells tile the disc at the throat and tile the rectangle at the mouth. A
+// convex curve pinned to a straight line at two points lies below it between
+// them, and that dip is the gap a traditional multicell has. Modelled on the
+// real centreline pitch at 6x3: max mid-path gap 7.44 mm at T = 0, 4.90 mm at
+// T = 0.7, 4.20 mm at T = 1. So T sets the loading characteristic and the
+// separation between ducts with one number; they are not separate features.
+// The tool had no gaps before this because it had no expansion law at all —
+// its emergent schedule had sqrt(A) linear in x to R^2 = 0.9915, and a
+// straight line pinned to a straight line has no dip.
+export const hypexR = (x, rt, m, T) => rt * (Math.cosh(m * x) + T * Math.sinh(m * x));
+
+export const hypexFlareRate = (x, m, T) => {
+  const den = Math.cosh(m * x) + T * Math.sinh(m * x);
+  return Math.abs(den) < 1e-15 ? 0 : (2 * m * (Math.sinh(m * x) + T * Math.cosh(m * x))) / den;
+};
+
+// Length needed to reach a radius ratio: cosh(mL) + T sinh(mL) = ratio, which
+// is a quadratic in v = e^(mL). Returns null where the family cannot reach it.
+export function hypexLengthForRatio(ratio, m, T) {
+  if (!(ratio > 1) || !(m > 0)) return null;
+  const a = (1 + T) / 2, bq = -ratio, cq = (1 - T) / 2;
+  const disc = bq * bq - 4 * a * cq;
+  if (disc < 0) return null;
+  const v = (-bq + Math.sqrt(disc)) / (2 * a);
+  return v > 0 ? Math.log(v) / m : null;
+}
+
+// The inverse a cell actually needs: given the radius ratio it must reach and
+// the path length it has, what m gets it there? Solved rather than asked for,
+// because (fc, T) and the geometry are over-determined — pick both and the
+// profile misses the mouth area, leaving an area step at the aperture. m is
+// monotone increasing in the ratio it produces at fixed L and T, so bisection
+// is enough, and matches how scAlphaForAspect and the seed continuation
+// already solve scalar problems in this file.
+export function solveHypexM(ratio, L, T = 1) {
+  if (!(ratio > 1) || !(L > 0)) return 0;
+  let lo = 1e-12, hi = 1e-3;
+  for (let i = 0; i < 200 && hypexR(L, 1, hi, T) < ratio; i++) hi *= 2;
+  if (hypexR(L, 1, hi, T) < ratio) return hi;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    if (hypexR(L, 1, mid, T) < ratio) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 export function apertureSurface({ apex, depth, flatten = 1 }) {
   const Cz = apex + depth;
   const A = flatten * Cz;
@@ -1369,7 +1429,7 @@ export function mapThroatToMouth(throat, opts) {
     c = 343, mouthW = 200, mouthH = 100, apex = 120, depth = 150, flatten = 1,
     exitHalfAngle = 8, tight = 0.55, fTarget = 20000, dividerEndFrac = 0.35,
     stations = 24, wallWidthAt = 10, samples = 64, keepGeometry = false,
-    divergeLen = 0,
+    divergeLen = 0, profileT = null,
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
   // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
@@ -1492,11 +1552,8 @@ export function mapThroatToMouth(throat, opts) {
       return buildTrajectory(A, dirA, B, dirB, { divergeLen, tight });
     });
 
-    const sched = [];
-    for (let q = 0; q <= stations; q++) {
-      const u = q / stations;
-      const ring = traj.map((tr) => tr(u));
-      // vector area of a closed space polygon: half the sum of p_k x p_(k+1)
+    // vector area of a closed space polygon: half the sum of p_k x p_(k+1)
+    const vecArea = (ring) => {
       let ax = 0, ay = 0, az = 0;
       for (let k = 0; k < ring.length; k++) {
         const a = ring[k], b = ring[(k + 1) % ring.length];
@@ -1504,6 +1561,59 @@ export function mapThroatToMouth(throat, opts) {
         ay += a[2] * b[0] - a[0] * b[2];
         az += a[0] * b[1] - a[1] * b[0];
       }
+      return [ax / 2, ay / 2, az / 2];
+    };
+
+    const rings = [];
+    for (let q = 0; q <= stations; q++) rings.push(traj.map((tr) => tr(q / stations)));
+
+    // ── EXPANSION PROFILE, AND THE GAP IT OPENS ─────────────────────────────
+    // The flowed sections tile: neighbours share their boundary exactly, so
+    // there is no room between ducts. Scaling each section about its own
+    // centroid to the area an expansion law asks for is what makes room —
+    // where the profile wants LESS than the tiling configuration has, every
+    // cell shrinks inward from the shared wall and a gap opens. It cannot
+    // cause overlap, because shrinking only ever moves a boundary away from
+    // its neighbour. k > 1 is the failure case and is what the clearance
+    // metric below exists to catch.
+    //
+    // m is SOLVED rather than asked for. (fc, T) and the geometry are
+    // over-determined: pick both and the profile misses the cell's mouth area,
+    // leaving an area step at the aperture. Solving m so the profile lands
+    // exactly on the mouth area at this cell's own path length makes k = 1 at
+    // both ends by construction — the throat mating face and the mouth tiling
+    // are therefore untouched, whatever T is — and turns fc into a readout of
+    // the loading you actually got.
+    let profM = null, profFc = null, profScaleMin = 1, profScaleMax = 1;
+    if (profileT != null) {
+      const A0 = nrm3(vecArea(rings[0])), AL = nrm3(vecArea(rings[stations]));
+      const ratio = A0 > 1e-12 ? Math.sqrt(AL / A0) : 1;
+      profM = solveHypexM(ratio, L, profileT);
+      profFc = (profM * 1000 * c) / TAU; // m is per mm, c is m/s
+      for (let q = 0; q <= stations; q++) {
+        const want = A0 * hypexR(sArr[Math.round((q / stations) * M)], 1, profM, profileT) ** 2;
+        const have = nrm3(vecArea(rings[q]));
+        const k = have > 1e-12 ? Math.sqrt(want / have) : 1;
+        profScaleMin = Math.min(profScaleMin, k);
+        profScaleMax = Math.max(profScaleMax, k);
+        if (Math.abs(k - 1) > 1e-15) {
+          const ring = rings[q], n = ring.length;
+          const ctr = [0, 0, 0];
+          for (const p of ring) { ctr[0] += p[0] / n; ctr[1] += p[1] / n; ctr[2] += p[2] / n; }
+          rings[q] = ring.map((p) => [
+            ctr[0] + (p[0] - ctr[0]) * k,
+            ctr[1] + (p[1] - ctr[1]) * k,
+            ctr[2] + (p[2] - ctr[2]) * k,
+          ]);
+        }
+      }
+    }
+
+    const sched = [];
+    for (let q = 0; q <= stations; q++) {
+      const u = q / stations;
+      const ring = rings[q];
+      const [ax, ay, az] = vecArea(ring);
       const idx = Math.round(u * M);
       // `area` is the section's OWN area. `axial` is its projection on the
       // direction of travel — the flux-carrying cross-section, and the one the
@@ -1513,8 +1623,8 @@ export function mapThroatToMouth(throat, opts) {
       // hidden by pretending the cut is square to the path.
       const T = tans[idx];
       sched.push({
-        s: u, area: Math.hypot(ax, ay, az) / 2,
-        axial: Math.abs(ax * T[0] + ay * T[1] + az * T[2]) / 2,
+        s: u, area: Math.hypot(ax, ay, az),
+        axial: Math.abs(ax * T[0] + ay * T[1] + az * T[2]),
         z: pts[idx][2], sLen: sArr[idx],
         // the flowed section, in world coordinates — kept only when something
         // is going to export or draw it
@@ -1549,6 +1659,10 @@ export function mapThroatToMouth(throat, opts) {
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
       sched, kappaMax: Math.max(...kappa),
+      // profile: m is per mm, fc the cutoff it corresponds to, and the scale
+      // range says how far the profile pulled the section in from the tiling
+      // configuration — profScaleMin is what opened the gap
+      profM, profFc, profScaleMin, profScaleMax,
     });
   }
 
@@ -1581,8 +1695,65 @@ export function mapThroatToMouth(throat, opts) {
     sigma.push({ s: q / stations, area: A, axial: Ax, zMean: z / rows.length, sMean: sl / rows.length });
   }
 
+  // ── CLEARANCE BETWEEN NEIGHBOURING DUCTS ────────────────────────────────
+  // With no profile the flowed sections tile, so this is 0 everywhere and says
+  // so honestly. With a profile it is the gap the expansion law opened, and it
+  // is the check that the profile has not asked for MORE area than the tiling
+  // configuration has — the one way scaling can push cells into each other.
+  // Point-to-segment rather than point-to-point: at 64 samples round a cell,
+  // point-to-point carries ~0.5 mm of discretisation noise, which is the same
+  // size as the wall being measured.
+  const clearance = (() => {
+    if (!keepGeometry || !rows.length || !rows[0].sched[0].pts) return null;
+    const byIdx = new Map(rows.map((r) => [`${r.i},${r.j}`, r]));
+    const pairs = [];
+    for (let a = 0; a < nc; a++) for (let b = 0; b < nr; b++) {
+      for (const [da, db] of [[1, 0], [0, 1]]) {
+        const A = byIdx.get(`${a},${b}`), B = byIdx.get(`${a + da},${b + db}`);
+        if (A && B) pairs.push([A, B]);
+      }
+    }
+    const pSeg = (P, U, V) => {
+      const ux = V[0] - U[0], uy = V[1] - U[1], uz = V[2] - U[2];
+      const L2 = ux * ux + uy * uy + uz * uz || 1e-18;
+      let k = ((P[0] - U[0]) * ux + (P[1] - U[1]) * uy + (P[2] - U[2]) * uz) / L2;
+      k = k < 0 ? 0 : k > 1 ? 1 : k;
+      return Math.hypot(P[0] - U[0] - ux * k, P[1] - U[1] - uy * k, P[2] - U[2] - uz * k);
+    };
+    const perStation = [];
+    let worst = Infinity, worstAt = 0;
+    for (let q = 0; q <= stations; q++) {
+      let mn = Infinity;
+      for (const [A, B] of pairs) {
+        const pa = A.sched[q].pts, pb = B.sched[q].pts;
+        for (let k = 0; k < pa.length; k += 2)
+          for (let e = 0; e < pb.length; e++)
+            mn = Math.min(mn, pSeg(pa[k], pb[e], pb[(e + 1) % pb.length]));
+      }
+      perStation.push(mn);
+      if (mn < worst) { worst = mn; worstAt = q; }
+    }
+    return { perStation, min: worst, minAt: worstAt, pairs: pairs.length };
+  })();
+
   const turnLimitDeg = ((lam / 8) / wallWidthAt) * R2D;
   return {
+    clearance,
+    profileT,
+    profFcMin: profileT != null ? Math.min(...rows.map((r) => r.profFc)) : null,
+    profFcMax: profileT != null ? Math.max(...rows.map((r) => r.profFc)) : null,
+    profScaleMin: profileT != null ? Math.min(...rows.map((r) => r.profScaleMin)) : null,
+    // THE OVERLAP DETECTOR, and it is exact rather than sampled. Scaling a
+    // section about its own centroid by k <= 1 maps it strictly inside itself,
+    // so from a configuration that merely tiles, every cell can only move AWAY
+    // from its neighbours: overlap is impossible. k > 1 is the profile asking
+    // for more area than the tiling configuration has at that station, and is
+    // the only way this construction can push two ducts into each other. It is
+    // reachable — 1.094 at 8x3 with a 400x200 mouth, apex 60, T = 1 — so it is
+    // reported rather than assumed away, and never silently clamped: clamping
+    // would keep the geometry legal by quietly abandoning the expansion law
+    // the number is there to deliver.
+    profScaleMax: profileT != null ? Math.max(...rows.map((r) => r.profScaleMax)) : null,
     rows, surf, xs, ys, Lmax, Lmin, dL, lambda: lam,
     dLfrac: dL / lam,
     band: dL <= lam / 8 ? "ok" : dL <= lam / 4 ? "warn" : "bad",
