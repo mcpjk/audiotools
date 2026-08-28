@@ -1309,6 +1309,42 @@ function hermite(P0, T0, P1, T1, s) {
   ];
 }
 
+// A trajectory from A to B, launch direction dirA to arrival direction dirB,
+// with an explicit straight run of `divergeLen` mm immediately after A. This
+// is DIRECTION ONLY: it says where the duct's axis points, nothing about its
+// cross-section. Area shaping (the Hypex profile) is layered on top
+// separately, starting at s=0, on whatever this trajectory is doing at that
+// station — straight, transitioning, or anything later added between them —
+// so "distance before the centreline starts curving" and "distance before
+// the profile starts expanding" are deliberately two different things.
+//
+// The one caller (mapThroatToMouth) uses this identically for the reported
+// centreline and for every boundary point's own flow, so all of them share
+// the same shape of parameterisation and stay mutually consistent the way
+// they already do today.
+//
+// divergeLen is exact PHYSICAL length for every trajectory regardless of its
+// own A-to-B distance: for s <= f the point is exactly `A + dirA * (s/f) *
+// divergeLen`. Where the straight run ends, `f`, is chosen per trajectory as
+// divergeLen / (divergeLen + chord) — the straight run's own length against
+// the Hermite's natural length scale (the same chord already used to size
+// its tangents) — so a long point path and a short one each still get
+// exactly `divergeLen` mm of straight travel, just at different values of
+// the shared station fraction `s`. The join is C1: the Hermite's start
+// tangent is set to `dirA`, matching the straight run's tangent exactly, so
+// a caller finite-differencing across it (as the centreline already does)
+// sees a smooth curve, not a kink.
+export function buildTrajectory(A, dirA, B, dirB, { divergeLen = 0, tight = 0.55 } = {}) {
+  const Ap = a3(A, m3(dirA, divergeLen));
+  const chord = nrm3(s3(B, Ap)) || 1e-9;
+  const T0 = m3(dirA, tight * chord * 3), T1 = m3(dirB, tight * chord * 3);
+  const f = divergeLen > 1e-9 ? divergeLen / (divergeLen + chord) : 0;
+  return (s) => {
+    if (s <= f) return a3(A, m3(dirA, divergeLen * (f > 1e-9 ? s / f : 0)));
+    return hermite(Ap, T0, B, T1, (s - f) / (1 - f));
+  };
+}
+
 // Rotation-minimising frame by double reflection (Wang et al. 2008). Parallel
 // transport with no artificial spin, which is what makes the reported twist
 // the duct's own twist rather than the frame's.
@@ -1333,6 +1369,7 @@ export function mapThroatToMouth(throat, opts) {
     c = 343, mouthW = 200, mouthH = 100, apex = 120, depth = 150, flatten = 1,
     exitHalfAngle = 8, tight = 0.55, fTarget = 20000, dividerEndFrac = 0.35,
     stations = 24, wallWidthAt = 10, samples = 64, keepGeometry = false,
+    divergeLen = 0,
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
   // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
@@ -1363,17 +1400,16 @@ export function mapThroatToMouth(throat, opts) {
     const T0dir = un3(s3(P0, v3(0, 0, zLaunch)));
     const P1 = mc;
     const T1dir = nWave; // aim the duct at the apparent apex, not at the surface
-    const chord = nrm3(s3(P1, P0));
-    const T0 = m3(T0dir, tight * chord * 3), T1 = m3(T1dir, tight * chord * 3);
+    const centreTraj = buildTrajectory(P0, T0dir, P1, T1dir, { divergeLen, tight });
 
     // sample the centreline
     const M = samples, pts = [], tans = [];
     for (let q = 0; q <= M; q++) {
       const s = q / M;
-      pts.push(hermite(P0, T0, P1, T1, s));
+      pts.push(centreTraj(s));
       const e = 1e-5;
-      const a = hermite(P0, T0, P1, T1, Math.min(1, s + e));
-      const b = hermite(P0, T0, P1, T1, Math.max(0, s - e));
+      const a = centreTraj(Math.min(1, s + e));
+      const b = centreTraj(Math.max(0, s - e));
       tans.push(un3(s3(a, b)));
     }
     let L = 0;
@@ -1451,18 +1487,15 @@ export function mapThroatToMouth(throat, opts) {
     const traj = throatLocal.map((p, k) => {
       const A = v3(p[0] + cellRec.centroid[0], p[1] + cellRec.centroid[1], 0);
       const B = surf.point(mouthXY[k][0], mouthXY[k][1]);
-      const ch = nrm3(s3(B, A));
-      return {
-        A, B,
-        TA: m3(un3(s3(A, v3(0, 0, zLaunch))), tight * ch * 3),
-        TB: m3(surf.wavefront(B), tight * ch * 3),
-      };
+      const dirA = un3(s3(A, v3(0, 0, zLaunch)));
+      const dirB = surf.wavefront(B);
+      return buildTrajectory(A, dirA, B, dirB, { divergeLen, tight });
     });
 
     const sched = [];
     for (let q = 0; q <= stations; q++) {
       const u = q / stations;
-      const ring = traj.map((tr) => hermite(tr.A, tr.TA, tr.B, tr.TB, u));
+      const ring = traj.map((tr) => tr(u));
       // vector area of a closed space polygon: half the sum of p_k x p_(k+1)
       let ax = 0, ay = 0, az = 0;
       for (let k = 0; k < ring.length; k++) {

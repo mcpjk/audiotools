@@ -397,6 +397,84 @@ head("Throat to mouth");
     M.mapThroatToMouth(og.throat, { c, R, rectangular: og.rectangular }) === null, "ogrid returns null");
 }
 
+// ── 10a2. divergence ────────────────────────────────────────────────────────
+head("Throat divergence");
+{
+  // buildTrajectory in isolation, against its own docstring claims.
+  const A = [0, 0, 0], dirA = [1, 0, 0], B = [40, 30, 0], dirB = [0, 1, 0];
+  const divergeLen = 12, tight = 0.55;
+  const traj = M.buildTrajectory(A, dirA, B, dirB, { divergeLen, tight });
+  // f (where the straight run ends) against its own documented closed form:
+  // f = divergeLen / (divergeLen + chord), chord = |B - (A + dirA*divergeLen)|.
+  // Computed independently here, not by calling into buildTrajectory, so this
+  // checks the claim in the comment rather than the code's own arithmetic.
+  const Ap = [A[0] + dirA[0] * divergeLen, A[1] + dirA[1] * divergeLen, A[2] + dirA[2] * divergeLen];
+  const chord = Math.hypot(B[0] - Ap[0], B[1] - Ap[1], B[2] - Ap[2]);
+  const f = divergeLen / (divergeLen + chord);
+  const pAtF = traj(f);
+  const lenAtF = Math.hypot(pAtF[0] - A[0], pAtF[1] - A[1], pAtF[2] - A[2]);
+  check("straight run covers exactly divergeLen mm", lenAtF, divergeLen, 1e-9, "mm");
+  check("...and lands exactly on A + dirA * divergeLen", Math.hypot(pAtF[1] - Ap[1], pAtF[2] - Ap[2]), 0, 1e-9, "mm");
+  checkTrue("every sampled point before the join is exactly colinear with dirA",
+    [0.1, 0.3, 0.5, 0.7, 0.9].map((u) => u * f).every((u) => {
+      const p = traj(u);
+      return Math.hypot(p[1], p[2]) < 1e-9;
+    }), "y = z = 0 throughout the straight run");
+  // C1 continuity: finite-difference tangent just before and after f agree
+  const e = 1e-6;
+  const before = traj(Math.max(0, f - e)), at = traj(f), after = traj(Math.min(1, f + e));
+  const tBefore = [(at[0] - before[0]) / e, (at[1] - before[1]) / e, (at[2] - before[2]) / e];
+  const tAfter = [(after[0] - at[0]) / e, (after[1] - at[1]) / e, (after[2] - at[2]) / e];
+  const nB = Math.hypot(...tBefore) || 1, nA = Math.hypot(...tAfter) || 1;
+  const cosAngle = (tBefore[0] * tAfter[0] + tBefore[1] * tAfter[1] + tBefore[2] * tAfter[2]) / (nB * nA);
+  check("tangent is continuous across the straight-to-Hermite join", cosAngle, 1, 1e-6);
+  checkTrue("divergeLen = 0 reduces to the plain Hermite (no straight run)",
+    (() => {
+      const t0 = M.buildTrajectory(A, dirA, B, dirB, { divergeLen: 0, tight });
+      let worst = 0;
+      for (const u of [0, 0.2, 0.5, 0.8, 1]) {
+        const p = t0(u);
+        // must match a hand-rolled Hermite with the same tangents
+        const s2 = u * u, s3v = s2 * u;
+        const h00 = 2 * s3v - 3 * s2 + 1, h10 = s3v - 2 * s2 + u, h01 = -2 * s3v + 3 * s2, h11 = s3v - s2;
+        const chord = Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
+        const T0 = dirA.map((d) => d * tight * chord * 3), T1 = dirB.map((d) => d * tight * chord * 3);
+        for (let k = 0; k < 3; k++) {
+          const want = h00 * A[k] + h10 * T0[k] + h01 * B[k] + h11 * T1[k];
+          worst = Math.max(worst, Math.abs(p[k] - want));
+        }
+      }
+      return worst < 1e-9;
+    })(), "identical to hermite(A,T0,B,T1,u)");
+
+  // In the full pipeline: divergence must NOT separate cells that share a
+  // throat divider. A shared boundary point's launch direction is a pure
+  // function of its own position, so it is IDENTICAL whichever neighbouring
+  // cell reads it — the straight run is the same physical ray for both, and
+  // stays exactly coincident. That is the invariant divergeLen must never
+  // break; it is not expected to create separation between glued cells, only
+  // to delay how far downstream their (necessarily different) curvature
+  // toward different mouth targets begins.
+  const ST = 16;
+  const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  for (const dl of [0, 15, 30]) {
+    const map = M.mapThroatToMouth(L.throat, {
+      c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
+      flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000, dividerEndFrac: 0.35,
+      stations: ST, keepGeometry: true, wallWidthAt: 200 / 6, divergeLen: dl,
+    });
+    let worst = 0;
+    for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+      const A2 = map.rows.find((r) => r.id === i * 3 + j), B2 = map.rows.find((r) => r.id === (i + 1) * 3 + j);
+      for (let q = 0; q <= ST; q++)
+        for (let k = 0; k <= 16; k++)
+          worst = Math.max(worst, d3(A2.sched[q].pts[(16 + k) % 64], B2.sched[q].pts[(64 - k) % 64]));
+    }
+    check(`divergeLen=${dl}mm: neighbours still share their whole boundary`, worst, 0, 1e-7, "mm");
+  }
+}
+
 // ── 10b. loft parameterisation ─────────────────────────────────────────────
 head("Loft parameterisation");
 {

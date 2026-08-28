@@ -193,6 +193,7 @@ export default function HGridThroat() {
   const [apex, setApex] = useState(120);
   const [depth, setDepth] = useState(150);
   const [flatten, setFlatten] = useState(1);
+  const [divergeLen, setDivergeLen] = useState(0);
   const [tight, setTight] = useState(0.55);
   const [fTarget, setFTarget] = useState(20000);
   const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
@@ -296,9 +297,9 @@ export default function HGridThroat() {
   const map = useMemo(() => G.mapThroatToMouth(throat, {
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
     mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
-    tight, fTarget, dividerEndFrac, stations, keepGeometry: true,
+    divergeLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true,
     wallWidthAt: mouthW / shown.nc,
-  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, tight, fTarget, dividerEndFrac, stations]);
+  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, tight, fTarget, dividerEndFrac, stations]);
 
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
@@ -342,7 +343,7 @@ export default function HGridThroat() {
         const th = G.analyseThroat(cells, { c, R, dividerTotal: G.lineGridDividerLength(sol.geometry) });
         const mp = wTwist > 0 ? G.mapThroatToMouth(th, {
           c, nc, nr, R, rectangular: true, mouthW, mouthH, apex, depth, flatten,
-          exitHalfAngle: exitAngle, tight, fTarget, samples: 16, stations: 6, wallWidthAt: mouthW / nc,
+          exitHalfAngle: exitAngle, divergeLen, tight, fTarget, samples: 16, stations: 6, wallWidthAt: mouthW / nc,
         }) : null;
         return G.objective(th, mp, {
           wAspect, wTwist, wCorrection,
@@ -967,8 +968,12 @@ export default function HGridThroat() {
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <span style={secTitle}>Developed path length per cell against the ΔL budget</span>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 10, color: C.inkMuted }}>bend tightness</span>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, color: C.inkMuted }}>divergence run</span>
+              <input type="range" min={0} max={40} step={0.5} value={divergeLen} onChange={(e) => setDivergeLen(parseFloat(e.target.value))}
+                style={{ width: 110, accentColor: C.series7 }} />
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(divergeLen, 1)} mm</span>
+              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 4 }}>bend tightness</span>
               <input type="range" min={0.25} max={1.2} step={0.01} value={tight} onChange={(e) => setTight(parseFloat(e.target.value))}
                 style={{ width: 110, accentColor: C.series2 }} />
               <span style={{ fontSize: 10, color: C.inkMuted }}>divider end</span>
@@ -981,6 +986,8 @@ export default function HGridThroat() {
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 4, lineHeight: 1.5 }}>
             Padding lengthens short paths — it cannot shorten long ones, so the longest cell sets the budget for every other cell.
             ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past λ/4 the cells are fighting each other.
+            {" "}Divergence run is a straight launch of that exact length, along the local wavefront normal, before any bend starts — direction
+            only, it does not hold the cross-section at its throat size; the profile expands from the very first station regardless.
           </div>
         </div>
       )}
