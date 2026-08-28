@@ -315,11 +315,33 @@ connected to this tool.
   rectangle at the mouth. A convex curve pinned to a straight line at two
   points lies below it in between, and that dip is the gap. Measured at 6x3:
   widest duct gap 7.99 mm at T=0, 5.46 mm at T=0.7, 4.72 mm at T=1 — so **T
-  sets the loading characteristic and the duct separation with one number**.
+  sets the loading characteristic and the duct separation with one number**,
+  but only up to the crossing described in the next note.
   The tool had no gaps before the profile existed for exactly this reason: its
   emergent schedule had sqrt(A) linear in x to R^2 = 0.9915, and a straight
   line pinned to a straight line has no dip. Do not build "gaps" as a separate
   feature with its own parameter.
+- **The WIDEST duct gap is the one number that cannot see the failure; read
+  the narrowest.** Those 7.99 / 5.46 / 4.72 mm figures are maxima over the
+  stations, and they keep rising confidently while the ducts are already
+  touching somewhere else. At the default 6x3, 200x100, apex 120 the narrowest
+  mid-path gap runs 0.535 mm at T=0, 0.294 at T=0.3, 0.103 at T=0.6, and
+  **reaches 0 at T = 0.792** — the same T at which kMax crosses 1. Past that
+  the top of the slider is not "smaller gaps", it is contact and then
+  interpenetration. The crossing is nearly independent of the grid (0.789 at
+  8x3, 0.793 at 6x4) and moves a long way with the mouth (T = 0.651 at
+  400x200, 0.674 at 300x150): a bigger mouth is a bigger expansion ratio, so
+  the profile overshoots the tiling area sooner. Verified in the browser as
+  well as in node — at 400x200 the UI puts the crossing between T = 0.65 and
+  T = 0.8, against the bisected 0.651.
+  Note that `clearance.min` is **structurally** 0 for any profile, because the
+  cells tile at both ends by construction, so it can never signal anything;
+  `clearance.minMid` excludes exactly those two stations and is the one to
+  read. The two detectors are independent — k is an area ratio the profile
+  computes, minMid is a sampled point-to-segment distance between 18 real duct
+  outlines — and they agree on the boundary, which is a check rather than a
+  tautology. Overlap reads as a gap of 0 and never as a negative number, since
+  a distance cannot go negative; k is what says how deep the overlap goes.
 - **The profile is applied by SCALING the flowed section about its centroid,
   not by rebuilding it in a frame.** Reframing past a detach station is exactly
   the architecture that caused the 2.8-5.8 mm interpenetration. Scaling keeps

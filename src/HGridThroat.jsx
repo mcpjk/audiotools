@@ -200,6 +200,10 @@ export default function HGridThroat() {
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
   // 0 hyperbolic (cosh), 1 exponential.
   const [profileT, setProfileT] = useState(null);
+  // a target cutoff to compare against, NOT an input to the profile — m is
+  // solved from the geometry, so fc is a result and this is the readout that
+  // says how far the geometry is from delivering the one you wanted
+  const [fcWanted, setFcWanted] = useState(500);
   const [stations, setStations] = useState(16);
 
   // ── optimiser ──
@@ -304,6 +308,23 @@ export default function HGridThroat() {
     wallWidthAt: mouthW / shown.nc,
   }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, tight, fTarget, dividerEndFrac, stations, profileT]);
 
+  // What path length would deliver the cutoff you asked for? m is solved from
+  // the geometry, so fc comes out rather than going in — the only honest way to
+  // put a target fc to this tool today is to invert the same relation for the
+  // LENGTH it needs and show it against the length the cells have. Once the
+  // path is independently controllable that shortfall becomes something to
+  // close; until then it is the number that says how far off the geometry is.
+  const fcReq = useMemo(() => {
+    if (!map || profileT == null || !map.rows.length || !map.rows[0].profRatio) return { ok: false };
+    const mWant = G.hypexMForFc(fcWanted, shown.c);
+    const need = map.rows.map((r) => G.hypexLengthForRatio(r.profRatio, mWant, profileT));
+    if (need.some((x) => x == null || !isFinite(x))) return { ok: false };
+    const lo = Math.min(...need), hi = Math.max(...need);
+    // per cell, because each has its own path length to make up
+    const shortfall = Math.max(...map.rows.map((r, i) => need[i] - r.Lpath));
+    return { ok: true, lo, hi, shortfall };
+  }, [map, profileT, fcWanted, shown]);
+
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
   }), [throat, thickness, R, c, fTarget, process]);
@@ -385,7 +406,9 @@ export default function HGridThroat() {
     if (map && map.turnMax > map.turnLimitDeg)
       w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
-      w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.`);
+      w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${map.clearance && map.clearance.minMid < 1e-3 ? ` The measured gap agrees independently: the narrowest duct-to-duct clearance has closed to ${fmt(map.clearance.minMid, 4)} mm at station ${map.clearance.minMidAt}.` : ""}`);
+    if (map && map.clearance && profileT != null && map.clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
+      w.push(`The narrowest duct-to-duct gap is ${fmt(map.clearance.minMid, 4)} mm at station ${map.clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(map.clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
     if (map && map.aimMax > map.aimLimitDeg)
       w.push(`Aim error reaches ${fmt(map.aimMax, 1)}° against a ${fmt(map.aimLimitDeg, 1)}° tangency tolerance. Shape the aperture surface from the directivity requirement first — a surface chosen for routing radiates its own curvature error phase-coherently and no EQ removes it.`);
     if (shown.family === "hgrid" && solve.converged && solve.monotone && solve.monotone.gap < 0.02)
@@ -487,6 +510,8 @@ export default function HGridThroat() {
       "f1_Hz", "f1_model", "centroid_x", "centroid_y",
       "path_length_mm", "s_pad_mm", "turn_deg", "twist_deg", "aim_err_deg",
       "f1_at_divider_end_Hz", "decay_len_mm", "straight_run_needed_mm", "straight_run_avail_mm",
+      // the expansion profile, per cell. Empty when no law is imposed.
+      "profile_T", "hypex_m_per_mm", "fc_Hz", "expansion_ratio", "k_min", "k_max", "min_gap_mm",
     ].join(",");
     const rows = throat.cells.map((cc) => {
       const r = map && map.rows.find((x) => x.id === cc.id);
@@ -501,6 +526,14 @@ export default function HGridThroat() {
         r ? r.twistDeg.toFixed(3) : "", r ? r.aimErrDeg.toFixed(3) : "",
         r ? r.f1End.toFixed(1) : "", r && r.decayLen ? r.decayLen.toFixed(3) : "",
         r && r.runNeeded ? r.runNeeded.toFixed(2) : "", r ? r.straightAvail.toFixed(2) : "",
+        profileT != null ? profileT.toFixed(4) : "",
+        r && r.profM != null ? r.profM.toExponential(6) : "",
+        r && r.profFc != null ? r.profFc.toFixed(2) : "",
+        r && r.profRatio != null ? r.profRatio.toFixed(6) : "",
+        r && r.profM != null ? r.profScaleMin.toFixed(6) : "",
+        r && r.profM != null ? r.profScaleMax.toFixed(6) : "",
+        map && map.clearance && map.clearance.perCell.has(cc.id) && profileT != null
+          ? map.clearance.perCell.get(cc.id).toFixed(4) : "",
       ].join(",");
     });
     return [head, ...rows].join("\n");
@@ -521,6 +554,9 @@ export default function HGridThroat() {
       "# flow, not a cut square to the path, so the two differ by the section's",
       "# obliquity. USE flux_area for a 1-D horn schedule — it is the one that",
       "# integrates to the duct volume. equivalent_diameter follows flux_area.",
+      profileT != null
+        ? `# Hypex expansion profile imposed, T = ${profileT.toFixed(3)}, f_c = ${fmt(map.profFcMin, 0)}-${fmt(map.profFcMax, 0)} Hz.`
+        : "# NO expansion law is imposed: this schedule is whatever the routing produced.",
       head, ...rows,
     ].join("\n");
   };
@@ -964,6 +1000,19 @@ export default function HGridThroat() {
             <div><span style={{ color: C.inkMuted }}>path </span>{fmt(hoverRow.Lpath, 2)} mm · pad {fmt(hoverRow.pad, 2)}</div>
             <div><span style={{ color: C.inkMuted }}>turn </span>{fmt(hoverRow.turnDeg, 1)}° · twist {fmt(hoverRow.twistDeg, 1)}°</div>
             <div><span style={{ color: C.inkMuted }}>straight run </span>{fmt(hoverRow.straightAvail, 1)} / {hoverRow.runNeeded ? fmt(hoverRow.runNeeded, 1) : "—"} mm</div>
+            {profileT != null && hoverRow.profFc != null && <>
+              <div><span style={{ color: C.inkMuted }}>f_c </span>{fmt(hoverRow.profFc, 0)} Hz
+                <span style={{ color: C.inkMuted }}> · m </span>{hoverRow.profM.toExponential(3)}/mm</div>
+              <div><span style={{ color: C.inkMuted }}>scale k </span>
+                <span style={{ color: hoverRow.profScaleMax > 1 + 1e-6 ? C.series5 : C.ink }}>
+                  {fmt(hoverRow.profScaleMin, 3)}–{fmt(hoverRow.profScaleMax, 3)}</span>
+                {hoverRow.profScaleMax > 1 + 1e-6 && <span style={{ color: C.inkMuted }}> · over at station {hoverRow.profKMaxAt}</span>}</div>
+              {map.clearance && map.clearance.perCell.has(hoverRow.id) && (
+                <div><span style={{ color: C.inkMuted }}>gap to nearest neighbour </span>
+                  <span style={{ color: map.clearance.perCell.get(hoverRow.id) < 1e-3 ? C.series5 : C.series4 }}>
+                    {fmt(map.clearance.perCell.get(hoverRow.id), 3)} mm</span></div>
+              )}
+            </>}
           </>}
         </div>
       )}
@@ -1021,11 +1070,39 @@ export default function HGridThroat() {
             </div>
             {profileT != null && map.clearance && (
               <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
-                <span><span style={{ color: C.inkMuted }}>widest duct gap </span>
-                  <span style={{ color: C.series4 }}>{fmt(Math.max(...map.clearance.perStation), 2)} mm</span></span>
+                {/* The NARROWEST gap is the one that says whether you have separate
+                    ducts at all. The widest is next to it because it is the one the
+                    eye reads off the section plot, and on its own it is reassuring
+                    while the ducts are touching somewhere else entirely. */}
+                <span><span style={{ color: C.inkMuted }}>narrowest duct gap </span>
+                  <span style={{ color: map.clearance.minMid < 1e-3 ? C.series5 : C.series4 }}>
+                    {fmt(map.clearance.minMid, 3)} mm</span>
+                  <span style={{ color: C.inkMuted }}> at station {map.clearance.minMidAt}</span></span>
+                <span><span style={{ color: C.inkMuted }}>widest </span>
+                  <span style={{ color: C.ink }}>{fmt(map.clearance.max, 2)} mm</span>
+                  <span style={{ color: C.inkMuted }}> at {map.clearance.maxAt}</span></span>
                 <span><span style={{ color: C.inkMuted }}>section scale k </span>
                   <span style={{ color: map.profScaleMax > 1 + 1e-6 ? C.series5 : C.ink }}>
                     {fmt(map.profScaleMin, 3)} – {fmt(map.profScaleMax, 3)}</span></span>
+              </div>
+            )}
+            {profileT != null && map.profFcMin != null && (
+              <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10, color: C.inkMuted }}>if you wanted f_c</span>
+                <NumInput label="" value={fcWanted} onChange={setFcWanted} unit="Hz" min={20} max={20000} step={10} accent={C.series3} />
+                {/* m is solved from the geometry, so fc is a RESULT. Until path length
+                    is independently controllable, the honest way to ask for an fc is
+                    to show the path length that would deliver it against the length
+                    the cells actually have. */}
+                <span style={{ fontFamily: C.mono, fontSize: 11 }}>
+                  <span style={{ color: C.inkMuted }}>needs path </span>
+                  {fcReq.ok ? <>
+                    <span style={{ color: C.ink }}>{fmt(fcReq.lo, 1)}–{fmt(fcReq.hi, 1)} mm</span>
+                    <span style={{ color: C.inkMuted }}> vs {fmt(map.Lmin, 1)}–{fmt(map.Lmax, 1)} actual · </span>
+                    <span style={{ color: Math.abs(fcReq.shortfall) < 1 ? C.series4 : C.series5 }}>
+                      {fcReq.shortfall > 0 ? `${fmt(fcReq.shortfall, 1)} mm short` : `${fmt(-fcReq.shortfall, 1)} mm spare`}</span>
+                  </> : <span style={{ color: C.inkMuted }}>unreachable at this T</span>}
+                </span>
               </div>
             )}
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
@@ -1038,7 +1115,10 @@ export default function HGridThroat() {
                   leaving the throat mating face and the mouth tiling untouched, and turns f_c into a readout of the loading you got.
                   Every cell has the same expansion ratio, so f_c differs between them only through path length — equalising ΔL equalises the cutoff too.
                   {" "}The gap between ducts is not a separate feature: it is the convex profile dipping below the near-linear fan of the centrelines,
-                  which are pinned together at both ends. T sets both.</>}
+                  which are pinned together at both ends. T sets both — but only up to a point. Raising T flattens the dip, and past the T where
+                  the profile starts asking for more area than the tiling configuration has (<em>k</em> &gt; 1) the ducts come back into contact
+                  near the throat and then interpenetrate. Read the <strong style={{ color: C.inkDim }}>narrowest</strong> gap for that, never the
+                  widest: the widest keeps reporting several mm while the ducts are already touching somewhere else.</>}
             </div>
           </div>
         </div>
@@ -1108,7 +1188,8 @@ export default function HGridThroat() {
         </div>
         <div style={{ overflowX: "auto", maxHeight: 360 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: C.mono, fontSize: 11 }}>
-            <thead><tr>{["cell", "open mm²", "L_long", "L_short", "aspect", "⌀", "convex", "P–W kHz", "f₁ kHz", "model", "path mm", "pad", "turn°", "twist°", "aim°"].map((h) => (
+            <thead><tr>{["cell", "open mm²", "L_long", "L_short", "aspect", "⌀", "convex", "P–W kHz", "f₁ kHz", "model", "path mm", "pad", "turn°", "twist°", "aim°",
+              ...(profileT != null ? ["f_c Hz", "k max", "gap mm"] : [])].map((h) => (
               <th key={h} style={{ textAlign: "right", padding: "6px 9px", borderBottom: `1px solid ${C.borderStrong}`, color: C.inkDim, fontSize: 10, fontWeight: 500, position: "sticky", top: 0, background: C.panel, whiteSpace: "nowrap" }}>{h}</th>
             ))}</tr></thead>
             <tbody>
@@ -1136,6 +1217,14 @@ export default function HGridThroat() {
                     {td(r ? fmt(r.turnDeg, 1) : "—", r && r.turnDeg > map.turnLimitDeg ? C.series5 : C.inkDim)}
                     {td(r ? fmt(r.twistDeg, 1) : "—", C.inkDim)}
                     {td(r ? fmt(r.aimErrDeg, 2) : "—", r && r.aimErrDeg > map.aimLimitDeg ? C.series5 : C.inkDim)}
+                    {profileT != null && <>
+                      {td(r && r.profFc != null ? fmt(r.profFc, 0) : "—", C.series4)}
+                      {td(r && r.profScaleMax != null ? fmt(r.profScaleMax, 3) : "—",
+                        r && r.profScaleMax > 1 + 1e-6 ? C.series5 : C.inkDim)}
+                      {td(map && map.clearance && map.clearance.perCell.has(cc.id)
+                        ? fmt(map.clearance.perCell.get(cc.id), 3) : "—",
+                        map && map.clearance && map.clearance.perCell.get(cc.id) < 1e-3 ? C.series5 : C.inkDim)}
+                    </>}
                   </tr>
                 );
               })}

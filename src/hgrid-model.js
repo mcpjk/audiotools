@@ -1339,6 +1339,14 @@ export function solveHypexM(ratio, L, T = 1) {
   return (lo + hi) / 2;
 }
 
+// The flare constant and the cutoff it implies are the same number in two
+// units: fc = mc/2pi. But m here is per MILLIMETRE while c is in m/s, so a
+// factor of 1000 sits between them, and getting it wrong is a silent 1000x
+// error in a readout nobody can catch by eye. Kept as a named pair of exact
+// inverses so the conversion is written once and tested once.
+export const fcForHypexM = (m, c) => (m * 1000 * c) / TAU;
+export const hypexMForFc = (fc, c) => (TAU * fc) / (1000 * c);
+
 export function apertureSurface({ apex, depth, flatten = 1 }) {
   const Cz = apex + depth;
   const A = flatten * Cz;
@@ -1585,17 +1593,24 @@ export function mapThroatToMouth(throat, opts) {
     // are therefore untouched, whatever T is — and turns fc into a readout of
     // the loading you actually got.
     let profM = null, profFc = null, profScaleMin = 1, profScaleMax = 1;
+    let profRatio = null, profK = null, profKMaxAt = 0;
     if (profileT != null) {
       const A0 = nrm3(vecArea(rings[0])), AL = nrm3(vecArea(rings[stations]));
       const ratio = A0 > 1e-12 ? Math.sqrt(AL / A0) : 1;
+      profRatio = ratio;
       profM = solveHypexM(ratio, L, profileT);
-      profFc = (profM * 1000 * c) / TAU; // m is per mm, c is m/s
+      profFc = fcForHypexM(profM, c);
+      // k is kept PER STATION, not just as a range. k > 1 is the one way this
+      // construction can push two ducts together, so which stations it happens
+      // at is the actionable part — a range says only that it happened.
+      profK = new Array(stations + 1).fill(1);
       for (let q = 0; q <= stations; q++) {
         const want = A0 * hypexR(sArr[Math.round((q / stations) * M)], 1, profM, profileT) ** 2;
         const have = nrm3(vecArea(rings[q]));
         const k = have > 1e-12 ? Math.sqrt(want / have) : 1;
+        profK[q] = k;
         profScaleMin = Math.min(profScaleMin, k);
-        profScaleMax = Math.max(profScaleMax, k);
+        if (k > profScaleMax) { profScaleMax = k; profKMaxAt = q; }
         if (Math.abs(k - 1) > 1e-15) {
           const ring = rings[q], n = ring.length;
           const ctr = [0, 0, 0];
@@ -1662,7 +1677,7 @@ export function mapThroatToMouth(throat, opts) {
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
       // configuration — profScaleMin is what opened the gap
-      profM, profFc, profScaleMin, profScaleMax,
+      profM, profFc, profScaleMin, profScaleMax, profRatio, profK, profKMaxAt,
     });
   }
 
@@ -1721,19 +1736,43 @@ export function mapThroatToMouth(throat, opts) {
       return Math.hypot(P[0] - U[0] - ux * k, P[1] - U[1] - uy * k, P[2] - U[2] - uz * k);
     };
     const perStation = [];
-    let worst = Infinity, worstAt = 0;
+    const perCell = new Map(rows.map((r) => [r.id, Infinity]));
+    let worst = Infinity, worstAt = 0, worstMid = Infinity, worstMidAt = 1;
     for (let q = 0; q <= stations; q++) {
+      const interior = q > 0 && q < stations;
       let mn = Infinity;
       for (const [A, B] of pairs) {
         const pa = A.sched[q].pts, pb = B.sched[q].pts;
+        let d = Infinity;
         for (let k = 0; k < pa.length; k += 2)
           for (let e = 0; e < pb.length; e++)
-            mn = Math.min(mn, pSeg(pa[k], pb[e], pb[(e + 1) % pb.length]));
+            d = Math.min(d, pSeg(pa[k], pb[e], pb[(e + 1) % pb.length]));
+        mn = Math.min(mn, d);
+        // a cell's own gap is how close it comes to ANY neighbour, and only
+        // the interior counts — see below for why the ends are excluded
+        if (interior) {
+          perCell.set(A.id, Math.min(perCell.get(A.id), d));
+          perCell.set(B.id, Math.min(perCell.get(B.id), d));
+        }
       }
       perStation.push(mn);
       if (mn < worst) { worst = mn; worstAt = q; }
+      if (interior && mn < worstMid) { worstMid = mn; worstMidAt = q; }
     }
-    return { perStation, min: worst, minAt: worstAt, pairs: pairs.length };
+    // `min` is pinned at 0 by the two ends WHATEVER the profile does, because
+    // the cells tile the disc at the throat and tile the rectangle at the
+    // mouth — so it can never signal failure and must not be read as if it
+    // could. `minMid` excludes exactly those two stations, and is the number
+    // that means something: it is 0 with no profile (the sections tile the
+    // whole way) and it is 0 again when the profile has asked for MORE area
+    // than the tiling configuration has and pushed two ducts back into
+    // contact. Between those it is the gap the expansion law opened.
+    return {
+      perStation, min: worst, minAt: worstAt,
+      minMid: worstMid, minMidAt: worstMidAt,
+      max: Math.max(...perStation), maxAt: perStation.indexOf(Math.max(...perStation)),
+      perCell, pairs: pairs.length,
+    };
   })();
 
   const turnLimitDeg = ((lam / 8) / wallWidthAt) * R2D;

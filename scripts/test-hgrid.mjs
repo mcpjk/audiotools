@@ -499,6 +499,29 @@ head("Hypex expansion profile");
   }
   check("hypexLengthForRatio is the length that reaches that ratio", worstLen, 0, 1e-12);
 
+  // fc = mc/2pi, with m per MILLIMETRE and c in m/s. The two directions must be
+  // exact inverses, and the forward one must match the relation computed
+  // independently here rather than by calling the same helper back.
+  check("fcForHypexM is fc = mc/2pi with the mm/m factor carried",
+    M.fcForHypexM(0.01, 343), (0.01 * 1000 * 343) / (2 * Math.PI), 1e-12, "Hz");
+  let worstFc = 0;
+  for (const fc of [120, 500, 2000]) for (const cs of [331.3, 343, 349.5])
+    worstFc = Math.max(worstFc, Math.abs(M.fcForHypexM(M.hypexMForFc(fc, cs), cs) - fc) / fc);
+  check("hypexMForFc inverts it exactly", worstFc, 0, 1e-14);
+
+  // The readout the tool owes once fc is a TARGET rather than a result: given
+  // the ratio a cell must reach and the cutoff asked for, the path length it
+  // would need. Closed as a round trip — a cell handed exactly that length
+  // must solve back to exactly that m, which is what makes the shortfall
+  // against the actual path length meaningful.
+  let worstReq = 0;
+  for (const T of [0, 0.5, 1]) for (const fc of [300, 600, 1200]) for (const ratio of [2, 3.27, 6]) {
+    const mWant = M.hypexMForFc(fc, 343);
+    const Lreq = M.hypexLengthForRatio(ratio, mWant, T);
+    worstReq = Math.max(worstReq, Math.abs(M.solveHypexM(ratio, Lreq, T) - mWant) / mWant);
+  }
+  check("required path length for a target fc round-trips through solveHypexM", worstReq, 0, 1e-8);
+
   const ST = 16;
   const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const mopt = {
@@ -514,6 +537,16 @@ head("Hypex expansion profile");
     off.rows.every((r, i) => r.sched.every((s, q) => Math.abs(s.area - t0.rows[i].sched[q].area) < 1e-12)),
     "byte-for-byte with the pre-profile pipeline");
   check("...and the flowed sections still tile (zero clearance)", off.clearance.min, 0, 1e-7, "mm");
+  check("...including mid-path, where a gap would have to show", off.clearance.minMid, 0, 1e-7, "mm");
+
+  // `min` is 0 for ANY profile, because the cells tile at both ends by
+  // construction — so it cannot be the failure signal and the test says so
+  // rather than leaving a 0 that looks like a passing measurement.
+  checkTrue("clearance.min is pinned at 0 by the tiling ends, whatever T does",
+    [0, 0.5, 1].every((T) => {
+      const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
+      return mp.clearance.min < 1e-7 && mp.clearance.minAt % ST === 0;
+    }), "always station 0 or 16 — read minMid instead");
 
   for (const T of [0, 0.7, 1]) {
     const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
@@ -559,6 +592,63 @@ head("Hypex expansion profile");
     g[0].kMax <= 1 + 1e-9, `kMax = ${g[0].kMax.toFixed(6)}`);
   checkTrue("k > 1 is reachable and is reported, not clamped",
     g[2].kMax > 1 + 1e-6, `T=1 reaches kMax = ${g[2].kMax.toFixed(5)} — profile exceeds the tiling area`);
+
+  // TWO INDEPENDENT MEASUREMENTS OF THE SAME BOUNDARY. k is an area ratio the
+  // profile computes; minMid is a sampled point-to-segment distance between 18
+  // real duct outlines. They know nothing about each other, so their agreeing
+  // on where the ducts touch is a check and not a tautology: k <= 1 must mean
+  // a measurable gap the whole way, and k > 1 must mean the gap has closed.
+  const boundary = [0, 0.2, 0.4, 0.6, 0.7, 0.8, 0.9, 1].map((T) => {
+    const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
+    return { T, k: mp.profScaleMax, mid: mp.clearance.minMid };
+  });
+  checkTrue("k <= 1 and a measurable mid-path gap are the same condition",
+    boundary.every((x) => (x.k <= 1 + 1e-9) === (x.mid > 1e-3)),
+    boundary.map((x) => `${x.T}:${x.k <= 1 + 1e-9 ? "gap" : "touch"}`).join(" "));
+  // Monotone only WHILE a gap exists. Past the crossing the ducts are in
+  // contact and the measurement is a sampled distance bottoming out on zero,
+  // so its last digits are quadrature noise, not a trend to assert on.
+  const open = boundary.filter((x) => x.mid > 1e-3);
+  checkTrue("...and the gap closes monotonically as T rises toward it",
+    open.every((x, i) => i === 0 || x.mid < open[i - 1].mid) &&
+    boundary.filter((x) => x.mid <= 1e-3).every((x) => x.mid < 1e-3),
+    open.map((x) => x.mid.toFixed(3)).join(" > ") + " > touching");
+
+  // STATION BY STATION, not just in aggregate. CLAUDE.md records that overlap
+  // appears "at precisely the stations where k > 1" — that was established by
+  // ray cast and then only asserted in prose. Here the two detectors are
+  // compared per station: wherever any cell's k exceeds 1 the measured
+  // clearance must have collapsed, and wherever every k is at or below 1 there
+  // must be a real gap. Same claim as above, at the resolution that makes it
+  // falsifiable.
+  const mpk = M.mapThroatToMouth(L.throat, { ...mopt, profileT: 1 });
+  let agree = true, over = 0, detail = [];
+  for (let q = 1; q < ST; q++) {
+    const kq = Math.max(...mpk.rows.map((r) => r.profK[q]));
+    const touching = mpk.clearance.perStation[q] < 1e-3;
+    if (kq > 1 + 1e-6) over++;
+    if ((kq > 1 + 1e-6) !== touching) { agree = false; detail.push(`st${q}: k=${kq.toFixed(4)} gap=${mpk.clearance.perStation[q].toFixed(4)}`); }
+  }
+  checkTrue("the ducts touch at exactly the stations where k > 1", agree && over > 0,
+    over > 0 ? `${over} of ${ST - 1} interior stations are over, and every one of them is a contact` : detail.join("  "));
+
+  // and the per-station k must reproduce the range the tool reports from it
+  checkTrue("profScaleMin/Max are the range of the per-station k",
+    mpk.rows.every((r) => Math.abs(Math.min(...r.profK) - r.profScaleMin) < 1e-12 &&
+      Math.abs(Math.max(...r.profK) - r.profScaleMax) < 1e-12 &&
+      Math.abs(r.profK[r.profKMaxAt] - r.profScaleMax) < 1e-12),
+    `kMaxAt station ${mpk.rows[0].profKMaxAt} for cell ${mpk.rows[0].label}`);
+
+  // a cell's own gap is the closest it comes to any neighbour, so the smallest
+  // of them has to be the global mid-path minimum — no cell can be closer than
+  // the closest pair, and the closest pair belongs to some cell
+  const mpc = M.mapThroatToMouth(L.throat, { ...mopt, profileT: 0 });
+  check("the per-cell gaps bottom out at exactly the global mid-path minimum",
+    Math.min(...mpc.clearance.perCell.values()), mpc.clearance.minMid, 1e-12, "mm");
+  checkTrue("every cell gets a gap, not just the pair that sets the minimum",
+    mpc.clearance.perCell.size === mpc.rows.length &&
+    [...mpc.clearance.perCell.values()].every((d) => d > 0),
+    `${mpc.clearance.perCell.size} cells, ${Math.min(...mpc.clearance.perCell.values()).toFixed(3)}-${Math.max(...mpc.clearance.perCell.values()).toFixed(3)} mm`);
 
   // every cell has the same expansion RATIO (equal throat areas, uniform mouth
   // grid), so fc differs between cells only through path length
@@ -752,6 +842,105 @@ head("Duct solids");
   const facets = new DataView(stl).getUint32(80, true);
   const want = solids.reduce((a, s) => a + s.tris.length, 0);
   checkTrue("binary STL declares the facets it carries", facets === want && stl.byteLength === 84 + want * 50,
+    `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
+}
+
+// ── 10d. duct solids UNDER the expansion profile ───────────────────────────
+// The solids above are built with no expansion law. The profile rescales every
+// section, so none of what they establish carries over on its own: a mesh that
+// was closed can be reopened, and a volume identity that held can stop holding.
+// This repeats the load-bearing checks with the profile ON, at a T where k <= 1
+// so the geometry is legal and any failure would be the profile's doing.
+head("Duct solids under the profile");
+{
+  const t = 0.4, ST = 16, DEF = 0.35, PT = 0;
+  const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = L.throat;
+  const mopt = {
+    c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120,
+    depth: 150, flatten: 1, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+  };
+  const plain = M.mapThroatToMouth(th, { ...mopt, profileT: null });
+  const map = M.mapThroatToMouth(th, { ...mopt, profileT: PT });
+  checkTrue("the profile stays inside the tiling configuration at this T",
+    map.profScaleMax <= 1 + 1e-9, `kMax = ${map.profScaleMax.toFixed(6)}`);
+
+  const solids = M.ductSolids(th, map, { t, dividerEndFrac: DEF });
+  checkTrue("one solid per cell, with the profile on", solids.length === th.cells.length,
+    `${solids.length} ducts`);
+
+  // k = 1 at station 0, so the driver mating face must be as flat as it was
+  let zWorst = 0;
+  for (const sd of solids) for (const q of sd.sections[0].pts) zWorst = Math.max(zWorst, Math.abs(q[2]));
+  check("station 0 still lies in the throat plane", zWorst, 0, 1e-12, "mm");
+
+  const pSeg = (P, A, B) => {
+    const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = u[0] ** 2 + u[1] ** 2 + u[2] ** 2 || 1e-18;
+    let k = ((P[0] - A[0]) * u[0] + (P[1] - A[1]) * u[1] + (P[2] - A[2]) * u[2]) / L2;
+    k = Math.max(0, Math.min(1, k));
+    return Math.hypot(P[0] - A[0] - u[0] * k, P[1] - A[1] - u[1] * k, P[2] - A[2] - u[2] * k);
+  };
+  const sep = (A, B) => {
+    let m = Infinity;
+    for (const a of A) for (let k = 0; k < B.length; k++) m = Math.min(m, pSeg(a, B[k], B[(k + 1) % B.length]));
+    return m;
+  };
+  const byId = (id) => solids.find((sd) => sd.id === id);
+  let wMin = Infinity, wMax = 0;
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+    const d = sep(byId(i * 3 + j).sections[0].pts, byId((i + 1) * 3 + j).sections[0].pts);
+    wMin = Math.min(wMin, d); wMax = Math.max(wMax, d);
+  }
+  check("throat wall is still exactly t with the profile on", wMin, t, 1e-9, "mm");
+  check("...and still no thicker anywhere", wMax, t, 1e-9, "mm");
+
+  // and the far end: k = 1 there too, so the mouth must still tile
+  let mouthWorst = 0;
+  map.rows.forEach((r, i) => {
+    mouthWorst = Math.max(mouthWorst, Math.abs(r.sched[ST].area / plain.rows[i].sched[ST].area - 1));
+  });
+  check("the mouth tiling survives the profile", mouthWorst, 0, 1e-9);
+
+  const bad = solids.filter((sd) => !sd.manifold.ok);
+  checkTrue("every duct mesh is still closed and consistently wound", bad.length === 0,
+    `${solids.length} ducts, ${solids[0].manifold.edges} edges each, 0 unpaired`);
+  checkTrue("every end cap still fans from a point its outline can see",
+    solids.every((sd) => M.fanIsValid(sd.sections[0].pts).ok &&
+      M.fanIsValid(sd.sections[sd.sections.length - 1].pts).ok),
+    "no folded caps");
+
+  // the volume-vs-axial identity, re-established on the scaled sections
+  let vWorst = 0;
+  for (const cellRec of th.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    const sd = solids.find((x) => x.id === cellRec.id);
+    let V = 0;
+    for (let q = 1; q < sd.sections.length; q++) {
+      const a = sd.sections[q - 1].origin, b = sd.sections[q].origin;
+      const scale = (k) => row.sched[k].axial / row.sched[k].area;
+      V += 0.5 * (sd.sections[q].area * scale(q) + sd.sections[q - 1].area * scale(q - 1))
+         * Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    }
+    vWorst = Math.max(vWorst, Math.abs(sd.volume - V) / V);
+  }
+  checkTrue("mesh volume still agrees with the integrated AXIAL schedule", vWorst < 0.01,
+    `worst ${(vWorst * 100).toFixed(3)}% over ${ST} stations`);
+
+  // the gaps are real material, so the ducts must together hold LESS than they
+  // did tiling — that volume is exactly what opened the space between them
+  const vProf = solids.reduce((a, sd) => a + sd.volume, 0);
+  const vPlain = M.ductSolids(th, plain, { t, dividerEndFrac: DEF })
+    .reduce((a, sd) => a + sd.volume, 0);
+  checkTrue("the profile removes duct volume — that is the gap it opened",
+    vProf < vPlain && vProf > 0.5 * vPlain,
+    `${(vPlain / 1000).toFixed(0)} -> ${(vProf / 1000).toFixed(0)} cm3, ${((1 - vProf / vPlain) * 100).toFixed(0)}% removed`);
+
+  const stl = M.buildSTL(solids);
+  const facets = new DataView(stl).getUint32(80, true);
+  const want = solids.reduce((a, sd) => a + sd.tris.length, 0);
+  checkTrue("the profiled solids still export a well-formed binary STL",
+    facets === want && stl.byteLength === 84 + want * 50,
     `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
 }
 
