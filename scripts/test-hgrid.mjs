@@ -397,6 +397,193 @@ head("Throat to mouth");
     M.mapThroatToMouth(og.throat, { c, R, rectangular: og.rectangular }) === null, "ogrid returns null");
 }
 
+// ── 10b. loft parameterisation ─────────────────────────────────────────────
+head("Loft parameterisation");
+{
+  const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const ST = 16, nMs = 16;
+  const map = M.mapThroatToMouth(L.throat, {
+    c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100,
+    apex: 120, depth: 150, flatten: 1, stations: ST, keepGeometry: true,
+  });
+  // the four sides of a cell must join corner to corner
+  const cc = L.throat.cells.find((x) => x.label === "3,1");
+  const sides = M.cellSides(cc.poly);
+  checkTrue("cellSides splits the outline into four corner-to-corner runs",
+    sides !== null && sides.length === 4 && sides.every((sd) => sd.length === cc.poly.length / 4 + 1),
+    `${sides.length} sides of ${sides[0].length} points`);
+  checkTrue("consecutive sides share their corner exactly",
+    sides.every((sd, e) => {
+      const a = sd[sd.length - 1], b = sides[(e + 1) % 4][0];
+      return Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-12;
+    }), "closed loop");
+
+  // A corner must flow to a corner, not into the middle of a mouth edge. The
+  // mouth outline is square, so its four corners are the four sharpest turns;
+  // at EVERY station the sharpest four must sit at 0, nMs, 2nMs, 3nMs. The
+  // flowed sections are space polygons, so the turn is measured in 3-D.
+  const cornerIdx = (poly) => poly
+    .map((_, k) => {
+      const a = poly[(k - 1 + poly.length) % poly.length], b = poly[k], d = poly[(k + 1) % poly.length];
+      const v1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v2 = [d[0] - b[0], d[1] - b[1], d[2] - b[2]];
+      const n1 = Math.hypot(...v1) || 1e-18, n2 = Math.hypot(...v2) || 1e-18;
+      const dot = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2);
+      return [Math.acos(Math.max(-1, Math.min(1, dot))), k];
+    })
+    .sort((x, y) => y[0] - x[0]).slice(0, 4).map((x) => x[1]).sort((x, y) => x - y);
+  const row = map.rows.find((r) => r.label === "3,1");
+  let aligned = true;
+  for (let q = 0; q <= ST; q++)
+    if (cornerIdx(row.sched[q].pts).join(",") !== [0, nMs, 2 * nMs, 3 * nMs].join(",")) aligned = false;
+  checkTrue("every station keeps its corners at the side boundaries", aligned,
+    `stations 0..${ST} all at [0, ${nMs}, ${2 * nMs}, ${3 * nMs}]`);
+
+  // ── the defining property of the flowed construction ────────────────────
+  // Neighbours share their boundary points EXACTLY, at every station, because a
+  // point's trajectory depends only on the point. This is what makes the ducts
+  // tile instead of drifting through each other.
+  const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  let share = 0;
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+    const A = map.rows.find((r) => r.id === i * 3 + j), B = map.rows.find((r) => r.id === (i + 1) * 3 + j);
+    for (let q = 0; q <= ST; q++)
+      for (let k = 0; k <= nMs; k++)
+        share = Math.max(share, d3(A.sched[q].pts[(nMs + k) % 64], B.sched[q].pts[(4 * nMs - k) % 64]));
+  }
+  check("neighbours share their whole boundary at every station", share, 0, 1e-8, "mm");
+
+  // The last station IS the mouth cell — but the aperture is a curved cap, so
+  // the sections close on the CAP's area, which is larger than its projection.
+  const capRatio = map.mouthAreaTotal / (200 * 100);
+  checkTrue("station areas close on the aperture, not on its flat projection",
+    capRatio > 1.02 && capRatio < 1.05, `cap is ${((capRatio - 1) * 100).toFixed(1)}% above 200x100 mm`);
+}
+
+// ── 10c. duct solids ───────────────────────────────────────────────────────
+head("Duct solids");
+{
+  const t = 0.4, ST = 16, DEF = 0.35;
+  const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = L.throat;
+  const map = M.mapThroatToMouth(th, {
+    c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120,
+    depth: 150, flatten: 1, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+  });
+
+  // An interior cell is inset on all four sides, a rim cell only on its
+  // dividers. The invariant is not how far a POINT moved — on a curved side a
+  // mitred corner moves d/cos(half-angle), slightly more than d — it is that
+  // the moved point sits exactly d from the LINE of each segment it mitres.
+  const lineDist = (P, A, B) => {
+    const ux = B[0] - A[0], uy = B[1] - A[1];
+    const L = Math.hypot(ux, uy) || 1e-18;
+    return Math.abs((P[0] - A[0]) * uy - (P[1] - A[1]) * ux) / L;
+  };
+  for (const label of ["1,1", "3,2"]) {
+    const cell = th.cells.find((x) => x.label === label);
+    const s0 = map.rows.find((r) => r.label === label).sched[0].pts;
+    const flat = s0.map((p) => [p[0] - cell.centroid[0], p[1] - cell.centroid[1]]);
+    const want = cell.rimSide.map((isRim) => (isRim ? 0 : t / 2));
+    const ins = M.insetPolygon(flat, want);
+    const N = flat.length, n = N / 4;
+    let worst = 0;
+    for (let k = 0; k < N; k++)
+      for (const seg of [(k - 1 + N) % N, k]) {
+        const d = want[Math.floor(seg / n)];
+        worst = Math.max(worst, Math.abs(lineDist(ins[k], flat[seg], flat[(seg + 1) % N]) - d));
+      }
+    check(`cell ${label}: every side inset by exactly its own distance`, worst, 0, 1e-9, "mm");
+
+    // The model subtracts (t/2) x dividerLen and says so is "very slightly
+    // pessimistic" because it ignores the corner overlaps. Each divider-divider
+    // corner double-counts about (t/2)^2, so the true inset area must come out
+    // ABOVE the reported open area by roughly that much per such corner.
+    const nCorner = [0, 1, 2, 3].filter((e) => !cell.rimSide[e] && !cell.rimSide[(e + 3) % 4]).length;
+    const excess = M.polyArea2(ins) - cell.open;
+    checkTrue(`cell ${label}: open area is pessimistic by ~${nCorner} corner overlap(s)`,
+      excess > 0.5 * nCorner * (t / 2) ** 2 && excess < 1.5 * nCorner * (t / 2) ** 2,
+      `${excess.toFixed(4)} against ${(nCorner * (t / 2) ** 2).toFixed(4)} mm2`);
+  }
+
+  const solids = M.ductSolids(th, map, { t, dividerEndFrac: DEF });
+  checkTrue("one solid per cell", solids.length === th.cells.length, `${solids.length} ducts`);
+
+  // the throat face must be FLAT, or there is nothing to seat on the driver
+  let zWorst = 0;
+  for (const s of solids) for (const p of s.sections[0].pts) zWorst = Math.max(zWorst, Math.abs(p[2]));
+  check("station 0 lies in the throat plane", zWorst, 0, 1e-12, "mm");
+
+  // and the wall between two neighbours there must measure exactly t
+  const pSeg = (P, A, B) => {
+    const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = u[0] ** 2 + u[1] ** 2 + u[2] ** 2 || 1e-18;
+    let k = ((P[0] - A[0]) * u[0] + (P[1] - A[1]) * u[1] + (P[2] - A[2]) * u[2]) / L2;
+    k = Math.max(0, Math.min(1, k));
+    return Math.hypot(P[0] - A[0] - u[0] * k, P[1] - A[1] - u[1] * k, P[2] - A[2] - u[2] * k);
+  };
+  const sep = (A, B) => {
+    let m = Infinity;
+    for (const a of A) for (let k = 0; k < B.length; k++) m = Math.min(m, pSeg(a, B[k], B[(k + 1) % B.length]));
+    return m;
+  };
+  const byId = (id) => solids.find((s) => s.id === id);
+  let wMin = Infinity, wMax = 0;
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+    const d = sep(byId(i * 3 + j).sections[0].pts, byId((i + 1) * 3 + j).sections[0].pts);
+    wMin = Math.min(wMin, d); wMax = Math.max(wMax, d);
+  }
+  check("throat wall between neighbours is exactly t", wMin, t, 1e-9, "mm");
+  check("...and no thicker anywhere either", wMax, t, 1e-9, "mm");
+
+  // the inset must be gone by the station where the dividers stop, or the duct
+  // is being shrunk for a wall that is not there
+  const r0 = map.rows[0];
+  const sec0 = M.ductSections(th.cells[0], r0, { t, dividerEndFrac: DEF });
+  const endIdx = Math.ceil(DEF * ST);
+  check("inset has tapered out where the dividers end",
+    sec0[endIdx].area - r0.sched[endIdx].area, 0, 1e-9, "mm2");
+  checkTrue("...and is still biting at the throat",
+    r0.sched[0].area - sec0[0].area > 0.5 * t, `${(r0.sched[0].area - sec0[0].area).toFixed(3)} mm2`);
+
+  // a mesh a slicer or a kernel will accept: closed, orientable, positive
+  const bad = solids.filter((s) => !s.manifold.ok);
+  checkTrue("every duct mesh is closed and consistently wound", bad.length === 0,
+    `${solids.length} ducts, ${solids[0].manifold.edges} edges each, 0 unpaired`);
+  checkTrue("every end cap fans from a point its outline can see",
+    solids.every((s) => M.fanIsValid(s.sections[0].pts).ok && M.fanIsValid(s.sections[s.sections.length - 1].pts).ok),
+    "no folded caps");
+
+  // Volume by the divergence theorem against the integrated area schedule. It
+  // is the AXIAL area that integrates to a volume: a flowed section is a level
+  // set of the flow, not a cut square to the path, so its own area runs above
+  // its projection on the direction of travel.
+  let vWorst = 0, oblique = 0;
+  for (const cellRec of th.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    const s = solids.find((x) => x.id === cellRec.id);
+    let V = 0;
+    for (let q = 1; q < s.sections.length; q++) {
+      const a = s.sections[q - 1].origin, b = s.sections[q].origin;
+      const scale = (k) => row.sched[k].axial / row.sched[k].area;
+      V += 0.5 * (s.sections[q].area * scale(q) + s.sections[q - 1].area * scale(q - 1))
+         * Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      oblique = Math.max(oblique, 1 - scale(q));
+    }
+    vWorst = Math.max(vWorst, Math.abs(s.volume - V) / V);
+  }
+  checkTrue("mesh volume agrees with the integrated AXIAL area schedule", vWorst < 0.01,
+    `worst ${(vWorst * 100).toFixed(3)}% over ${ST} stations`);
+  checkTrue("section obliquity is reported, not assumed away", oblique > 0 && oblique < 0.2,
+    `worst section runs ${(oblique * 100).toFixed(1)}% above its axial projection`);
+
+  const stl = M.buildSTL(solids);
+  const facets = new DataView(stl).getUint32(80, true);
+  const want = solids.reduce((a, s) => a + s.tris.length, 0);
+  checkTrue("binary STL declares the facets it carries", facets === want && stl.byteLength === 84 + want * 50,
+    `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
+}
+
 head("Fabrication");
 {
   const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.8, c });

@@ -128,6 +128,15 @@ const dl = (name, text, mime) => {
   URL.revokeObjectURL(u);
 };
 
+// Binary STL is bytes, not text, so it cannot go through dl() — a Blob built
+// from a string would UTF-8 encode every byte above 0x7f and corrupt the file.
+const dlBin = (name, buf, mime) => {
+  const u = URL.createObjectURL(new Blob([buf], { type: mime }));
+  const a = document.createElement("a");
+  a.href = u; a.download = name; a.click();
+  URL.revokeObjectURL(u);
+};
+
 const ORDER_HINT = [
   "how much the line bows",
   "where the bow concentrates — mid-line against toward the rim",
@@ -161,7 +170,7 @@ export default function HGridThroat() {
   const [exitDia, setExitDia] = useState(35.5);
   const [exitAngle, setExitAngle] = useState(8);
   const [temperature, setTemperature] = useState(30);
-  const [thickness, setThickness] = useState(0.8);
+  const [thickness, setThickness] = useState(0.4);
   const [process, setProcess] = useState("FDM");
 
   // ── topology ──
@@ -460,7 +469,7 @@ export default function HGridThroat() {
         twistDeg: r ? +r.twistDeg.toFixed(3) : null,
         aimErrorDeg: r ? +r.aimErrDeg.toFixed(3) : null,
         areaSchedule: r ? r.sched.map((st) => ({ s: +st.s.toFixed(4), area: +st.area.toFixed(3), z: +st.z.toFixed(3), sLength: +st.sLen.toFixed(3) })) : null,
-        stations: r ? r.sched.map((st, q) => (st.local && map ? (map.sectionAt(q).find((x) => x && x.id === cc.id) || {}).pts.map((p) => p.map((v) => +v.toFixed(4))) : null)) : null,
+        stations: r ? r.sched.map((st, q) => (st.pts && map ? (map.sectionAt(q).find((x) => x && x.id === cc.id) || {}).pts.map((p) => p.map((v) => +v.toFixed(4))) : null)) : null,
       };
     }),
   }, null, 1);
@@ -493,14 +502,19 @@ export default function HGridThroat() {
 
   const buildSigmaCSV = () => {
     if (!map) return "";
-    const head = "station,s,axial_z_mm,developed_s_mm,total_area_mm2,equivalent_diameter_mm";
+    const head = "station,s,axial_z_mm,developed_s_mm,section_area_mm2,flux_area_mm2,equivalent_diameter_mm";
     const rows = map.sigma.map((g, q) =>
       [q, g.s.toFixed(4), g.zMean.toFixed(3), g.sMean.toFixed(3), g.area.toFixed(3),
-       (2 * Math.sqrt(g.area / Math.PI)).toFixed(3)].join(","));
+       g.axial.toFixed(3), (2 * Math.sqrt(g.axial / Math.PI)).toFixed(3)].join(","));
     return [
       "# Sum of cell cross-sections along the loft, for Hornresp / ABEC.",
       "# s is the fraction of each cell's own developed centreline, so axial_z",
       "# and developed_s are MEANS across cells whose paths differ in length.",
+      "# section_area is the sections' own area; flux_area is their projection",
+      "# on the direction of travel. A flowed section is a level set of the",
+      "# flow, not a cut square to the path, so the two differ by the section's",
+      "# obliquity. USE flux_area for a 1-D horn schedule — it is the one that",
+      "# integrates to the duct volume. equivalent_diameter follows flux_area.",
       head, ...rows,
     ].join("\n");
   };
@@ -1012,14 +1026,19 @@ export default function HGridThroat() {
         <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(), "application/json")}>JSON cell definition</button>
         <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(), "text/csv")}>CSV · per cell</button>
         <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(), "text/csv")}>ΣA(x) CSV</button>
+        <button style={expBtn} disabled={!map} onClick={() => {
+          const solids = G.ductSolids(throat, map, { t: thickness, dividerEndFrac });
+          if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
+        }}>STL · cell ducts</button>
         <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center", marginLeft: 8 }}>
           stations
           <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
             style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
         </label>
         <span style={{ fontSize: 10, color: C.inkMuted, flex: "1 1 260px", lineHeight: 1.45 }}>
-          The JSON is what makes the Shapr3D loft tractable — loft cell <em>n</em>'s throat profile to its own mouth profile, one cell at a time.
-          Station 0 is the true throat plane at z = 0; the rest are sections perpendicular to each cell's own centreline, so they are tilted.
+          The STL is the one that needs no CAD work: it carries the {throat.N} ducts as closed solids, already inset by half the
+          divider thickness where the dividers are and tapering to nothing where they stop. Loft a blank from the throat circle to the
+          mouth and subtract them — what is left is the divider web. DXF is 2-D per plane, so only the throat layer will import as a sketch.
         </span>
       </div>
 
