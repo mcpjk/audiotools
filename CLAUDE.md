@@ -330,9 +330,17 @@ connected to this tool.
   misses the cell's mouth area, leaving an area step at the aperture. Solving m
   so the profile lands on the mouth area at that cell's own path length makes
   k = 1 at BOTH ends, so the throat mating face and the mouth tiling survive
-  any T, and fc becomes a readout. Because equal-area cells and a uniform mouth
-  grid give every cell the SAME expansion ratio, fc differs between cells only
-  through path length — equalising dL equalises the cutoff too.
+  any T, and fc becomes a readout. **Cells do NOT have the same expansion
+  ratio** — a uniform x/y mouth lattice projected onto a curved cap stretches
+  outer cells by 1/cos(tilt), measured as 5.71% spread in mouth area and
+  expansion ratio at flatten=1 (52.6% at flatten=0.55), unreported until now.
+  Path length is still the dominant lever on fc, not the only one: freezing
+  one variable at its mean gives 5.07% fc spread from path length alone
+  against 1.34-1.89% from area ratio alone (T=0 / T=1), and the two partially
+  cancel — outer cells have both longer paths and larger ratios, pushing fc
+  in opposite directions — so the full spread (3.45-3.93%) is smaller than
+  path length alone would give. Equalising dL is the dominant lever on fc,
+  not a guarantee of equalising it exactly.
   Scaling by k <= 1 maps a section strictly inside itself, so from a merely
   tiling configuration every cell can only move AWAY from its neighbours and
   overlap is impossible; k > 1 is the only way this construction can push two
