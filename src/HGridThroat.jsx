@@ -194,7 +194,20 @@ export default function HGridThroat() {
   const [depth, setDepth] = useState(150);
   const [flatten, setFlatten] = useState(1);
   const [divergeLen, setDivergeLen] = useState(0);
+  const [arriveLen, setArriveLen] = useState(0);
   const [tight, setTight] = useState(0.55);
+  // the two tangent magnitudes are the cubic's only free scalars; splitting
+  // them is what lets curvature be pushed toward the small end of the duct.
+  // null = locked together, which is the original single-knob behaviour.
+  const [tightSplit, setTightSplit] = useState(false);
+  const [tightThroat, setTightThroat] = useState(0.55);
+  const [tightMouth, setTightMouth] = useState(0.55);
+  // "rect" = the original uniform x/y lattice; "arc" = coverage angles,
+  // subdivided at equal solid angle
+  const [mouthMode, setMouthMode] = useState("rect");
+  const [thetaH, setThetaH] = useState(90);
+  const [thetaV, setThetaV] = useState(60);
+  const [fcSolve, setFcSolve] = useState(null);
   const [fTarget, setFTarget] = useState(20000);
   const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
@@ -304,9 +317,12 @@ export default function HGridThroat() {
   const map = useMemo(() => G.mapThroatToMouth(throat, {
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
     mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
-    divergeLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true, profileT,
+    divergeLen, arriveLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true, profileT,
+    tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
+    mouthMode, thetaH, thetaV,
     wallWidthAt: mouthW / shown.nc,
-  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, tight, fTarget, dividerEndFrac, stations, profileT]);
+  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, arriveLen,
+    tight, tightSplit, tightThroat, tightMouth, mouthMode, thetaH, thetaV, fTarget, dividerEndFrac, stations, profileT]);
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -406,7 +422,7 @@ export default function HGridThroat() {
     if (map && map.turnMax > map.turnLimitDeg)
       w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
-      w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${map.clearance && map.clearance.minMid < 1e-3 ? ` The measured gap agrees independently: the narrowest duct-to-duct clearance has closed to ${fmt(map.clearance.minMid, 4)} mm at station ${map.clearance.minMidAt}.` : ""}`);
+      w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${map.clearance && map.clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(map.clearance.overlap, 4)} mm at station ${map.clearance.overlapAt}, over ${map.clearance.overlapStations} station(s).` : ""}`);
     if (map && map.clearance && profileT != null && map.clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
       w.push(`The narrowest duct-to-duct gap is ${fmt(map.clearance.minMid, 4)} mm at station ${map.clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(map.clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
     if (map && map.aimMax > map.aimLimitDeg)
@@ -960,14 +976,51 @@ export default function HGridThroat() {
             Mouth aperture · same colour identity
             {stale && <Solving />}
           </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+            <button onClick={() => setMouthMode(mouthMode === "rect" ? "arc" : "rect")}
+              style={btn(mouthMode === "arc", C.series2)}>
+              {mouthMode === "rect" ? "size in mm" : "coverage in degrees"}
+            </button>
+            {mouthMode === "arc" && map && (
+              <span style={{ fontFamily: C.mono, fontSize: 10 }}>
+                <span style={{ color: C.inkMuted }}>gives </span>
+                <span style={{ color: C.ink }}>{fmt(map.mouthWEff, 1)} × {fmt(map.mouthHEff, 1)} mm</span>
+                <span style={{ color: C.inkMuted }}> · Ω {fmt(map.omegaTotal, 3)} sr · per-cell area spread </span>
+                <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 3)}%</span>
+              </span>
+            )}
+            {mouthMode === "rect" && map && (
+              <span style={{ fontFamily: C.mono, fontSize: 10 }}>
+                <span style={{ color: C.inkMuted }}>per-cell mouth area spread </span>
+                <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 2)}%</span>
+                <span style={{ color: C.inkMuted }}> · solid angle {fmt(map.omegaSpread, 2)}%</span>
+              </span>
+            )}
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "0 10px" }}>
-            <NumInput label="Mouth width" value={mouthW} onChange={setMouthW} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
-            <NumInput label="Mouth height" value={mouthH} onChange={setMouthH} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
+            {mouthMode === "rect" ? <>
+              <NumInput label="Mouth width" value={mouthW} onChange={setMouthW} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
+              <NumInput label="Mouth height" value={mouthH} onChange={setMouthH} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
+            </> : <>
+              <NumInput label="Coverage Θh" value={thetaH} onChange={setThetaH} unit="°" min={10} max={170} step={1} accent={C.accent} />
+              <NumInput label="Coverage Θv" value={thetaV} onChange={setThetaV} unit="°" min={10} max={170} step={1} accent={C.accent} />
+            </>}
             <NumInput label="Apex behind" value={apex} onChange={setApex} unit="mm" min={5} max={2000} step={5} />
             <NumInput label="Axial depth" value={depth} onChange={setDepth} unit="mm" min={10} max={1500} step={5} />
-            <NumInput label="Oblate flatten" value={flatten} onChange={setFlatten} min={1} max={3} step={0.05} />
+            <NumInput label="Oblate flatten" value={flatten} onChange={setFlatten} min={1} max={3} step={0.05} disabled={mouthMode === "arc"} />
             <NumInput label="Target f" value={fTarget} onChange={setFTarget} unit="Hz" min={2000} max={40000} step={500} accent={C.series5} />
           </div>
+          {mouthMode === "arc" && (
+            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 4, lineHeight: 1.5 }}>
+              The cap is a <strong style={{ color: C.inkDim }}>sphere about the apex</strong> — flatten is overridden to 1, because a flattened cap
+              is not one and the equal-area argument below needs it to be. Cells subdivide the coverage at equal Δazimuth and equal Δ(sin elevation),
+              which is the Lambert equal-area arrangement: on a sphere area = r²Ω, so <em>equal solid angle and equal area are the same constraint</em>,
+              and both hold while the cell mouths still tile. What is given up is equal angular <em>width</em> per cell — outer rows span more degrees —
+              which is the right trade, since what you specify is the total Θ, not the per-cell angle. A traditional multicell makes the opposite
+              trade: identical cells on a radial fan get equal area and equal solid angle for free but cannot tile a curved surface, which is what
+              the flat filler webs between cell mouths are. Those webs diffract; tiling has none.
+            </div>
+          )}
           <div style={{ opacity: stale ? 0.35 : 1 }}>{mouthSVG()}</div>
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
             Choose the aperture surface from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement — apparent apex position and
@@ -1008,9 +1061,10 @@ export default function HGridThroat() {
                   {fmt(hoverRow.profScaleMin, 3)}–{fmt(hoverRow.profScaleMax, 3)}</span>
                 {hoverRow.profScaleMax > 1 + 1e-6 && <span style={{ color: C.inkMuted }}> · over at station {hoverRow.profKMaxAt}</span>}</div>
               {map.clearance && map.clearance.perCell.has(hoverRow.id) && (
-                <div><span style={{ color: C.inkMuted }}>gap to nearest neighbour </span>
+                <div><span style={{ color: C.inkMuted }}>
+                  {map.clearance.perCell.get(hoverRow.id) < 0 ? "overlap with neighbour " : "gap to nearest neighbour "}</span>
                   <span style={{ color: map.clearance.perCell.get(hoverRow.id) < 1e-3 ? C.series5 : C.series4 }}>
-                    {fmt(map.clearance.perCell.get(hoverRow.id), 3)} mm</span></div>
+                    {fmt(Math.abs(map.clearance.perCell.get(hoverRow.id)), 3)} mm</span></div>
               )}
             </>}
           </>}
@@ -1027,9 +1081,26 @@ export default function HGridThroat() {
               <input type="range" min={0} max={40} step={0.5} value={divergeLen} onChange={(e) => setDivergeLen(parseFloat(e.target.value))}
                 style={{ width: 110, accentColor: C.series7 }} />
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(divergeLen, 1)} mm</span>
-              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 4 }}>bend tightness</span>
-              <input type="range" min={0.25} max={1.2} step={0.01} value={tight} onChange={(e) => setTight(parseFloat(e.target.value))}
-                style={{ width: 110, accentColor: C.series2 }} />
+              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 4 }}>arrival run</span>
+              <input type="range" min={0} max={60} step={0.5} value={arriveLen} onChange={(e) => setArriveLen(parseFloat(e.target.value))}
+                style={{ width: 110, accentColor: C.series7 }} />
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(arriveLen, 1)} mm</span>
+              <button onClick={() => { if (!tightSplit) { setTightThroat(tight); setTightMouth(tight); } setTightSplit(!tightSplit); }}
+                style={btn(tightSplit, C.series2)}>{tightSplit ? "split tangents" : "one tightness"}</button>
+              {!tightSplit ? <>
+                <span style={{ fontSize: 10, color: C.inkMuted }}>bend tightness</span>
+                <input type="range" min={0.25} max={1.2} step={0.01} value={tight} onChange={(e) => setTight(parseFloat(e.target.value))}
+                  style={{ width: 110, accentColor: C.series2 }} />
+              </> : <>
+                <span style={{ fontSize: 10, color: C.inkMuted }}>throat</span>
+                <input type="range" min={0.25} max={1.2} step={0.01} value={tightThroat} onChange={(e) => setTightThroat(parseFloat(e.target.value))}
+                  style={{ width: 84, accentColor: C.series2 }} />
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(tightThroat, 2)}</span>
+                <span style={{ fontSize: 10, color: C.inkMuted }}>mouth</span>
+                <input type="range" min={0.25} max={1.2} step={0.01} value={tightMouth} onChange={(e) => setTightMouth(parseFloat(e.target.value))}
+                  style={{ width: 84, accentColor: C.series3 }} />
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(tightMouth, 2)}</span>
+              </>}
               <span style={{ fontSize: 10, color: C.inkMuted }}>divider end</span>
               <input type="range" min={0.05} max={1} step={0.01} value={dividerEndFrac} onChange={(e) => setDividerEndFrac(parseFloat(e.target.value))}
                 style={{ width: 110, accentColor: C.series6 }} />
@@ -1042,6 +1113,10 @@ export default function HGridThroat() {
             ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past λ/4 the cells are fighting each other.
             {" "}Divergence run is a straight launch of that exact length, along the local wavefront normal, before any bend starts — direction
             only, it does not hold the cross-section at its throat size; the profile expands from the very first station regardless.
+            {" "}The <strong style={{ color: C.inkDim }}>arrival run</strong> is its mirror at the mouth, and the two tangent magnitudes are the
+            cubic's only other freedom. Raising the <em>mouth</em> tangent, or lengthening the arrival run, holds the path straight off the
+            aperture and forces the turning back toward the throat — which is where you want it, because the section is small there and large
+            at the mouth. Past about 1.2 the tangent overshoots into a loop; the turning-angle warning catches it.
           </div>
 
           {/* EXPANSION PROFILE */}
@@ -1074,16 +1149,38 @@ export default function HGridThroat() {
                     ducts at all. The widest is next to it because it is the one the
                     eye reads off the section plot, and on its own it is reassuring
                     while the ducts are touching somewhere else entirely. */}
-                <span><span style={{ color: C.inkMuted }}>narrowest duct gap </span>
-                  <span style={{ color: map.clearance.minMid < 1e-3 ? C.series5 : C.series4 }}>
-                    {fmt(map.clearance.minMid, 3)} mm</span>
-                  <span style={{ color: C.inkMuted }}> at station {map.clearance.minMidAt}</span></span>
+                {map.clearance.overlap > 0
+                  ? <span><span style={{ color: C.inkMuted }}>ducts INTERPENETRATE </span>
+                      <span style={{ color: C.series5 }}>{fmt(map.clearance.overlap, 3)} mm deep</span>
+                      <span style={{ color: C.inkMuted }}> at station {map.clearance.overlapAt}, {map.clearance.overlapStations} station(s)</span></span>
+                  : <span><span style={{ color: C.inkMuted }}>narrowest duct gap </span>
+                      <span style={{ color: map.clearance.minMid < 1e-3 ? C.series5 : C.series4 }}>
+                        {fmt(map.clearance.minMid, 3)} mm</span>
+                      <span style={{ color: C.inkMuted }}> at station {map.clearance.minMidAt}</span></span>}
                 <span><span style={{ color: C.inkMuted }}>widest </span>
                   <span style={{ color: C.ink }}>{fmt(map.clearance.max, 2)} mm</span>
                   <span style={{ color: C.inkMuted }}> at {map.clearance.maxAt}</span></span>
                 <span><span style={{ color: C.inkMuted }}>section scale k </span>
                   <span style={{ color: map.profScaleMax > 1 + 1e-6 ? C.series5 : C.ink }}>
                     {fmt(map.profScaleMin, 3)} – {fmt(map.profScaleMax, 3)}</span></span>
+              </div>
+            )}
+            {/* WHERE THE fc SPREAD COMES FROM. Freezing one variable at its mean
+                separates the two contributions. They partially cancel — an outer
+                cell has both a longer path and a larger ratio, which move fc in
+                opposite directions — so the full spread sits below the larger term
+                and quoting either alone misleads. */}
+            {profileT != null && map.fcDecomp && (
+              <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+                <span><span style={{ color: C.inkMuted }}>f_c spread </span>
+                  <span style={{ color: C.ink }}>{fmt(map.fcDecomp.full, 2)}%</span></span>
+                <span><span style={{ color: C.inkMuted }}>from path length alone </span>
+                  <span style={{ color: C.series1 }}>{fmt(map.fcDecomp.fromLength, 2)}%</span></span>
+                <span><span style={{ color: C.inkMuted }}>from area ratio alone </span>
+                  <span style={{ color: C.series3 }}>{fmt(map.fcDecomp.fromRatio, 2)}%</span></span>
+                {map.fcDecomp.full < map.fcDecomp.fromLength - 0.01 && (
+                  <span style={{ color: C.inkMuted }}>— the two partially cancel</span>
+                )}
               </div>
             )}
             {profileT != null && map.profFcMin != null && (
@@ -1103,6 +1200,33 @@ export default function HGridThroat() {
                       {fcReq.shortfall > 0 ? `${fmt(fcReq.shortfall, 1)} mm short` : `${fmt(-fcReq.shortfall, 1)} mm spare`}</span>
                   </> : <span style={{ color: C.inkMuted }}>unreachable at this T</span>}
                 </span>
+                {/* THE INVERSION. m is solved from (ratio, length), so fc has only
+                    ever been a readout. Leaving the axial depth free turns it into
+                    an input: fc and T give m, m gives the length each cell needs,
+                    and depth is solved to deliver it. */}
+                <button style={btn(false, C.series3)} onClick={() => {
+                  const r = G.solveDepthForFc(throat, {
+                    c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
+                    mouthW, mouthH, apex, flatten, exitHalfAngle: exitAngle,
+                    divergeLen, arriveLen, tight, dividerEndFrac, stations,
+                    tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
+                    mouthMode, thetaH, thetaV, fTarget, wallWidthAt: mouthW / shown.nc,
+                  }, { fcTarget: fcWanted, T: profileT });
+                  setFcSolve(r);
+                  if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
+                }}>solve depth for it</button>
+                {fcSolve && (
+                  <span style={{ fontFamily: C.mono, fontSize: 10 }}>
+                    {fcSolve.ok
+                      ? <><span style={{ color: C.inkMuted }}>depth </span>
+                          <span style={{ color: C.series4 }}>{fmt(fcSolve.depth, 1)} mm</span>
+                          <span style={{ color: C.inkMuted }}> → {fmt(fcSolve.fcLo, 0)}–{fmt(fcSolve.fcHi, 0)} Hz across cells</span></>
+                      : <span style={{ color: C.series5 }}>
+                          out of reach — {fcSolve.reason === "too low"
+                            ? `${fmt(fcSolve.bound, 0)} Hz is the floor at ${fcSolve.at} mm depth`
+                            : `${fmt(fcSolve.bound, 0)} Hz is the ceiling at ${fcSolve.at} mm depth`}</span>}
+                  </span>
+                )}
               </div>
             )}
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
@@ -1113,7 +1237,11 @@ export default function HGridThroat() {
                 : <>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
                   set to land each cell exactly on its own mouth area at its own path length. That makes the scale <em>k</em> = 1 at both ends,
                   leaving the throat mating face and the mouth tiling untouched, and turns f_c into a readout of the loading you got.
-                  Every cell has the same expansion ratio, so f_c differs between them only through path length — equalising ΔL equalises the cutoff too.
+                  {" "}Cells do <strong style={{ color: C.inkDim }}>not</strong> all share one expansion ratio: a uniform x/y mouth stretches the
+                  outer cells on the cap, and the divider inset makes the gross throat areas unequal too. So f_c moves with both path length and
+                  the cell's own ratio — see the decomposition below. Switching the mouth to coverage angles removes the first of those.
+                  {" "}Leaving the <strong style={{ color: C.inkDim }}>axial depth</strong> free turns f_c from a readout into an input: solve depth
+                  for the cutoff you want.
                   {" "}The gap between ducts is not a separate feature: it is the convex profile dipping below the near-linear fan of the centrelines,
                   which are pinned together at both ends. T sets both — but only up to a point. Raising T flattens the dip, and past the T where
                   the profile starts asking for more area than the tiling configuration has (<em>k</em> &gt; 1) the ducts come back into contact
@@ -1155,6 +1283,8 @@ export default function HGridThroat() {
           <Metric label="Max aim error" value={`${fmt(map.aimMax, 2)}°`} sub={`tolerance ≈ λ/(4d) = ${fmt(map.aimLimitDeg, 1)}°`} color={map.aimMax > map.aimLimitDeg ? C.series5 : C.ink} />
         </>}
         <Metric label="Speed of sound" value={`${fmt(c, 1)} m/s`} sub={`at ${temperature} °C`} />
+        {map && <Metric label="Bend centroid" value={fmt(map.bendCentroidMean, 3)}
+          sub="0 = all turning at the throat, 1 = at the mouth" color={map.bendCentroidMean < 0.5 ? C.series4 : C.inkDim} />}
         <Metric label="Wavefront correction" value={fmt(2 / (1 + Math.cos(exitAngle * D2R)), 4)} sub="spherical / planar area, reported not applied" />
       </div>
 

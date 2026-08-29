@@ -216,21 +216,22 @@ Report findings rather than silently patching things that were not asked about.
 
 **Maximising impedance transformation is a motivating reason for the multicell
 construction, not a side effect.** That makes the expansion profile a first
-class design variable, and the tool does not yet have one — see below. The two
-are connected: a horn's expansion law is a 1-D plane-wave argument, and above
-f1 the throat wave is not planar, so the law stops describing what happens.
-The partition is what keeps propagation planar high enough in frequency for
-the chosen expansion to mean anything. Having no control over the profile is
-therefore doubly wrong here: the partition is the thing that makes a profile
-work, and there is no profile to work.
+class design variable. The two are connected: a horn's expansion law is a 1-D
+plane-wave argument, and above f1 the throat wave is not planar, so the law
+stops describing what happens. The partition is what keeps propagation planar
+high enough in frequency for the chosen expansion to mean anything.
 
-Note where the tool stands today: the area schedule is an emergent by-product
-of linear outline blending and Hermite routing, not a choice. Measured at 6x3,
-the local flare dlnA/dx falls from 29 to 6.7 per metre, sqrt(A) is linear in x
-to R^2 = 0.9915 against an exponential fit's 0.9583 — so it is close to a CONE,
-which is the classic poorly-loaded case. `horn-calculator.html` in this repo
-already computes the Hypex family; the machinery exists and is simply not
-connected to this tool.
+Where the tool stands now. The Hypex profile is imposed (`profileT`), the
+mouth can be stated as coverage angles instead of millimetres (`mouthMode:
+"arc"`), the path has independent tangents and a straight run at each end, and
+`fc` can be SOLVED FOR rather than read off, by leaving the axial depth free.
+
+Without a law imposed the schedule is still the emergent by-product it always
+was, and that setting is kept so the two can be compared: measured at 6x3, the
+local flare dlnA/dx falls from 29 to 6.7 per metre, sqrt(A) is linear in x to
+R^2 = 0.9915 against an exponential fit's 0.9583 — close to a CONE, the classic
+poorly-loaded case. That is the thing to move off, and the reason the profile
+exists.
 
 ## Known findings worth not re-deriving
 
@@ -274,6 +275,34 @@ connected to this tool.
   inside the neighbour, from station 1 onward — invisible on screen, fatal to
   any solid export, and it made the area schedule up to ~30% optimistic because
   it summed cross-sections sharing the same space.
+- **PHASE D IS NOT DONE, and the test that guards it is still correct.** The
+  plan's phases are A signed clearance, B arc mouth, C path family, D swept
+  sections in specified planes with imposed twist, E fc as an input. A, B, C
+  and E are built; D is not. E was ordered last but does NOT depend on D — it
+  needs the coverage mouth and the path knobs, not a change to how sections are
+  constructed — so it was taken early and the risky architecture switch was
+  left alone.
+  When D is attempted it WILL regress the test *"neighbours share their whole
+  boundary at every station"* (currently 6.6e-10 mm). That test encodes an
+  invariant traded away ON PURPOSE. Replace it with a signed-clearance bound;
+  do not delete it silently, and update this note to say the trade was
+  intentional and what replaced it — otherwise a future session reads the
+  interpenetration as the old 2.8-5.8 mm bug returning and reverts D on sight.
+  What makes the trade defensible is that both halves of the old failure have
+  changed. It was fatal because it was INVISIBLE and UNFIXABLE: no metric saw
+  it and no parameter could move two ducts apart. Phase A makes it visible with
+  a signed depth, and the profile already moves sections inward (k < 1 is what
+  opens today's gaps) with centreline manipulation as a stronger second lever.
+  Overlap becomes a constraint to solve rather than an artifact to live with —
+  but only because A landed first. Do not start D without it.
+  Two obstacles are known and unaddressed. The section plane must be SPECIFIED,
+  not inherited from the tangent, or the throat mating face goes non-planar
+  again (the recorded 6.85 deg / +-0.5 mm bug); blend the section normal from
+  z-hat at s=0 through the tangent to the aperture normal at s=1. And twist
+  must be IMPOSED and distributed along the path, not merely measured as
+  `twistDeg` is today, or the section arrives rotated against the mouth quad
+  and corner-to-corner correspondence breaks — the exact failure the
+  side-by-side resampling was written to prevent.
 - **A flowed section is not planar, and its area is not its cross-section.** It
   is a level set of the flow, not a cut square to the path, so it runs oblique
   — up to 14.5% at 6x3. `sched[].area` is the section's own area; `axial` is its
@@ -352,9 +381,31 @@ connected to this tool.
   misses the cell's mouth area, leaving an area step at the aperture. Solving m
   so the profile lands on the mouth area at that cell's own path length makes
   k = 1 at BOTH ends, so the throat mating face and the mouth tiling survive
-  any T, and fc becomes a readout. Because equal-area cells and a uniform mouth
-  grid give every cell the SAME expansion ratio, fc differs between cells only
-  through path length — equalising dL equalises the cutoff too.
+  any T, and fc becomes a readout.
+- **Cells do NOT all have the same expansion ratio, and fc does not differ
+  through path length alone.** This bullet used to claim they did. A uniform
+  x/y mouth lattice projected onto a curved cap stretches the outer cells —
+  surface area goes as planar area over cos(tilt) — so the mouth areas are not
+  equal even though the throat areas are. Measured at 6x3, t=0, 200x100, apex
+  120, depth 150, flatten 1: throat area spread 1.4e-10% (the solve is exact),
+  but mouth area 5.71%, solid angle 5.75%, path length 5.10%. On a more curved
+  cap it is not a small-parameter curiosity: flatten 0.55 takes mouth area to
+  52.6% and solid angle to 70.2%.
+  Be careful which ratio is meant. The AREA ratio spreads 5.74%; the RADIUS
+  ratio sqrt(A_m/A_t) spreads 2.87%, because the square root halves it, and the
+  radius ratio is the one `profRatio` holds and the one `solveHypexM` consumes.
+  The DIRECTION of the old claim survives. Freezing one variable at its mean
+  decomposes the fc spread: at T=0, 780-811 Hz, full spread 3.93%, path length
+  alone 5.07%, area ratio alone 1.34%; at T=1, 540-559 Hz, 3.45% / 5.07% /
+  1.89%. Path length dominates by about 3x, and the two terms partially
+  CANCEL — an outer cell has both a longer path and a larger ratio, which push
+  fc in opposite directions — so the full spread is smaller than path length
+  alone would give. Equalising dL is therefore the dominant lever on fc, not
+  the only one, and the residual is to be reported as this decomposition
+  rather than asserted to be zero.
+  This was never a correctness bug: the profile already solves m per cell from
+  that cell's own ratio and own L, so unequal ratios are absorbed and show up
+  only as spread in fc.
   Scaling by k <= 1 maps a section strictly inside itself, so from a merely
   tiling configuration every cell can only move AWAY from its neighbours and
   overlap is impossible; k > 1 is the only way this construction can push two
@@ -363,6 +414,78 @@ connected to this tool.
   exactly 0, at kMax = 1.018 it appears at precisely the stations where k > 1.
   Reported, never clamped — clamping would keep the geometry legal by quietly
   abandoning the expansion law the number exists to deliver.
+- **The clearance metric is SIGNED, and that is what replaces the k <= 1
+  argument.** An unsigned distance bottoms out at 0 and cannot tell "just
+  touching" from "driven 3 mm through": both read 0, because a distance cannot
+  go negative. That was survivable only while sections came from one shared
+  flow, where k <= 1 PROVED non-overlap and the metric never had to detect what
+  the proof already excluded. `clearance.overlap` is now the depth of the worst
+  interpenetration, and it was calibrated against that proof while both still
+  hold: at 6x3 default, every T up to 0.79 has kMax <= 1 and measures overlap
+  EXACTLY 0, and past the crossing it measures 0.004 mm at T=0.80, 0.118 at
+  0.90, 0.226 at 1.00. Any construction that builds sections independently
+  kills the k argument, so this measurement is the prerequisite for one — build
+  it before, not after. Note the sign is taken per SAMPLED POINT, not at the
+  nearest one: a point driven deep into a neighbour is FAR from that
+  neighbour's boundary, so the minimum unsigned distance is exactly the point
+  that says least about penetration.
+- **The mouth can be stated as COVERAGE, and then equal area and equal solid
+  angle stop being two constraints.** `mouthMode: "arc"` takes Thh x Thv about
+  the apex on a spherical cap and subdivides at equal d(azimuth) and equal
+  d(sin elevation) — the Lambert equal-area arrangement. On a sphere A = r^2
+  Omega, so equal solid angle IS equal area, and the cells still tile: all
+  three constraints at once. Measured at 6x3, 90x60: per-cell mouth area
+  spread 0.0289% against 5.71% for the uniform x/y lattice, radius ratio
+  0.025% against 2.87%. It holds across coverage (0.002% at 40x30, 0.093% at
+  120x80), and the mouth W x H comes out exactly on the chord closed forms
+  2 r sin(Th/2). What it gives up is equal angular WIDTH per cell — outer rows
+  span more degrees — which is the right trade, since what is specified is the
+  total Th. A traditional multicell makes the opposite trade: identical cells
+  on a radial fan get equal area and equal solid angle free but cannot tile a
+  curved surface, which is what the flat filler webs between cell mouths ARE.
+  Arc mode forces flatten = 1 and reports it as `flattenEff`, because a
+  flattened cap is not a sphere and the equal-area argument needs one.
+- **The path has four knobs, not one, and `bendCentroid` is what measures
+  them.** A cubic Hermite with both endpoints and both end directions fixed
+  has exactly two free scalars — the tangent magnitudes — and one `tight`
+  spent both on the same thing. They are now separable, plus a straight run at
+  EACH end (`divergeLen` at the throat, `arriveLen` at the mouth), which is the
+  same G1 trick twice. `bendCentroid` is the arc-length centroid of curvature
+  as a fraction of the path, 0 = all turning at the throat: without it "reduce
+  curvature where the area is large" is not a measurable claim. Measured at
+  6x3: tightMouth 0.3 -> 0.9 moves it 0.555 -> 0.372 (bend toward the throat,
+  which is what you want), tightThroat 0.3 -> 0.9 moves it 0.361 -> 0.625 (the
+  opposite lever), arriveLen 0 -> 45 moves it 0.480 -> 0.341. Past about 1.2 a
+  tangent overshoots into a loop — tightMouth 1.4 gives 317 degrees of total
+  turning. All of it still tiles to ~1.6e-10 mm; these are still flowed
+  sections. Do NOT reach for a general 3-D spline: higher order buys shape
+  freedom and curvature oscillation in the same purchase, and curvature is the
+  thing being controlled.
+- **`fc` is an input now, by solving for DEPTH.** `solveDepthForFc` inverts the
+  profile: fc and T give m, m gives the length each cell needs, and the axial
+  depth is bisected to deliver it. Monotonicity is not obvious — deeper is a
+  longer path AND a bigger mouth, which push m opposite ways — but the length
+  term wins across the whole usable range (arc 90x60, T=1: fc falls 1203 -> 278
+  Hz as depth goes 60 -> 650 mm), so bisection suffices. Round-tripped through
+  the FORWARD model, not the solver's own bookkeeping: 4e-7 relative. Cosh
+  needs more length than exponential for the same cutoff (380.7 / 323.0 / 280.4
+  mm at T = 0 / 0.5 / 1 for 500 Hz). Unreachable targets are REPORTED with the
+  bound they hit — 20 Hz floors at 86 Hz, 8000 Hz ceilings at 1819 Hz — never
+  clamped and presented as a solution.
+- **The equal-area solve equalises OPEN area, but the duct section is built on
+  the GROSS outline, and dividers make those different.** open = gross - (t/2)
+  x divider length, and a rim cell has fewer dividers, so for equal open area
+  it needs LESS gross area. Measured at 6x3: open spread 1e-10% at every t, but
+  GROSS spread 0% / 5.21% / 10.86% at t = 0 / 0.4 / 0.8. The profile's
+  expansion ratio is gross to gross, so it inherits that: ratio spread 0.025%
+  / 2.62% / 5.50%, contributing 0.009% / 0.947% / 1.979% to the fc spread even
+  with a perfectly equal-area ARC mouth. So there are TWO independent sources
+  of unequal expansion ratio — the mouth lattice (fixed by arc mode) and the
+  divider inset at the throat (not fixed by anything yet) — and the second is
+  the larger of the two at realistic wall thicknesses. This is reported, not
+  patched: which area the profile should key on is a physics decision, since
+  the driver sees the OPEN throat area while the mouth has no dividers left to
+  subtract by then.
 - **Two things must never be tested on the residual alone.** The Schwarz–
   Christoffel inversion converges on its STEP, because its residual has a
   quadrature floor; and the equal-area solve converges on the residual AND the

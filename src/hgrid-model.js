@@ -1402,14 +1402,41 @@ function hermite(P0, T0, P1, T1, s) {
 // tangent is set to `dirA`, matching the straight run's tangent exactly, so
 // a caller finite-differencing across it (as the centreline already does)
 // sees a smooth curve, not a kink.
-export function buildTrajectory(A, dirA, B, dirB, { divergeLen = 0, tight = 0.55 } = {}) {
+// STRAIGHT + HERMITE + STRAIGHT, with an independent tangent magnitude at each
+// end. A cubic Hermite with both endpoints and both end directions fixed has
+// exactly two degrees of freedom left — the two tangent magnitudes — and
+// scaling them together (one `tight`) spends both on the same thing. Splitting
+// them, and adding a straight run at the mouth to mirror the one at the throat,
+// is what lets curvature be pushed toward the THROAT, where the section is
+// small, and kept out of the MOUTH, where it is large.
+//
+// The straight runs are the same G1 trick at both ends: the Hermite leaves Ap
+// along dirA and arrives at Bp along dirB, so both joins are tangent-continuous
+// and no kink is introduced. They also preserve the tiling invariant, because a
+// shared boundary point gets the same A, dirA, B and dirB from either cell's
+// call, so the whole trajectory is identical for both.
+//
+// Deliberately NOT a general 3-D spline. Higher order buys shape freedom and
+// curvature oscillation in the same purchase, and curvature is the thing being
+// controlled here.
+export function buildTrajectory(A, dirA, B, dirB, opts = {}) {
+  const {
+    divergeLen = 0, arriveLen = 0, tight = 0.55,
+    tightThroat = tight, tightMouth = tight,
+  } = opts;
   const Ap = a3(A, m3(dirA, divergeLen));
-  const chord = nrm3(s3(B, Ap)) || 1e-9;
-  const T0 = m3(dirA, tight * chord * 3), T1 = m3(dirB, tight * chord * 3);
-  const f = divergeLen > 1e-9 ? divergeLen / (divergeLen + chord) : 0;
+  const Bp = s3(B, m3(dirB, arriveLen));
+  const chord = nrm3(s3(Bp, Ap)) || 1e-9;
+  const T0 = m3(dirA, tightThroat * chord * 3), T1 = m3(dirB, tightMouth * chord * 3);
+  // s is split by the three runs' nominal lengths (the Hermite by its chord),
+  // exactly as it was when there was only one straight run
+  const total = divergeLen + chord + arriveLen;
+  const f0 = divergeLen > 1e-9 ? divergeLen / total : 0;
+  const f1 = arriveLen > 1e-9 ? (divergeLen + chord) / total : 1;
   return (s) => {
-    if (s <= f) return a3(A, m3(dirA, divergeLen * (f > 1e-9 ? s / f : 0)));
-    return hermite(Ap, T0, B, T1, (s - f) / (1 - f));
+    if (s <= f0) return a3(A, m3(dirA, divergeLen * (f0 > 1e-9 ? s / f0 : 0)));
+    if (s >= f1) return a3(Bp, m3(dirB, arriveLen * (f1 < 1 ? (s - f1) / (1 - f1) : 0)));
+    return hermite(Ap, T0, Bp, T1, (s - f0) / (f1 - f0));
   };
 }
 
@@ -1437,29 +1464,87 @@ export function mapThroatToMouth(throat, opts) {
     c = 343, mouthW = 200, mouthH = 100, apex = 120, depth = 150, flatten = 1,
     exitHalfAngle = 8, tight = 0.55, fTarget = 20000, dividerEndFrac = 0.35,
     stations = 24, wallWidthAt = 10, samples = 64, keepGeometry = false,
-    divergeLen = 0, profileT = null,
+    divergeLen = 0, arriveLen = 0, profileT = null,
+    tightThroat = tight, tightMouth = tight,
+    // "rect" is the original: a uniform x/y lattice projected onto the cap.
+    // "arc" defines the mouth by COVERAGE instead — see mouthGrid below.
+    mouthMode = "rect", thetaH = 90, thetaV = 60,
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
   // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
   // the H-grid has. An O-grid or butterfly throat has no such match — that is a
   // property of its topology, not a gap in the tool.
   if (!rectangular || !nc || !nr) return null;
-  const surf = apertureSurface({ apex, depth, flatten });
+  // Arc mode needs the cap to be a true SPHERE about the apex, or the
+  // equal-solid-angle subdivision stops being equal-area and the mouth points
+  // stop lying on the surface whose normals are used. flatten is overridden
+  // rather than honoured, and reported as flattenEff so the override is
+  // visible instead of silent.
+  const surf = apertureSurface({ apex, depth, flatten: mouthMode === "arc" ? 1 : flatten });
   // virtual apex of the driver's own exit cone, which sets the launch direction
   const tanE = Math.tan(exitHalfAngle * D2R);
   const zLaunch = tanE > 1e-9 ? -R / tanE : -1e9;
 
+  // ── THE MOUTH GRID ────────────────────────────────────────────────────────
+  // Everything mouth-side goes through one function of GRID coordinates
+  // (u, v) in [0,nc] x [0,nr], so the two parameterisations differ in one
+  // place and nowhere else. Neighbours share an edge in (u, v) exactly, which
+  // is what makes their boundary points identical and the sections tile —
+  // that property belongs to the parameter space, not to either mode.
+  //
+  // "rect": a uniform x/y lattice projected onto the aperture cap. This is the
+  // original and stays the default, byte-for-byte.
+  //
+  // "arc": the mouth is stated as COVERAGE — total Thh x Thv about the apex —
+  // and the cells subdivide it at EQUAL SOLID ANGLE. On a sphere the area
+  // element is dA = r^2 cos(e) da de = r^2 da d(sin e), so stepping azimuth
+  // uniformly and sin(elevation) uniformly gives every cell the same solid
+  // angle AND the same area, while still tiling exactly. That is the Lambert
+  // equal-area arrangement, and it resolves three constraints at once:
+  //
+  //   equal expansion ratio  -> equal mouth area
+  //   equal coverage         -> equal solid angle      } the same constraint,
+  //   cell mouths tile the aperture                    } since A = r^2 * Omega
+  //
+  // What it gives up is equal angular WIDTH per cell: outer rows span more
+  // degrees each. That is the right thing to trade, because what gets
+  // specified is the TOTAL Thh and Thv, not the per-cell angle. A traditional
+  // multicell makes the opposite trade — identical cells aimed on a radial
+  // fan, which gets equal area and equal solid angle for free but cannot tile
+  // a curved surface, leaving the flat filler webs between cell mouths that
+  // are visible on any real multicell horn. Those webs are diffracting
+  // discontinuities in the radiating surface; tiling avoids them.
+  //
+  // The cap must be a SPHERE about the apex for the equal-area argument to
+  // hold, so arc mode forces flatten = 1 and reports it rather than honouring
+  // a value that would silently break the property it exists to deliver.
+  const arc = mouthMode === "arc";
+  const rCap = apex + depth;
+  const aHalf = (thetaH / 2) * D2R, eHalf = (thetaV / 2) * D2R;
+  const sinEHalf = Math.sin(eHalf);
   const xs = [], ys = [];
   for (let i = 0; i <= nc; i++) xs.push(-mouthW / 2 + (mouthW * i) / nc);
   for (let j = 0; j <= nr; j++) ys.push(-mouthH / 2 + (mouthH * j) / nr);
+  // grid coordinates -> a point on the aperture. u and v are continuous, so
+  // mid-edge and mid-cell queries go through the same map as the corners.
+  const mouthAt = (u, v) => {
+    if (!arc) return surf.point(-mouthW / 2 + (mouthW * u) / nc, -mouthH / 2 + (mouthH * v) / nr);
+    const a = -aHalf + (2 * aHalf * u) / nc;
+    const e = Math.asin(-sinEHalf + (2 * sinEHalf * v) / nr);
+    const ce = Math.cos(e);
+    return v3(rCap * Math.sin(a) * ce, rCap * Math.sin(e), -apex + rCap * Math.cos(a) * ce);
+  };
+  // planar extent of the arc mouth, as a readout: the chord across the cap
+  const mouthWEff = arc ? 2 * rCap * Math.sin(aHalf) : mouthW;
+  const mouthHEff = arc ? 2 * rCap * sinEHalf : mouthH;
 
   const lam = (c / fTarget) * 1000; // mm
   const rows = [];
 
   for (const cellRec of throat.cells) {
     const { i, j } = cellRec;
-    const corners = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]].map(([a, b]) => surf.point(xs[a], ys[b]));
-    const mc = surf.point((xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2);
+    const corners = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]].map(([a, b]) => mouthAt(a, b));
+    const mc = mouthAt(i + 0.5, j + 0.5);
     const nSurf = surf.normal(mc);
     const nWave = surf.wavefront(mc);
     const aimErr = Math.acos(Math.min(1, Math.max(-1, dot3(nSurf, nWave)))) * R2D;
@@ -1468,7 +1553,8 @@ export function mapThroatToMouth(throat, opts) {
     const T0dir = un3(s3(P0, v3(0, 0, zLaunch)));
     const P1 = mc;
     const T1dir = nWave; // aim the duct at the apparent apex, not at the surface
-    const centreTraj = buildTrajectory(P0, T0dir, P1, T1dir, { divergeLen, tight });
+    const pathOpts = { divergeLen, arriveLen, tight, tightThroat, tightMouth };
+    const centreTraj = buildTrajectory(P0, T0dir, P1, T1dir, pathOpts);
 
     // sample the centreline
     const M = samples, pts = [], tans = [];
@@ -1494,7 +1580,20 @@ export function mapThroatToMouth(throat, opts) {
       const k = nrm3(cr3(d1, d2)) / Math.pow(nrm3(d1) || 1e-9, 3);
       kappa.push(k);
     }
-    for (let q = 0; q < M; q++) turn += 0.5 * (kappa[q] + kappa[q + 1]) * (sArr[q + 1] - sArr[q]);
+    // WHERE the bending happens, not just how much. The arc-length centroid of
+    // curvature, as a fraction of the path: 0 is all the turning at the throat,
+    // 1 all of it at the mouth. This is the number the path knobs are aimed at
+    // — the design wants curvature pushed toward the throat, where the section
+    // is small, and kept out of the mouth, where it is large — and without it
+    // "reduce curvature where area is large" is not a measurable claim.
+    let turnMoment = 0;
+    for (let q = 0; q < M; q++) {
+      const ds = sArr[q + 1] - sArr[q];
+      const km = 0.5 * (kappa[q] + kappa[q + 1]);
+      turn += km * ds;
+      turnMoment += km * ds * 0.5 * (sArr[q] + sArr[q + 1]);
+    }
+    const bendCentroid = turn > 1e-12 && L > 1e-9 ? (turnMoment / turn) / L : 0.5;
 
     // twist: transport the cell's +i direction and compare with the mouth's +x
     const throatI = v3(cellRec.iDir[0], cellRec.iDir[1], 0);
@@ -1502,9 +1601,7 @@ export function mapThroatToMouth(throat, opts) {
     if (!(nrm3(r0) > 0.5)) r0 = un3(cr3(tans[0], v3(0, 0, 1)));
     const frames = rmfTransport(pts, tans, r0);
     const rEnd = frames[frames.length - 1];
-    const mouthI = un3(s3(
-      surf.point(xs[i + 1], (ys[j] + ys[j + 1]) / 2),
-      surf.point(xs[i], (ys[j] + ys[j + 1]) / 2)));
+    const mouthI = un3(s3(mouthAt(i + 1, j + 0.5), mouthAt(i, j + 0.5)));
     const mI = un3(s3(mouthI, m3(tans[M], dot3(mouthI, tans[M]))));
     const sTw = un3(cr3(tans[M], rEnd));
     const twist = Math.atan2(dot3(mI, sTw), dot3(mI, rEnd)) * R2D;
@@ -1529,13 +1626,17 @@ export function mapThroatToMouth(throat, opts) {
     // outline already lies on a curved aperture. Areas are the magnitude of the
     // vector area, which reduces to the planar area when the section is planar.
     const nMs = 16; // 64 points round the outline — coarser under-measures a curved throat cell
-    const mouthXY = [];
+    // Interpolated in GRID coordinates, not in x/y. Two neighbours share an
+    // edge exactly in (u, v), so they generate identical boundary points there
+    // whichever mode is active — the tiling invariant lives in the parameter
+    // space, and moving the mouth to arc angles cannot disturb it.
+    const mouthUV = [];
     for (let e = 0; e < 4; e++) {
-      const A = [[xs[i], ys[j]], [xs[i + 1], ys[j]], [xs[i + 1], ys[j + 1]], [xs[i], ys[j + 1]]][e];
-      const B = [[xs[i], ys[j]], [xs[i + 1], ys[j]], [xs[i + 1], ys[j + 1]], [xs[i], ys[j + 1]]][(e + 1) % 4];
+      const quad = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
+      const A = quad[e], B = quad[(e + 1) % 4];
       for (let q = 0; q < nMs; q++) {
         const u = q / nMs;
-        mouthXY.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u]);
+        mouthUV.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u]);
       }
     }
     // Corner MUST map to corner. The mouth outline above is laid down a side at
@@ -1548,16 +1649,16 @@ export function mapThroatToMouth(throat, opts) {
     const sidesOf = cellSides(centred);
     const throatLocal = sidesOf
       ? sidesOf.flatMap((sd) => resampleOpen(sd, nMs))
-      : resamplePoly(centred, mouthXY.length);
+      : resamplePoly(centred, mouthUV.length);
 
     // one Hermite per boundary point, launched down the exit cone and aimed at
     // the apparent apex, exactly as the centreline is
     const traj = throatLocal.map((p, k) => {
       const A = v3(p[0] + cellRec.centroid[0], p[1] + cellRec.centroid[1], 0);
-      const B = surf.point(mouthXY[k][0], mouthXY[k][1]);
+      const B = mouthAt(mouthUV[k][0], mouthUV[k][1]);
       const dirA = un3(s3(A, v3(0, 0, zLaunch)));
       const dirB = surf.wavefront(B);
-      return buildTrajectory(A, dirA, B, dirB, { divergeLen, tight });
+      return buildTrajectory(A, dirA, B, dirB, pathOpts);
     });
 
     // vector area of a closed space polygon: half the sum of p_k x p_(k+1)
@@ -1673,7 +1774,7 @@ export function mapThroatToMouth(throat, opts) {
       mouthCentroid: mc, mouthCorners: corners, mouthNormal: nSurf,
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
-      sched, kappaMax: Math.max(...kappa),
+      sched, kappaMax: Math.max(...kappa), bendCentroid,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
       // configuration — profScaleMin is what opened the gap
@@ -1710,7 +1811,7 @@ export function mapThroatToMouth(throat, opts) {
     sigma.push({ s: q / stations, area: A, axial: Ax, zMean: z / rows.length, sMean: sl / rows.length });
   }
 
-  // ── CLEARANCE BETWEEN NEIGHBOURING DUCTS ────────────────────────────────
+  // ── SIGNED CLEARANCE BETWEEN NEIGHBOURING DUCTS ─────────────────────────
   // With no profile the flowed sections tile, so this is 0 everywhere and says
   // so honestly. With a profile it is the gap the expansion law opened, and it
   // is the check that the profile has not asked for MORE area than the tiling
@@ -1718,6 +1819,22 @@ export function mapThroatToMouth(throat, opts) {
   // Point-to-segment rather than point-to-point: at 64 samples round a cell,
   // point-to-point carries ~0.5 mm of discretisation noise, which is the same
   // size as the wall being measured.
+  //
+  // WHY IT IS SIGNED. An unsigned distance bottoms out at 0 and cannot tell
+  // "just touching" from "driven 3 mm through each other" — both read 0,
+  // because a distance cannot go negative. That was tolerable only while the
+  // shrink argument held: sections came from one shared flow, so k <= 1 proved
+  // non-overlap analytically and the metric never had to detect what the proof
+  // already excluded. Any construction that builds sections independently
+  // kills that proof, and then overlap has to be MEASURED. So the sign is
+  // carried: negative is interpenetration and its magnitude is the depth of
+  // the deepest penetrating point.
+  //
+  // The sign has to be evaluated per sampled point, not at the nearest one. A
+  // point that has been driven deep into a neighbour is FAR from that
+  // neighbour's boundary, so the minimum unsigned distance is exactly the
+  // point that says least about penetration. Hence: inside points contribute
+  // -depth, outside points +distance, and the pair takes the minimum.
   const clearance = (() => {
     if (!keepGeometry || !rows.length || !rows[0].sched[0].pts) return null;
     const byIdx = new Map(rows.map((r) => [`${r.i},${r.j}`, r]));
@@ -1735,18 +1852,77 @@ export function mapThroatToMouth(throat, opts) {
       k = k < 0 ? 0 : k > 1 ? 1 : k;
       return Math.hypot(P[0] - U[0] - ux * k, P[1] - U[1] - uy * k, P[2] - U[2] - uz * k);
     };
+    // A flowed section is a level set of the flow, not a plane, so "inside" is
+    // taken on its own best-fit plane: Newell normal, an in-plane basis, then
+    // an ordinary crossing test. The section is oblique by up to ~15%, which
+    // tilts the test plane but cannot change which side of a closed ring a
+    // point falls on as long as the ring stays simple — and it does, because
+    // it is a level set.
+    const frame = (ring) => {
+      const n = ring.length;
+      let cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
+      for (let k = 0; k < n; k++) {
+        const a = ring[k], b = ring[(k + 1) % n];
+        cx += a[0] / n; cy += a[1] / n; cz += a[2] / n;
+        nx += (a[1] - b[1]) * (a[2] + b[2]);
+        ny += (a[2] - b[2]) * (a[0] + b[0]);
+        nz += (a[0] - b[0]) * (a[1] + b[1]);
+      }
+      const nn = Math.hypot(nx, ny, nz) || 1e-18;
+      const N = [nx / nn, ny / nn, nz / nn];
+      // any vector not parallel to N gives a usable in-plane basis
+      const t = Math.abs(N[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+      let U = [t[1] * N[2] - t[2] * N[1], t[2] * N[0] - t[0] * N[2], t[0] * N[1] - t[1] * N[0]];
+      const un = Math.hypot(...U) || 1e-18;
+      U = [U[0] / un, U[1] / un, U[2] / un];
+      const V = [N[1] * U[2] - N[2] * U[1], N[2] * U[0] - N[0] * U[2], N[0] * U[1] - N[1] * U[0]];
+      const ctr = [cx, cy, cz];
+      const to2 = (P) => {
+        const d = [P[0] - ctr[0], P[1] - ctr[1], P[2] - ctr[2]];
+        return [d[0] * U[0] + d[1] * U[1] + d[2] * U[2], d[0] * V[0] + d[1] * V[1] + d[2] * V[2]];
+      };
+      // bounding sphere, so the crossing test can be skipped for the points
+      // that cannot possibly be inside. Exact, not an approximation: outside
+      // the bounding sphere is outside the ring, always.
+      let maxR = 0;
+      for (const P of ring) maxR = Math.max(maxR, Math.hypot(P[0] - cx, P[1] - cy, P[2] - cz));
+      return { poly: ring.map(to2), to2, ctr, maxR };
+    };
+    const inside2 = (p, poly) => {
+      let win = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const a = poly[i], b = poly[j];
+        if ((a[1] > p[1]) !== (b[1] > p[1]) &&
+            p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1] || 1e-18) + a[0]) win = !win;
+      }
+      return win;
+    };
+    // signed distance from every sampled point of `from` to the ring `toRing`,
+    // reduced to the worst (most negative, else smallest) value
+    const signedGap = (from, toRing, fr) => {
+      let worst = Infinity;
+      for (let k = 0; k < from.length; k += 2) {
+        const P = from[k];
+        let d = Infinity;
+        for (let e = 0; e < toRing.length; e++)
+          d = Math.min(d, pSeg(P, toRing[e], toRing[(e + 1) % toRing.length]));
+        const near = Math.hypot(P[0] - fr.ctr[0], P[1] - fr.ctr[1], P[2] - fr.ctr[2]) <= fr.maxR;
+        const sd = near && inside2(fr.to2(P), fr.poly) ? -d : d;
+        if (sd < worst) worst = sd;
+      }
+      return worst;
+    };
     const perStation = [];
     const perCell = new Map(rows.map((r) => [r.id, Infinity]));
     let worst = Infinity, worstAt = 0, worstMid = Infinity, worstMidAt = 1;
     for (let q = 0; q <= stations; q++) {
       const interior = q > 0 && q < stations;
       let mn = Infinity;
+      const fr = new Map(rows.map((r) => [r.id, frame(r.sched[q].pts)]));
       for (const [A, B] of pairs) {
         const pa = A.sched[q].pts, pb = B.sched[q].pts;
-        let d = Infinity;
-        for (let k = 0; k < pa.length; k += 2)
-          for (let e = 0; e < pb.length; e++)
-            d = Math.min(d, pSeg(pa[k], pb[e], pb[(e + 1) % pb.length]));
+        // both directions: either duct can be the one poking into the other
+        const d = Math.min(signedGap(pa, pb, fr.get(B.id)), signedGap(pb, pa, fr.get(A.id)));
         mn = Math.min(mn, d);
         // a cell's own gap is how close it comes to ANY neighbour, and only
         // the interior counts — see below for why the ends are excluded
@@ -1767,13 +1943,65 @@ export function mapThroatToMouth(throat, opts) {
     // whole way) and it is 0 again when the profile has asked for MORE area
     // than the tiling configuration has and pushed two ducts back into
     // contact. Between those it is the gap the expansion law opened.
+    // `overlap` is the depth of the worst interpenetration, as a positive
+    // number, or 0 when the ducts are merely touching or apart. It is the
+    // number that replaces the k <= 1 shrink argument once sections stop
+    // coming from one shared flow, and the two must agree while both hold.
+    const interior = perStation.slice(1, stations);
     return {
       perStation, min: worst, minAt: worstAt,
       minMid: worstMid, minMidAt: worstMidAt,
+      overlap: worstMid < 0 ? -worstMid : 0,
+      overlapAt: worstMid < 0 ? worstMidAt : null,
+      overlapStations: interior.reduce((n, d) => n + (d < -1e-9 ? 1 : 0), 0),
       max: Math.max(...perStation), maxAt: perStation.indexOf(Math.max(...perStation)),
       perCell, pairs: pairs.length,
     };
   })();
+
+  // ── COVERAGE, AND THE fc SPREAD DECOMPOSED ────────────────────────────────
+  // Solid angle each cell subtends at the apex, by spherical excess
+  // (Van Oosterom-Strackee) over the two triangles of its mouth quad. Exact
+  // for a spherical quad and a good measure for any cap, and it is what says
+  // whether the cells share the coverage evenly.
+  const apexPt = v3(0, 0, -apex);
+  const triOmega = (A, B, C) => {
+    const num = Math.abs(dot3(A, cr3(B, C)));
+    const den = 1 + dot3(A, B) + dot3(B, C) + dot3(C, A);
+    return 2 * Math.atan2(num, den);
+  };
+  rows.forEach((r) => {
+    const u = r.mouthCorners.map((P) => un3(s3(P, apexPt)));
+    r.mouthOmega = triOmega(u[0], u[1], u[2]) + triOmega(u[0], u[2], u[3]);
+  });
+  const spreadOf = (a) => {
+    const mean = a.reduce((x, y) => x + y, 0) / a.length;
+    return mean > 0 ? ((Math.max(...a) - Math.min(...a)) / mean) * 100 : 0;
+  };
+  const omegas = rows.map((r) => r.mouthOmega);
+
+  // THE fc SPREAD IS NOT PATH LENGTH ALONE. A uniform x/y mouth lattice
+  // projected onto a curved cap stretches the outer cells — surface area goes
+  // as planar area over cos(tilt) — so mouth areas differ even though throat
+  // areas are equal to 1e-10. fc therefore moves with BOTH the path length and
+  // the cell's own expansion ratio. Freezing one at its mean isolates the
+  // other, and the two partially CANCEL: an outer cell has both a longer path
+  // and a larger ratio, which push fc in opposite directions, so the full
+  // spread comes out below path length alone. Reported rather than asserted
+  // away, because "equalising dL equalises fc" is only the dominant term.
+  let fcDecomp = null;
+  if (profileT != null && rows.length) {
+    const ratios = rows.map((r) => r.profRatio), Ls = rows.map((r) => r.Lpath);
+    const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+    const fcOf = (ratio, Lp) => fcForHypexM(solveHypexM(ratio, Lp, profileT), c);
+    const full = rows.map((r) => r.profFc);
+    fcDecomp = {
+      full: spreadOf(full),
+      fromLength: spreadOf(Ls.map((Lp) => fcOf(mean(ratios), Lp))),
+      fromRatio: spreadOf(ratios.map((rt) => fcOf(rt, mean(Ls)))),
+      lo: Math.min(...full), hi: Math.max(...full),
+    };
+  }
 
   const turnLimitDeg = ((lam / 8) / wallWidthAt) * R2D;
   return {
@@ -1801,9 +2029,17 @@ export function mapThroatToMouth(throat, opts) {
     aimMax: Math.max(...rows.map((r) => r.aimErrDeg)),
     turnLimitDeg,
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
-    aimLimitDeg: (lam / (4 * (mouthW / nc))) * R2D,
+    aimLimitDeg: (lam / (4 * (mouthWEff / nc))) * R2D,
     sigma, stations, sectionAt,
     mouthAreaTotal: rows.reduce((a, r) => a + r.mouthArea, 0),
+    mouthMode, thetaH: arc ? thetaH : null, thetaV: arc ? thetaV : null,
+    mouthWEff, mouthHEff, flattenEff: arc ? 1 : flatten,
+    bendCentroidMean: rows.reduce((a, r) => a + r.bendCentroid, 0) / rows.length,
+    omegaTotal: omegas.reduce((a, x) => a + x, 0),
+    omegaSpread: spreadOf(omegas),
+    mouthAreaSpread: spreadOf(rows.map((r) => r.mouthArea)),
+    ratioSpread: spreadOf(rows.map((r) => r.profRatio || 1)),
+    fcDecomp,
   };
 }
 
@@ -1861,6 +2097,65 @@ function resampleOpen(pts, n) {
 // The four sides of a line-grid cell, as separate corner-to-corner polylines.
 // lineGridCells lays the outline down one side at a time with an equal sample
 // count each, so the corners sit at exact multiples of poly.length / 4.
+// ── fc AS AN INPUT, BY SOLVING FOR DEPTH ────────────────────────────────────
+// m is solved from (area ratio, path length), so fc has only ever been a
+// READOUT: state the geometry and read the loading you got. The inversion runs
+// the other way once the axial distance is left FREE —
+//
+//     set fc and T  ->  m  ->  the path length each cell needs  ->  solve depth
+//
+// which is the whole reason for letting depth be derived rather than dialled.
+// Deeper is a longer path AND a bigger mouth, and those push m in opposite
+// directions, so monotonicity is not obvious — but the length term wins across
+// the whole usable range (measured: arc 90x60, T=1, fc falls 1203 -> 278 Hz as
+// depth goes 60 -> 650 mm, and rect mode behaves the same). Monotone means
+// bisection is enough, matching how scAlphaForAspect and solveHypexM already
+// solve scalar problems here.
+//
+// Converged on the BRACKET, not on the residual: each evaluation is a full
+// re-solve of the mapping, so the residual carries that construction's own
+// quadrature floor and can stall above any fixed tolerance while the bracket
+// is still closing honestly. Same reason the Schwarz-Christoffel inversion
+// converges on its step.
+export function solveDepthForFc(throat, opts, cfg = {}) {
+  const {
+    fcTarget, T = 1, lo = 10, hi = 3000, maxIter = 48, tol = 1e-6,
+    reduce = (fcs) => fcs.reduce((a, b) => a + b, 0) / fcs.length,
+  } = cfg;
+  if (!(fcTarget > 0)) return { ok: false, reason: "no target" };
+  let evals = 0;
+  const fcAt = (depth) => {
+    evals++;
+    const m = mapThroatToMouth(throat, { ...opts, depth, profileT: T, keepGeometry: false });
+    if (!m || !m.rows.length || m.rows[0].profFc == null) return null;
+    return { fc: reduce(m.rows.map((r) => r.profFc)), map: m };
+  };
+  const fLo = fcAt(lo), fHi = fcAt(hi);
+  if (!fLo || !fHi) return { ok: false, reason: "no mapping" };
+  // fc falls as depth grows, so the shallow end is the HIGH cutoff
+  if (fcTarget > fLo.fc) return { ok: false, reason: "too high", bound: fLo.fc, at: lo, evals };
+  if (fcTarget < fHi.fc) return { ok: false, reason: "too low", bound: fHi.fc, at: hi, evals };
+  let a = lo, b = hi, best = null;
+  for (let i = 0; i < maxIter; i++) {
+    const mid = (a + b) / 2;
+    const f = fcAt(mid);
+    if (!f) break;
+    best = { depth: mid, fc: f.fc, map: f.map };
+    if (f.fc > fcTarget) a = mid; else b = mid;
+    if (b - a < tol * Math.max(1, mid)) break;
+  }
+  if (!best) return { ok: false, reason: "no mapping", evals };
+  const fcs = best.map.rows.map((r) => r.profFc);
+  return {
+    ok: true, depth: best.depth, fcAchieved: best.fc,
+    fcLo: Math.min(...fcs), fcHi: Math.max(...fcs),
+    bracket: b - a, evals,
+    // the per-cell spread that remains: with an equal-area mouth this is
+    // path length alone, which is what the dL budget is for
+    fcDecomp: best.map.fcDecomp, Lmin: best.map.Lmin, Lmax: best.map.Lmax,
+  };
+}
+
 export function cellSides(poly) {
   const n = poly.length / 4;
   if (!Number.isInteger(n)) return null;
