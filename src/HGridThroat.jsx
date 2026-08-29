@@ -575,13 +575,21 @@ export default function HGridThroat() {
        g.axial.toFixed(3), (2 * Math.sqrt(g.axial / Math.PI)).toFixed(3)].join(","));
     return [
       "# Sum of cell cross-sections along the loft, for Hornresp / ABEC.",
-      "# s is the fraction of each cell's own developed centreline, so axial_z",
-      "# and developed_s are MEANS across cells whose paths differ in length.",
+      "# s is the fraction of each cell's own developed path, so axial_z and",
+      "# developed_s are MEANS across cells whose paths differ in length.",
+      "# Both are measured at the SECTION CENTROIDS, not on the centreline:",
+      "# the two drift apart by up to ~4.5 mm on a wide-coverage mouth, and",
+      "# attributing an area to the centreline's position would put the",
+      "# schedule that far out of register with the areas it reports.",
       "# section_area is the sections' own area; flux_area is their projection",
       "# on the direction of travel. A flowed section is a level set of the",
       "# flow, not a cut square to the path, so the two differ by the section's",
-      "# obliquity. USE flux_area for a 1-D horn schedule — it is the one that",
-      "# integrates to the duct volume. equivalent_diameter follows flux_area.",
+      "# obliquity. USE flux_area for a 1-D horn schedule — it is the",
+      "# cross-section normal to propagation, and equivalent_diameter follows",
+      "# it. It is NOT exactly what integrates to the duct volume: that is the",
+      "# vector area dotted with the centroid step, which differs because",
+      "# flux_area projects on the centreline tangent while the volume",
+      "# advances along the section's own displacement.",
       profileT != null
         ? `# Hypex expansion profile imposed, T = ${profileT.toFixed(3)}, f_c = ${fmt(map.profFcMin, 0)}-${fmt(map.profFcMax, 0)} Hz.`
         : "# NO expansion law is imposed: this schedule is whatever the routing produced.",

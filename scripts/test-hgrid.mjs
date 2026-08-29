@@ -1022,6 +1022,85 @@ head("fc as an input (depth solved)");
     `mouth fixed at ${r4.mouthAreaSpread.toFixed(4)}% while ratio goes ${r0.ratioSpread.toFixed(3)} -> ${r4.ratioSpread.toFixed(2)} -> ${r8.ratioSpread.toFixed(2)}%`);
 }
 
+// ── 10a6b. the volume identity, done properly ──────────────────────────────
+// The swept volume of a tube is exactly INT A_vec . dr, so the identity has
+// three parts that all have to be right: the VECTOR area (not its magnitude
+// times a scalar obliquity), the SECTION CENTROID displacement (not the
+// centreline's), and the trapezoid rule over stations. Get the first two right
+// and the residual is pure quadrature, which must fall as O(h^2). Get either
+// wrong and it hits a geometric floor that more stations cannot clear — which
+// is the failure this block exists to pin down, because a fixed tolerance on a
+// coarse station count hides it completely.
+head("Volume identity and its convergence");
+{
+  const t = 0.4, DEF = 0.35;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const vecArea = (r) => {
+    let ax = 0, ay = 0, az = 0;
+    for (let k = 0; k < r.length; k++) {
+      const a = r[k], b = r[(k + 1) % r.length];
+      ax += a[1] * b[2] - a[2] * b[1];
+      ay += a[2] * b[0] - a[0] * b[2];
+      az += a[0] * b[1] - a[1] * b[0];
+    }
+    return [ax / 2, ay / 2, az / 2];
+  };
+  const ctrOf = (r) => {
+    const q = [0, 0, 0];
+    for (const p of r) { q[0] += p[0] / r.length; q[1] += p[1] / r.length; q[2] += p[2] / r.length; }
+    return q;
+  };
+  // worst relative error over all 18 ducts, for a given integral form
+  const err = (mo, ST, form) => {
+    const map = M.mapThroatToMouth(Lay.throat, {
+      c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+      tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, keepGeometry: true,
+      wallWidthAt: 200 / 6, t, stations: ST, profileT: 0.3, ...mo });
+    const solids = M.ductSolids(Lay.throat, map, { t, dividerEndFrac: DEF });
+    let worst = 0;
+    for (const cell of Lay.throat.cells) {
+      const row = map.rows.find((r) => r.id === cell.id);
+      const sd = solids.find((x) => x.id === cell.id);
+      let V = 0;
+      for (let q = 1; q < sd.sections.length; q++) {
+        const c0 = ctrOf(sd.sections[q - 1].pts), c1 = ctrOf(sd.sections[q].pts);
+        const dC = [c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]];
+        if (form === "exact") {
+          const A0 = vecArea(sd.sections[q - 1].pts), A1 = vecArea(sd.sections[q].pts);
+          V += 0.5 * ((A0[0] + A1[0]) * dC[0] + (A0[1] + A1[1]) * dC[1] + (A0[2] + A1[2]) * dC[2]);
+        } else {
+          // the old form: scalar area x tangent obliquity x CENTRELINE step
+          const o0 = sd.sections[q - 1].origin, o1 = sd.sections[q].origin;
+          const sc = (k) => row.sched[k].axial / row.sched[k].area;
+          V += 0.5 * (sd.sections[q].area * sc(q) + sd.sections[q - 1].area * sc(q - 1))
+             * Math.hypot(o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]);
+        }
+      }
+      worst = Math.max(worst, Math.abs(Math.abs(V) - sd.volume) / sd.volume);
+    }
+    return worst;
+  };
+  const cases = [
+    ["rect, flow", { mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1, sectionMode: "flow" }],
+    ["arc, flow", { mouthMode: "arc", thetaH: 90, thetaV: 40, sectionMode: "flow" }],
+    ["arc, swept", { mouthMode: "arc", thetaH: 90, thetaV: 40, sectionMode: "swept" }],
+  ];
+  for (const [nm, mo] of cases) {
+    const e16 = err(mo, 16, "exact"), e32 = err(mo, 32, "exact");
+    checkTrue(`${nm}: the exact identity converges at second order`,
+      e32 < e16 / 3 && e32 < 0.0025,
+      `${(e16 * 100).toFixed(3)}% -> ${(e32 * 100).toFixed(3)}% doubling the stations, ${(e16 / e32).toFixed(1)}x`);
+  }
+  // AND THE COUNTER-CASE, so nobody "simplifies" it back. Attributing a
+  // section's area to the CENTRELINE's position instead of its own leaves a
+  // geometric offset — 0.775 mm rect, 4.466 mm arc — that no amount of
+  // quadrature clears, so the residual stalls instead of falling.
+  const o16 = err(cases[1][1], 16, "origin"), o32 = err(cases[1][1], 32, "origin");
+  checkTrue("...while the centreline-referenced form stalls instead of converging",
+    o32 > o16 / 2.2 && o32 > 4 * err(cases[1][1], 32, "exact"),
+    `${(o16 * 100).toFixed(3)}% -> ${(o32 * 100).toFixed(3)}%, only ${(o16 / o32).toFixed(1)}x for a 2x refinement`);
+}
+
 // ── 10a7. swept sections (Phase D) ─────────────────────────────────────────
 // The flowed construction guarantees non-overlap by SHARING boundary points.
 // Swept sections give that up on purpose, so that each cell's centreline can be

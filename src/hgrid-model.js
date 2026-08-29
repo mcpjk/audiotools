@@ -1919,6 +1919,7 @@ export function mapThroatToMouth(throat, opts) {
     }
 
     const sched = [];
+    let scDev = 0; // developed length along the SECTION CENTROIDS, not the centreline
     for (let q = 0; q <= stations; q++) {
       const u = q / stations;
       const ring = rings[q];
@@ -1931,14 +1932,33 @@ export function mapThroatToMouth(throat, opts) {
       // is exactly how oblique the section is, and it is reported rather than
       // hidden by pretending the cut is square to the path.
       const T = tans[idx];
+      // WHERE THE SECTION ACTUALLY IS, as distinct from where the centreline
+      // is. `origin` is the centreline point; the section's own centre drifts
+      // from it — 0.775 mm in rect, 4.466 mm in arc — because the mean of the
+      // flowed boundary points is not the flow of the mean, and because the
+      // mouth grid's parametric cell centre is not its polygon centroid. The
+      // drift is a geometric offset, not quadrature, so it does not shrink
+      // with more stations, and attributing a section's AREA to the
+      // centreline's position puts the two out of register by that much.
+      // `zc` and `sc` are the centroid-derived position axis, and they are
+      // what an area schedule must be plotted against.
+      const nR = ring.length;
+      let cx = 0, cy = 0, cz = 0;
+      for (const q of ring) { cx += q[0] / nR; cy += q[1] / nR; cz += q[2] / nR; }
+      if (q > 0) {
+        const pv = sched[q - 1];
+        scDev += Math.hypot(cx - pv.cx, cy - pv.cy, cz - pv.cz);
+      }
       sched.push({
         s: u, area: Math.hypot(ax, ay, az),
         axial: Math.abs(ax * T[0] + ay * T[1] + az * T[2]),
         z: pts[idx][2], sLen: sArr[idx],
+        cx, cy, cz, zc: cz, sc: scDev,
         // the flowed section, in world coordinates — kept only when something
         // is going to export or draw it
         pts: keepGeometry ? ring : null,
         origin: keepGeometry ? pts[idx] : null,
+        centroid: keepGeometry ? [cx, cy, cz] : null,
       });
     }
 
@@ -2000,8 +2020,11 @@ export function mapThroatToMouth(throat, opts) {
     let A = 0, Ax = 0, z = 0, sl = 0;
     rows.forEach((r) => {
       A += r.sched[q].area; Ax += r.sched[q].axial;
-      z += r.sched[q].z; sl += r.sched[q].sLen;
+      z += r.sched[q].zc; sl += r.sched[q].sc;
     });
+    // zMean/sMean are CENTROID-derived, so each summed area is attributed to
+    // the position of the sections that produced it rather than to the
+    // centreline's, which sits up to 4.5 mm away in arc mode
     sigma.push({ s: q / stations, area: A, axial: Ax, zMean: z / rows.length, sMean: sl / rows.length });
   }
 

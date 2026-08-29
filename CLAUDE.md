@@ -336,15 +336,24 @@ exists.
   and because the mouth grid's parametric cell centre is not its polygon
   centroid. It was predicted that swept sections would remove this by
   construction; they do NOT — measured identical in both modes, since the
-  offset comes from the mouth grid rather than the loft. Consequences: the
-  volume-vs-axial identity holds to 0.038% when integrated against the section
-  CENTROID displacement but only 0.55% (rect) and 2.78% (arc) against `origin`,
-  and that residual does not converge with more stations because it is a
-  geometric offset, not quadrature. The SigmaA CSV inherits it — `axial_z_mm`
-  and `developed_s_mm` are centreline-derived while the areas are the
-  sections' own, so the schedule attributes each area to a station up to 4.5 mm
-  off. Exported SOLIDS are unaffected: `ductSections` only passes `origin`
-  through and insets the polygon itself.
+  offset comes from the mouth grid rather than the loft. `sched[].centroid`
+  (with `zc` / `sc` as its position axis) is the section's own centre, and the
+  SigmaA CSV is now plotted against it, so each summed area is attributed to
+  the position of the sections that produced it. `origin` is kept because it
+  is the centreline point and `ductSections` passes it through; exported
+  SOLIDS never depended on it, since the inset works on the polygon itself.
+- **The volume identity is `INT A_vec . dr` and all three parts matter.** The
+  VECTOR area, the SECTION CENTROID displacement, and the trapezoid rule. Get
+  the first two right and the residual is pure quadrature and falls as O(h^2):
+  measured 0.333 -> 0.085% (rect), 0.711 -> 0.176% (arc), 0.725 -> 0.208%
+  (arc swept) doubling 16 to 32 stations, i.e. 3.5-4.1x each. Get either wrong
+  and it hits a geometric floor no refinement clears — the old form, scalar
+  area x tangent obliquity x CENTRELINE step, goes 2.298 -> 1.699%, only 1.4x
+  for a 2x refinement. **Test the convergence RATE, not a fixed tolerance**: a
+  1% bound at 16 stations passed the stalling form for three sessions. Note
+  `axial` is still the right scalar to REPORT — it is the flux-carrying
+  cross-section — it is just not what to multiply by a step length, because it
+  projects on the tangent while the volume advances along the centroid step.
 - **A flowed section is not planar, and its area is not its cross-section.** It
   is a level set of the flow, not a cut square to the path, so it runs oblique
   — up to 14.5% at 6x3. `sched[].area` is the section's own area; `axial` is its
