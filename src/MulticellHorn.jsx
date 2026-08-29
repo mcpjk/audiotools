@@ -165,7 +165,7 @@ function Solving({ label = "solving" }) {
   );
 }
 
-export default function HGridThroat() {
+export default function MulticellHorn() {
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
   const [exitAngle, setExitAngle] = useState(8);
@@ -190,7 +190,6 @@ export default function HGridThroat() {
   // ── mouth ──
   const [mouthW, setMouthW] = useState(200);
   const [mouthH, setMouthH] = useState(100);
-  const [apex, setApex] = useState(120);
   const [depth, setDepth] = useState(150);
   const [flatten, setFlatten] = useState(1);
   const [divergeLen, setDivergeLen] = useState(0);
@@ -218,7 +217,7 @@ export default function HGridThroat() {
   const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
   // 0 hyperbolic (cosh), 1 exponential.
-  const [profileT, setProfileT] = useState(null);
+  const [profileT, setProfileT] = useState(0.7);
   // a target cutoff to compare against, NOT an input to the profile — m is
   // solved from the geometry, so fc is a result and this is the readout that
   // says how far the geometry is from delivering the one you wanted
@@ -240,6 +239,13 @@ export default function HGridThroat() {
 
   const c = useMemo(() => 331.3 * Math.sqrt(1 + temperature / 273.15), [temperature]);
   const R = exitDia / 2;
+  // The virtual apex of the DRIVER's own exit cone, and therefore the point the
+  // wave already appears to come from. Aiming the aperture cap at any other
+  // centre asks the horn to re-origin a wavefront it was handed, so this is
+  // derived rather than dialled: R / tan(half-angle). At 35.5 mm and 8 deg it
+  // is 126.3 mm, which is within 5% of the 120 mm that was being picked by
+  // hand before it was derived.
+  const apex = useMemo(() => R / Math.tan(Math.max(0.5, exitAngle) * D2R), [R, exitAngle]);
   const rings = useMemo(
     () => ringSpec.split(/[^0-9]+/).filter(Boolean).map(Number).filter((n) => n > 0),
     [ringSpec]
@@ -351,6 +357,14 @@ export default function HGridThroat() {
     return { ok: true, lo, hi, shortfall };
   }, [map, profileT, fcWanted, shown]);
 
+  // The 1-D Hypex horn this multicell is standing in for: same acoustic throat,
+  // same law, same cutoff. Advisory — it says what the cutoff demands, and the
+  // geometry below says what you have.
+  const href = useMemo(() => G.hypexReference({
+    throatArea: throat.openTotal, fc: fcWanted, T: profileT, c,
+    coverageDeg: mouthMode === "arc" ? thetaH : 90,
+  }), [throat, fcWanted, profileT, c, mouthMode, thetaH]);
+
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
   }), [throat, thickness, R, c, fTarget, process]);
@@ -451,7 +465,7 @@ export default function HGridThroat() {
   }, [solve, throat, shown, alphaEff, thickness, fab, map, fTarget, mouthW]);
 
   // ── exports ────────────────────────────────────────────────────────────────
-  const stem = `hgrid_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
+  const stem = `multicell_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
 
   const buildDXF = () => {
     const L = [];
@@ -969,6 +983,52 @@ export default function HGridThroat() {
         )}
       </div>
 
+      {/* HYPEX EXPANSION — the design intent, before any geometry */}
+      <div style={card}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ ...secTitle, marginBottom: 0 }}>Hypex expansion</span>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>T</span>
+          <input type="range" min={0} max={1} step={0.01} value={profileT}
+            onChange={(e) => setProfileT(parseFloat(e.target.value))}
+            style={{ width: 150, accentColor: C.series3 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
+            {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
+          </span>
+          <NumInput label="Cutoff f_c" value={fcWanted} onChange={setFcWanted} unit="Hz" min={20} max={20000} step={10} accent={C.series3} />
+        </div>
+        {href && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+            <Metric label="Acoustic throat" value={`${fmt(throat.openTotal / 100, 2)} cm²`}
+              sub={`summed open area · ⌀${fmt(2 * href.rt, 1)} mm equivalent`} />
+            <Metric label="Flare constant m" value={`${(href.m * 1000).toFixed(3)} /m`}
+              sub={`f_c = mc/2π at ${fmt(c, 1)} m/s`} />
+            <Metric label="Mouth area needed" value={`${fmt(href.mouthArea / 100, 0)} cm²`}
+              sub={`⌀${fmt(href.dia, 0)} mm · ${href.governedBy} governs`} color={C.series3} />
+            <Metric label="Minimum horn length" value={`${fmt(href.minLength, 0)} mm`}
+              sub={`expansion ratio ${fmt(href.ratio, 1)}×`} color={C.series3} />
+            {map && <Metric label="Mouth you have" value={`${fmt(map.mouthAreaTotal / 100, 0)} cm²`}
+              sub={map.mouthAreaTotal >= href.mouthArea
+                ? `${fmt(map.mouthAreaTotal / href.mouthArea, 2)}× the requirement`
+                : `${fmt(100 * (1 - map.mouthAreaTotal / href.mouthArea), 0)}% under`}
+              color={map.mouthAreaTotal >= href.mouthArea ? C.series4 : C.series5} />}
+            {map && <Metric label="Path you have" value={`${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} mm`}
+              sub={map.Lmin >= href.minLength
+                ? `clears the ${fmt(href.minLength, 0)} mm minimum`
+                : `short of ${fmt(href.minLength, 0)} mm by ${fmt(href.minLength - map.Lmin, 0)} mm`}
+              color={map.Lmin >= href.minLength ? C.series4 : C.series5} />}
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
+          The same calculation the standalone horn tool does, run on this multicell's <strong style={{ color: C.inkDim }}>acoustic</strong> throat —
+          the summed open area of the cells, not the driver's bore, because the dividers are in the way and the wave only sees what is left.
+          Two criteria compete for the mouth size: <em>loading</em> wants a mouth circumference of about λ at cutoff (⌀{fmt(href ? href.diaLoading : 0, 0)} mm here),
+          and <em>directivity</em> wants λ/sin(Θ/2) (⌀{fmt(href ? href.diaDirectivity : 0, 0)} mm). The larger binds. Note the direction:
+          <strong style={{ color: C.inkDim }}> wider coverage needs a smaller mouth</strong>, so it is the narrow-pattern horn that comes out enormous.
+          {" "}These are <strong style={{ color: C.inkDim }}>reference</strong> figures, not constraints — the mouth below comes from the coverage and
+          cap geometry, and these say how far short of the 1-D requirement it falls.
+        </div>
+      </div>
+
       {/* THROAT + MOUTH */}
       <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 1fr) minmax(300px, 1.15fr)", gap: 14, marginBottom: 14 }}>
         <div style={{ ...card, marginBottom: 0 }}>
@@ -1001,6 +1061,11 @@ export default function HGridThroat() {
               style={btn(mouthMode === "arc", C.series2)}>
               {mouthMode === "rect" ? "size in mm" : "coverage in degrees"}
             </button>
+            <span style={{ fontFamily: C.mono, fontSize: 10 }}>
+              <span style={{ color: C.inkMuted }}>apex </span>
+              <span style={{ color: C.ink }}>{fmt(apex, 1)} mm</span>
+              <span style={{ color: C.inkMuted }}> behind the throat, from the {fmt(exitAngle, 1)}° exit cone</span>
+            </span>
             {mouthMode === "arc" && map && (
               <span style={{ fontFamily: C.mono, fontSize: 10 }}>
                 <span style={{ color: C.inkMuted }}>gives </span>
@@ -1025,7 +1090,6 @@ export default function HGridThroat() {
               <NumInput label="Coverage Θh" value={thetaH} onChange={setThetaH} unit="°" min={10} max={170} step={1} accent={C.accent} />
               <NumInput label="Coverage Θv" value={thetaV} onChange={setThetaV} unit="°" min={10} max={170} step={1} accent={C.accent} />
             </>}
-            <NumInput label="Apex behind" value={apex} onChange={setApex} unit="mm" min={5} max={2000} step={5} />
             <NumInput label="Axial depth" value={depth} onChange={setDepth} unit="mm" min={10} max={1500} step={5} />
             <NumInput label="Oblate flatten" value={flatten} onChange={setFlatten} min={1} max={3} step={0.05} disabled={mouthMode === "arc"} />
             <NumInput label="Target f" value={fTarget} onChange={setFTarget} unit="Hz" min={2000} max={40000} step={500} accent={C.series5} />
@@ -1171,18 +1235,10 @@ export default function HGridThroat() {
           {/* EXPANSION PROFILE */}
           <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ ...secTitle, marginBottom: 0 }}>Expansion profile</span>
-              <button onClick={() => setProfileT(profileT == null ? 1 : null)}
-                style={btn(profileT != null, C.series3)}>
-                {profileT == null ? "emergent — no law imposed" : "Hypex"}
-              </button>
-              {profileT != null && <>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>T</span>
-                <input type="range" min={0} max={1} step={0.01} value={profileT}
-                  onChange={(e) => setProfileT(parseFloat(e.target.value))}
-                  style={{ width: 130, accentColor: C.series3 }} />
-                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
-                  {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
+              <span style={{ ...secTitle, marginBottom: 0 }}>Per-cell realisation</span>
+              {<>
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+                  T {fmt(profileT, 2)} · f_c {fmt(fcWanted, 0)} Hz set above
                 </span>
                 <button onClick={() => setProfileArea(profileArea === "open" ? "gross" : "open")}
                   style={btn(profileArea === "open", C.series6)}>
@@ -1248,8 +1304,7 @@ export default function HGridThroat() {
             )}
             {profileT != null && map.profFcMin != null && (
               <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>if you wanted f_c</span>
-                <NumInput label="" value={fcWanted} onChange={setFcWanted} unit="Hz" min={20} max={20000} step={10} accent={C.series3} />
+                <span style={{ fontSize: 10, color: C.inkMuted }}>to reach f_c = {fmt(fcWanted, 0)} Hz</span>
                 {/* m is solved from the geometry, so fc is a RESULT. Until path length
                     is independently controllable, the honest way to ask for an fc is
                     to show the path length that would deliver it against the length
@@ -1293,11 +1348,7 @@ export default function HGridThroat() {
               </div>
             )}
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-              {profileT == null
-                ? <>No expansion law is imposed: the area schedule is whatever the routing happens to produce, and because it comes out
-                  near-linear in <em>√A</em> the cells tile the whole way with no gap between them. Impedance transformation is the
-                  motivating reason for a multicell, so this is the setting to move off.</>
-                : <>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
+              {<>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
                   set to land each cell exactly on its own mouth area at its own path length. That makes the scale <em>k</em> = 1 at both ends,
                   leaving the throat mating face and the mouth tiling untouched, and turns f_c into a readout of the loading you got.
                   {" "}The law is written on the <strong style={{ color: C.inkDim }}>open</strong> passage — the cell outline less the half-divider

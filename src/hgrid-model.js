@@ -2320,6 +2320,56 @@ function resampleOpen(pts, n) {
 // The four sides of a line-grid cell, as separate corner-to-corner polylines.
 // lineGridCells lays the outline down one side at a time with an equal sample
 // count each, so the corners sit at exact multiples of poly.length / 4.
+// ── THE 1-D HYPEX REFERENCE ─────────────────────────────────────────────────
+// What a plain Hypex horn of this throat would need to reach the cutoff you
+// asked for. It is the same calculation the standalone horn tool does, run on
+// the multicell's ACOUSTIC throat — the summed OPEN area of the cells, not the
+// driver's bore, because the dividers are in the way and the wave only sees
+// what is left.
+//
+// The mouth size is set by whichever of two criteria binds:
+//
+//   LOADING     the mouth must be large enough that the wave stops seeing an
+//               impedance step there. The classic statement is a mouth
+//               circumference of about one wavelength at cutoff, i.e. a
+//               diameter of c / (pi fc).
+//   DIRECTIVITY a mouth narrower than about a wavelength across cannot hold
+//               a pattern down to cutoff. For a coverage angle Th the mouth
+//               dimension wanted is roughly c / (fc sin(Th/2)), so the WIDER
+//               the coverage the smaller the mouth it needs — which is why a
+//               narrow-coverage horn is the one that ends up large.
+//
+// Reported as a reference, not imposed: the actual mouth comes from the
+// coverage and cap geometry, and this says how far short of the 1-D
+// requirement it falls.
+export function hypexReference({ throatArea, fc, T = 0.7, c = 343, coverageDeg = 90 }) {
+  if (!(throatArea > 0) || !(fc > 0)) return null;
+  const rt = Math.sqrt(throatArea / Math.PI);          // equivalent throat radius, mm
+  const m = hypexMForFc(fc, c);                        // per mm
+  const lam = (c / fc) * 1000;                         // mm
+  const diaLoading = lam / Math.PI;
+  const half = Math.max(1e-6, Math.sin((coverageDeg / 2) * D2R));
+  const diaDirectivity = lam / half;
+  const dia = Math.max(diaLoading, diaDirectivity);
+  const governedBy = diaDirectivity >= diaLoading ? "directivity" : "loading";
+  const areaFor = (d) => Math.PI * (d / 2) ** 2;
+  const lenFor = (d) => {
+    const ratio = (d / 2) / rt;
+    return ratio > 1 ? hypexLengthForRatio(ratio, m, T) : 0;
+  };
+  return {
+    throatArea, rt, m, fc, T, lambda: lam,
+    diaLoading, diaDirectivity, dia, governedBy,
+    areaLoading: areaFor(diaLoading),
+    areaDirectivity: areaFor(diaDirectivity),
+    mouthArea: areaFor(dia),
+    lenLoading: lenFor(diaLoading),
+    lenDirectivity: lenFor(diaDirectivity),
+    minLength: lenFor(dia),
+    ratio: (dia / 2) / rt,
+  };
+}
+
 // ── fc AS AN INPUT, BY SOLVING FOR DEPTH ────────────────────────────────────
 // m is solved from (area ratio, path length), so fc has only ever been a
 // READOUT: state the geometry and read the loading you got. The inversion runs

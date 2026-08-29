@@ -8,8 +8,8 @@ Five loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
-A sixth, CD Exit Cell Division, was deleted once the H-Grid Throat Partition
-superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
+A sixth, CD Exit Cell Division, was deleted once the Multicell Horn tool
+(then called H-Grid Throat Partition) superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
 defaults `not_found_handling` to none — but `npm run preview` falls back to the
 landing page instead, so a 200 there is not the deployed behaviour. If that
 link ever needs to live again, the tool is in the history.
@@ -25,7 +25,7 @@ horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
-h-grid-throat.html        → src/hgrid-main.jsx       → HGridThroat
+multicell-horn.html       → src/multicell-main.jsx   → MulticellHorn
 src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -151,7 +151,7 @@ Match what is already there rather than modernising it:
 - Inline style objects, no CSS modules, no styling library.
 - Hand-rolled SVG for all plots — no charting library.
 - Physics helpers as plain top-level functions above the component.
-- **One exception, deliberate**: `HGridThroat.jsx` keeps its physics in
+- **One exception, deliberate**: `MulticellHorn.jsx` keeps its physics in
   `src/hgrid-model.js` — a plain module with no React and no colour — so that
   `scripts/test-hgrid.mjs` can import it under node and check it against closed
   forms. Split a tool this way only when it has enough physics AND enough

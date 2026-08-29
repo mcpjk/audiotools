@@ -930,6 +930,48 @@ head("Mouth by arc angles");
     `ratio alone ${arc.fcDecomp.fromRatio.toFixed(3)}%, full ${arc.fcDecomp.full.toFixed(2)}% = L alone ${arc.fcDecomp.fromLength.toFixed(2)}%`);
 }
 
+// ── 10a5b. the 1-D Hypex reference ─────────────────────────────────────────
+head("1-D Hypex reference");
+{
+  const St = 895.3, fc = 500, T = 0.7, cov = 90;
+  const ref = M.hypexReference({ throatArea: St, fc, T, c, coverageDeg: cov });
+  const lam = (c / fc) * 1000;
+  // the two mouth criteria, against their closed forms
+  check("loading mouth diameter is lambda/pi", ref.diaLoading, lam / Math.PI, 1e-9, "mm");
+  check("directivity mouth diameter is lambda / sin(Th/2)",
+    ref.diaDirectivity, lam / Math.sin((cov / 2) * Math.PI / 180), 1e-9, "mm");
+  checkTrue("the binding criterion is the larger of the two",
+    ref.dia === Math.max(ref.diaLoading, ref.diaDirectivity) && ref.governedBy === "directivity",
+    `directivity ${ref.diaDirectivity.toFixed(0)} mm governs over loading ${ref.diaLoading.toFixed(0)} mm`);
+
+  // the length must be the one that actually reaches that mouth under the law,
+  // checked by running the profile forward rather than trusting the solver
+  const ratio = (ref.dia / 2) / Math.sqrt(St / Math.PI);
+  check("minimum length is the length that reaches the required ratio",
+    M.hypexR(ref.minLength, 1, ref.m, T), ratio, 1e-9);
+  check("...and the ratio it reports is that same ratio", ref.ratio, ratio, 1e-12);
+  check("m is the cutoff's own flare constant", ref.m, M.hypexMForFc(fc, c), 1e-15, "/mm");
+
+  // WIDER coverage needs a SMALLER mouth — the relation is 1/sin(Th/2), which
+  // is why the narrow-coverage horn is the one that comes out enormous
+  const wide = M.hypexReference({ throatArea: St, fc, T, c, coverageDeg: 120 });
+  const narrow = M.hypexReference({ throatArea: St, fc, T, c, coverageDeg: 40 });
+  checkTrue("wider coverage needs a smaller mouth, not a larger one",
+    wide.dia < ref.dia && ref.dia < narrow.dia,
+    `120deg ${wide.dia.toFixed(0)} < 90deg ${ref.dia.toFixed(0)} < 40deg ${narrow.dia.toFixed(0)} mm`);
+  // and a lower cutoff needs a bigger mouth and a longer horn, both ~1/fc
+  const lower = M.hypexReference({ throatArea: St, fc: 250, T, c, coverageDeg: cov });
+  check("halving the cutoff doubles the required mouth diameter",
+    lower.dia / ref.dia, 2, 1e-9);
+  checkTrue("...and lengthens the horn", lower.minLength > ref.minLength,
+    `${ref.minLength.toFixed(0)} -> ${lower.minLength.toFixed(0)} mm`);
+  // cosh needs more length than exponential for the same mouth, as ever
+  const t0 = M.hypexReference({ throatArea: St, fc, T: 0, c, coverageDeg: cov });
+  const t1 = M.hypexReference({ throatArea: St, fc, T: 1, c, coverageDeg: cov });
+  checkTrue("hyperbolic needs more length than exponential for the same mouth",
+    t0.minLength > t1.minLength, `${t0.minLength.toFixed(0)} vs ${t1.minLength.toFixed(0)} mm`);
+}
+
 // ── 10a6. fc as an input ───────────────────────────────────────────────────
 head("fc as an input (depth solved)");
 {

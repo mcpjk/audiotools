@@ -20,7 +20,7 @@ export default defineConfig({
         flh: resolve(here, "annular-flh.html"),
         directivity: resolve(here, "directivity-match.html"),
         aperture: resolve(here, "aperture-wavefield.html"),
-        hgrid: resolve(here, "h-grid-throat.html"),
+        multicell: resolve(here, "multicell-horn.html"),
       },
     },
   },
