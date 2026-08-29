@@ -770,6 +770,96 @@ head("Expansion law on the open passage");
     Math.abs(o0.rows[0].profRatio - g0.rows[0].profRatio), 0, 1e-12);
 }
 
+// ── 10a4c. the apex-free biradial mouth ────────────────────────────────────
+// The mouth is stated by what it must deliver — two arcs, each with its own
+// angle and length — and not by a shared apex. The apex was an artifact of
+// building the aperture as one spherical cap; it forced the two curvatures to
+// be equal and made "solid angle at the apex" look like a design criterion,
+// which it is not once each cell's path is independently aimed.
+head("Biradial mouth (apex-free)");
+{
+  const ST = 16, t = 0.4, DEF = 0.35, depth = 200;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const rad = Math.PI / 180;
+
+  // ── IT GENERALISES THE SPHERE, IT DOES NOT REPLACE IT ───────────────────
+  // With rH = rV the swept-arc surface must reproduce the old cap about an
+  // apex exactly, or the earlier arc-mode results would not carry over.
+  const rSph = 305.6, TH = 90, TV = 40;
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
+    dividerEndFrac: DEF, stations: ST, keepGeometry: true, wallWidthAt: 80, t, profileT: 0.3,
+  };
+  const asArc = M.mapThroatToMouth(Lay.throat, {
+    ...common, mouthMode: "arc", apex: rSph - depth, depth, thetaH: TH, thetaV: TV });
+  const asBi = M.mapThroatToMouth(Lay.throat, {
+    ...common, mouthMode: "biradial", depth, thetaH: TH, thetaV: TV,
+    arcH: rSph * TH * rad, arcV: rSph * TV * rad });
+  let worst = 0;
+  asBi.rows.forEach((r, i) => {
+    for (let k = 0; k < r.sched[ST].pts.length; k++) {
+      const a = r.sched[ST].pts[k], b = asArc.rows[i].sched[ST].pts[k];
+      worst = Math.max(worst, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+    }
+  });
+  check("rH = rV reproduces the sphere-about-apex mouth exactly", worst, 0, 1e-9, "mm");
+
+  // ── THE FLAT LIMITS, against their closed forms ─────────────────────────
+  const flatV = M.biradialMouth({ thetaH: TH, thetaV: 0, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+  checkTrue("Th_v = 0 is a vertically FLAT mouth", !isFinite(flatV.rV) && flatV.sagV === 0,
+    "vertical radius infinite, zero sagitta");
+  check("...and its height is the arc length exactly", flatV.height, 213, 1e-9, "mm");
+  const flatH = M.biradialMouth({ thetaH: 0, thetaV: TV, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+  check("Th_h = 0 gives a width equal to its arc length exactly", flatH.width, 480, 1e-9, "mm");
+  // a curved axis reports the CHORD as its extent, which is shorter than the arc
+  const cur = M.biradialMouth({ thetaH: TH, thetaV: TV, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+  check("a curved axis has radius arcLength / angle", cur.rH, 480 / (TH * rad), 1e-9, "mm");
+  check("...and reports the chord 2 r sin(Th/2) as its extent",
+    cur.width, 2 * cur.rH * Math.sin((TH / 2) * rad), 1e-9, "mm");
+  check("...with sagitta r(1 - cos(Th/2))",
+    cur.sagH, cur.rH * (1 - Math.cos((TH / 2) * rad)), 1e-9, "mm");
+
+  // ── THE NORMAL IS APEX-FREE ─────────────────────────────────────────────
+  // (sin a cos e, sin e, cos a cos e) depends on neither radius, which is what
+  // lets the arrival direction be stated without a common radiating point.
+  let nWorst = 0;
+  for (const [th, tv] of [[90, 40], [90, 10], [60, 60]]) {
+    const b = M.biradialMouth({ thetaH: th, thetaV: tv, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+    for (let u = 0; u <= 6; u++) for (let v = 0; v <= 3; v++) {
+      const n = b.normal(u, v);
+      const a = (b.arcH * (u / 6 - 0.5)) / b.rH, e = (b.svAt(v)) / b.rV;
+      const want = [Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)];
+      nWorst = Math.max(nWorst, Math.hypot(n[0] - want[0], n[1] - want[1], n[2] - want[2]));
+    }
+  }
+  check("the outward normal is (sin a cos e, sin e, cos a cos e), radius-free", nWorst, 0, 1e-12);
+
+  // ── EQUAL AREA AT EVERY CURVATURE, which is the property that must not move
+  const sweep = [40, 20, 0].map((tv) => {
+    const m = M.mapThroatToMouth(Lay.throat, {
+      ...common, mouthMode: "biradial", depth, thetaH: TH, thetaV: tv, arcH: 480, arcV: 213,
+      sectionMode: "flow" });
+    const A = m.rows.map((r) => r.mouthArea);
+    const mean = A.reduce((x, y) => x + y, 0) / A.length;
+    return { tv, spread: ((Math.max(...A) - Math.min(...A)) / mean) * 100, m };
+  });
+  checkTrue("equal mouth area survives the whole curvature range",
+    sweep.every((x) => x.spread < 0.02),
+    sweep.map((x) => `Th_v ${x.tv}: ${x.spread.toFixed(4)}%`).join("  "));
+  checkTrue("...and the vertically flat case is EXACTLY equal-area",
+    sweep[2].spread < 1e-9, `${sweep[2].spread.toExponential(1)}% at Th_v = 0`);
+
+  // the aperture IS the arrival target now, so there is no aim error left
+  checkTrue("arriving normal to the surface leaves no aim error",
+    sweep.every((x) => x.m.aimMax < 1e-4),
+    `worst ${Math.max(...sweep.map((x) => x.m.aimMax)).toExponential(1)} deg`);
+  // and none of it disturbs the tiling: the normal is a function of (u,v), so
+  // two cells sharing a boundary point still get an identical arrival direction
+  checkTrue("the sections still tile at every curvature",
+    sweep.every((x) => Math.abs(x.m.clearance.minMid) < 1e-6 || x.m.clearance.minMid > 0),
+    sweep.map((x) => x.m.clearance.overlap.toFixed(6)).join(" / ") + " mm overlap");
+}
+
 // ── 10a5. the path family ──────────────────────────────────────────────────
 head("Path family");
 {

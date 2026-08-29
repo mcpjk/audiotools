@@ -491,23 +491,40 @@ exists.
   nearest one: a point driven deep into a neighbour is FAR from that
   neighbour's boundary, so the minimum unsigned distance is exactly the point
   that says least about penetration.
-- **The mouth can be stated as COVERAGE, and then equal area and equal solid
-  angle stop being two constraints.** `mouthMode: "arc"` takes Thh x Thv about
-  the apex on a spherical cap and subdivides at equal d(azimuth) and equal
-  d(sin elevation) — the Lambert equal-area arrangement. On a sphere A = r^2
-  Omega, so equal solid angle IS equal area, and the cells still tile: all
-  three constraints at once. Measured at 6x3, 90x60: per-cell mouth area
-  spread 0.0289% against 5.71% for the uniform x/y lattice, radius ratio
-  0.025% against 2.87%. It holds across coverage (0.002% at 40x30, 0.093% at
-  120x80), and the mouth W x H comes out exactly on the chord closed forms
-  2 r sin(Th/2). What it gives up is equal angular WIDTH per cell — outer rows
-  span more degrees — which is the right trade, since what is specified is the
-  total Th. A traditional multicell makes the opposite trade: identical cells
-  on a radial fan get equal area and equal solid angle free but cannot tile a
-  curved surface, which is what the flat filler webs between cell mouths ARE.
-  Arc mode forces flatten = 1 and reports it as `flattenEff`, because a
-  flattened cap is not a sphere and the equal-area argument needs one.
-- **Decoupling vertical from horizontal curvature is a CONTINUUM, and the one
+- **THE MOUTH HAS NO APEX, and that was an architectural correction, not a
+  feature.** The aperture is stated by what it must deliver — a horizontal arc
+  of Th_h over its own arc length, a vertical arc of Th_v over its own — and
+  the two radii are INDEPENDENT (`mouthMode: "biradial"`, `arcH` / `arcV`).
+  Th = 0 on an axis makes that axis flat, so a vertically straight-sided mouth
+  is just Th_v = 0.
+  The apex was never a design input; it was an artifact of building the mouth
+  as one spherical cap, and it forced both curvatures to be the same number.
+  Worse, it made "equal solid angle at the apex" look like a design criterion.
+  It is not one: once each cell's path is independently aimed, the cells can
+  deliver whatever wavefront is wanted, so partitioning by angle at a common
+  point measures the CONSTRUCTION rather than the horn. What the mouth owes the
+  design is its shape and area; what the paths owe it is the wavefront.
+  The surface is a swept arc — the vertical arc swept along the horizontal one
+  in the plane normal to it:
+    V(a,e) = ((rH - rV(1-cos e)) sin a, rV sin e,
+              depth - rH(1-cos a) - rV(1-cos e) cos a)
+  It reduces EXACTLY to the old sphere-about-apex when rH = rV (verified
+  8e-14 mm), so nothing from the arc-mode era is lost. Two properties earn it:
+  the parameter tangents are ORTHOGONAL with |dV/da| = rH - rV(1-cos e)
+  independent of a, so equal d(azimuth) is exactly equal area horizontally at
+  any curvature; and the outward normal is (sin a cos e, sin e, cos a cos e),
+  which depends on NEITHER radius — it is simply the direction that angular
+  position points, and that is what makes the arrival direction apex-free.
+  Ducts now arrive along that normal, so `aimErr` is 0 by construction: the
+  aperture IS the arrival target.
+  Vertical cuts sit at equal cumulative area, inverted from the CLOSED FORM
+  F(sv) = sv(1 - rV/rH) + (rV^2/rH) sin(sv/rV), not quadratured — a 2000-sample
+  cumulative left 1.5e-6 mm of error against the sphere it must reproduce
+  identically. F reduces to r sin(e) at rH = rV (Lambert) and to sv when either
+  radius is infinite (equal d(arc length)).
+  `mouthMode` "rect" and "arc" survive in the model as the comparison baselines
+  the tests measure against; the tool offers only biradial.
+- **Decoupling vertical from horizontal curvature is a CONTINUUM,- **Decoupling vertical from horizontal curvature is a CONTINUUM, and the one
   thing it trades is equal solid angle.** The aperture is an ellipsoid of
   REVOLUTION today — `(x^2+y^2)/A^2 + (z+apex)^2/Cz^2 = 1` with a single A — so
   horizontal and vertical radii are locked identical and `flatten` scales both

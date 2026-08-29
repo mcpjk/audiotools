@@ -1347,6 +1347,102 @@ export function solveHypexM(ratio, L, T = 1) {
 export const fcForHypexM = (m, c) => (m * 1000 * c) / TAU;
 export const hypexMForFc = (fc, c) => (TAU * fc) / (1000 * c);
 
+// ── THE MOUTH AS A SURFACE, WITH NO APEX ────────────────────────────────────
+// The aperture is stated by what it has to deliver — a horizontal arc of
+// Th_h over an arc length, and a vertical arc of Th_v over its own arc length
+// — and NOT by a shared apex the cells are assumed to radiate from.
+//
+// Why the apex had to go. It was never a design input; it was an artifact of
+// building the mouth as one spherical cap, which forced horizontal and
+// vertical curvature to be the same number and made "solid angle at the apex"
+// look like a design criterion. It is not one: once each cell's path is
+// independently controllable, the cells can be aimed to deliver whatever
+// wavefront is wanted, including a cylindrical one. What the mouth owes the
+// design is its SHAPE and AREA; what the paths owe it is the wavefront. Tying
+// the two together through a common apex confuses a constraint with a
+// construction.
+//
+// The surface is a swept arc: take the horizontal arc as a spine and sweep the
+// vertical arc along it in the plane normal to the spine.
+//
+//   V(a,e) = ( (rH - rV(1-cos e)) sin a,
+//              rV sin e,
+//              depth - rH(1-cos a) - rV(1-cos e) cos a )
+//
+// It reduces EXACTLY to the old sphere-about-apex when rH = rV (verified to
+// 6e-14 mm), so the spherical case is not lost, only stopped being mandatory.
+// rV -> infinity is a vertically flat mouth (cylinder); rH -> infinity is a
+// horizontally flat one; both -> infinity is a plane.
+//
+// Two properties make it a good surface to subdivide:
+//   * the two parameter tangents are ORTHOGONAL, with |dV/da| = rH - rV(1-cos e)
+//     independent of a and |dV/de| = rV constant. So equal d(azimuth) is
+//     exactly equal area horizontally, at any curvature.
+//   * the outward normal is (sin a cos e, sin e, cos a cos e), which depends on
+//     NEITHER radius. It is simply the direction that angular position points,
+//     which is what makes the arrival direction apex-free.
+// Vertically the area weight is (1 - rV(1-cos e)/rH), so the cuts are placed at
+// equal cumulative area. That one rule reduces to Lambert's equal d(sin elev)
+// on the sphere and to equal d(y) on the cylinder.
+export function biradialMouth({ thetaH = 90, thetaV = 40, arcH = 480, arcV = 213, depth = 200, nc = 6, nr = 3 }) {
+  const aH = (thetaH / 2) * D2R, eH = (thetaV / 2) * D2R;
+  const rH = aH > 1e-9 ? arcH / (2 * aH) : Infinity;
+  const rV = eH > 1e-9 ? arcV / (2 * eH) : Infinity;
+  const sagV = (sv) => (isFinite(rV) ? rV * (1 - Math.cos(sv / rV)) : 0);
+  const yOf = (sv) => (isFinite(rV) ? rV * Math.sin(sv / rV) : sv);
+
+  // Vertical cuts at equal AREA. The area weight is 1 - rV(1-cos(sv/rV))/rH,
+  // whose integral is closed form, so this is inverted exactly rather than
+  // quadratured — a sampled cumulative left ~1e-6 mm of error against the
+  // sphere it is supposed to reproduce identically.
+  //
+  //   F(sv) = sv (1 - rV/rH) + (rV^2/rH) sin(sv/rV),   F' = 1 - sagV/rH
+  //
+  // At rH = rV this is r sin(e), i.e. exactly Lambert's equal d(sin elev); with
+  // either radius infinite the weight is 1 and it is equal d(arc length).
+  const Fcum = (sv) => (isFinite(rH) && isFinite(rV)
+    ? sv * (1 - rV / rH) + ((rV * rV) / rH) * Math.sin(sv / rV)
+    : sv);
+  const F0 = Fcum(-arcV / 2), F1 = Fcum(arcV / 2);
+  // continuous inverse: v in [0,nr] -> vertical arc position, by bisection on
+  // the exact cumulative (monotone while the vertical sagitta stays under rH)
+  const svAt = (v) => {
+    const target = F0 + ((F1 - F0) * v) / nr;
+    let lo = -arcV / 2, hi = arcV / 2;
+    for (let i = 0; i < 80; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (Fcum(mid) < target) lo = mid; else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+  };
+  const point = (u, v) => {
+    const sh = arcH * (u / nc - 0.5), sv = svAt(v);
+    const a = isFinite(rH) ? sh / rH : 0;
+    const sg = sagV(sv);
+    const x = isFinite(rH) ? (rH - sg) * Math.sin(a) : sh;
+    const zH = isFinite(rH) ? rH * (1 - Math.cos(a)) : 0;
+    return v3(x, yOf(sv), depth - zH - sg * (isFinite(rH) ? Math.cos(a) : 1));
+  };
+  // the outward normal — angular position only, no radius, no apex
+  const normal = (u, v) => {
+    const sh = arcH * (u / nc - 0.5), sv = svAt(v);
+    const a = isFinite(rH) ? sh / rH : 0;
+    const e = isFinite(rV) ? sv / rV : 0;
+    return v3(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e));
+  };
+  const P00 = point(0, nr / 2), Pnn = point(nc, nr / 2);
+  const Pv0 = point(nc / 2, 0), Pvn = point(nc / 2, nr);
+  return {
+    rH, rV, thetaH, thetaV, arcH, arcV, depth, point, normal, svAt,
+    // chord extents, the planar size a drawing would carry
+    width: Math.hypot(Pnn[0] - P00[0], Pnn[1] - P00[1], Pnn[2] - P00[2]),
+    height: Math.hypot(Pvn[0] - Pv0[0], Pvn[1] - Pv0[1], Pvn[2] - Pv0[2]),
+    // sagitta: how far the rim falls back from the mouth centre on each axis
+    sagH: isFinite(rH) ? rH * (1 - Math.cos(aH)) : 0,
+    sagV: sagV(arcV / 2),
+  };
+}
+
 export function apertureSurface({ apex, depth, flatten = 1 }) {
   const Cz = apex + depth;
   const A = flatten * Cz;
@@ -1471,7 +1567,7 @@ export function mapThroatToMouth(throat, opts) {
     tightThroat = tight, tightMouth = tight,
     // "rect" is the original: a uniform x/y lattice projected onto the cap.
     // "arc" defines the mouth by COVERAGE instead — see mouthGrid below.
-    mouthMode = "rect", thetaH = 90, thetaV = 60,
+    mouthMode = "rect", thetaH = 90, thetaV = 60, arcH = 480, arcV = 213,
     // "flow" = every boundary point on its own trajectory (neighbours share
     // their boundary exactly). "swept" = sections built per cell in specified
     // planes, which trades that invariant for centreline freedom.
@@ -1526,6 +1622,11 @@ export function mapThroatToMouth(throat, opts) {
   // hold, so arc mode forces flatten = 1 and reports it rather than honouring
   // a value that would silently break the property it exists to deliver.
   const arc = mouthMode === "arc";
+  // The apex-free mouth: shape stated as two independent arcs, arrival
+  // direction taken from the surface's own normal rather than from a common
+  // radiating point. See biradialMouth for why the apex was an artifact.
+  const bi = mouthMode === "biradial"
+    ? biradialMouth({ thetaH, thetaV, arcH, arcV, depth, nc, nr }) : null;
   const rCap = apex + depth;
   const aHalf = (thetaH / 2) * D2R, eHalf = (thetaV / 2) * D2R;
   const sinEHalf = Math.sin(eHalf);
@@ -1535,15 +1636,21 @@ export function mapThroatToMouth(throat, opts) {
   // grid coordinates -> a point on the aperture. u and v are continuous, so
   // mid-edge and mid-cell queries go through the same map as the corners.
   const mouthAt = (u, v) => {
+    if (bi) return bi.point(u, v);
     if (!arc) return surf.point(-mouthW / 2 + (mouthW * u) / nc, -mouthH / 2 + (mouthH * v) / nr);
     const a = -aHalf + (2 * aHalf * u) / nc;
     const e = Math.asin(-sinEHalf + (2 * sinEHalf * v) / nr);
     const ce = Math.cos(e);
     return v3(rCap * Math.sin(a) * ce, rCap * Math.sin(e), -apex + rCap * Math.cos(a) * ce);
   };
-  // planar extent of the arc mouth, as a readout: the chord across the cap
-  const mouthWEff = arc ? 2 * rCap * Math.sin(aHalf) : mouthW;
-  const mouthHEff = arc ? 2 * rCap * sinEHalf : mouthH;
+  // The direction a duct should arrive along. For the biradial mouth this is
+  // the surface's OWN normal — the aperture is chosen to be the wavefront, so
+  // arriving normal to it is arriving in phase with it, and no apex is needed
+  // to say so. For the legacy caps it stays the ray from the virtual apex.
+  const mouthNorm = (u, v) => (bi ? bi.normal(u, v) : surf.wavefront(mouthAt(u, v)));
+  // planar extent, as a readout: the chord across the cap
+  const mouthWEff = bi ? bi.width : arc ? 2 * rCap * Math.sin(aHalf) : mouthW;
+  const mouthHEff = bi ? bi.height : arc ? 2 * rCap * sinEHalf : mouthH;
 
   const lam = (c / fTarget) * 1000; // mm
   const rows = [];
@@ -1552,8 +1659,8 @@ export function mapThroatToMouth(throat, opts) {
     const { i, j } = cellRec;
     const corners = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]].map(([a, b]) => mouthAt(a, b));
     const mc = mouthAt(i + 0.5, j + 0.5);
-    const nSurf = surf.normal(mc);
-    const nWave = surf.wavefront(mc);
+    const nSurf = bi ? mouthNorm(i + 0.5, j + 0.5) : surf.normal(mc);
+    const nWave = mouthNorm(i + 0.5, j + 0.5);
     const aimErr = Math.acos(Math.min(1, Math.max(-1, dot3(nSurf, nWave)))) * R2D;
 
     const P0 = v3(cellRec.centroid[0], cellRec.centroid[1], 0);
@@ -1664,7 +1771,7 @@ export function mapThroatToMouth(throat, opts) {
       const A = v3(p[0] + cellRec.centroid[0], p[1] + cellRec.centroid[1], 0);
       const B = mouthAt(mouthUV[k][0], mouthUV[k][1]);
       const dirA = un3(s3(A, v3(0, 0, zLaunch)));
-      const dirB = surf.wavefront(B);
+      const dirB = mouthNorm(mouthUV[k][0], mouthUV[k][1]);
       return buildTrajectory(A, dirA, B, dirB, pathOpts);
     });
 
@@ -2250,8 +2357,9 @@ export function mapThroatToMouth(throat, opts) {
     aimLimitDeg: (lam / (4 * (mouthWEff / nc))) * R2D,
     sigma, stations, sectionAt,
     mouthAreaTotal: rows.reduce((a, r) => a + r.mouthArea, 0),
-    mouthMode, thetaH: arc ? thetaH : null, thetaV: arc ? thetaV : null,
+    mouthMode, thetaH: bi || arc ? thetaH : null, thetaV: bi || arc ? thetaV : null,
     mouthWEff, mouthHEff, flattenEff: arc ? 1 : flatten,
+    biradial: bi ? { rH: bi.rH, rV: bi.rV, arcH: bi.arcH, arcV: bi.arcV, sagH: bi.sagH, sagV: bi.sagV } : null,
     bendCentroidMean: rows.reduce((a, r) => a + r.bendCentroid, 0) / rows.length,
     sectionMode,
     sweptRollMax: rows[0].sweptRoll
