@@ -499,6 +499,29 @@ head("Hypex expansion profile");
   }
   check("hypexLengthForRatio is the length that reaches that ratio", worstLen, 0, 1e-12);
 
+  // fc = mc/2pi, with m per MILLIMETRE and c in m/s. The two directions must be
+  // exact inverses, and the forward one must match the relation computed
+  // independently here rather than by calling the same helper back.
+  check("fcForHypexM is fc = mc/2pi with the mm/m factor carried",
+    M.fcForHypexM(0.01, 343), (0.01 * 1000 * 343) / (2 * Math.PI), 1e-12, "Hz");
+  let worstFc = 0;
+  for (const fc of [120, 500, 2000]) for (const cs of [331.3, 343, 349.5])
+    worstFc = Math.max(worstFc, Math.abs(M.fcForHypexM(M.hypexMForFc(fc, cs), cs) - fc) / fc);
+  check("hypexMForFc inverts it exactly", worstFc, 0, 1e-14);
+
+  // The readout the tool owes once fc is a TARGET rather than a result: given
+  // the ratio a cell must reach and the cutoff asked for, the path length it
+  // would need. Closed as a round trip — a cell handed exactly that length
+  // must solve back to exactly that m, which is what makes the shortfall
+  // against the actual path length meaningful.
+  let worstReq = 0;
+  for (const T of [0, 0.5, 1]) for (const fc of [300, 600, 1200]) for (const ratio of [2, 3.27, 6]) {
+    const mWant = M.hypexMForFc(fc, 343);
+    const Lreq = M.hypexLengthForRatio(ratio, mWant, T);
+    worstReq = Math.max(worstReq, Math.abs(M.solveHypexM(ratio, Lreq, T) - mWant) / mWant);
+  }
+  check("required path length for a target fc round-trips through solveHypexM", worstReq, 0, 1e-8);
+
   const ST = 16;
   const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const mopt = {
@@ -514,6 +537,23 @@ head("Hypex expansion profile");
     off.rows.every((r, i) => r.sched.every((s, q) => Math.abs(s.area - t0.rows[i].sched[q].area) < 1e-12)),
     "byte-for-byte with the pre-profile pipeline");
   check("...and the flowed sections still tile (zero clearance)", off.clearance.min, 0, 1e-7, "mm");
+  check("...including mid-path, where a gap would have to show", off.clearance.minMid, 0, 1e-7, "mm");
+
+  // While there is no overlap, `min` is pinned at 0 by the tiling ends, so it
+  // cannot be the gap signal — minMid is. Once the metric is SIGNED that is no
+  // longer the whole story: a negative interior value is smaller than the ~0
+  // ends, so `min` becomes the global worst and stops being inert. Both halves
+  // are asserted, because reading `min` as "the gap" is wrong either way.
+  checkTrue("with no overlap, clearance.min is pinned at 0 by the tiling ends",
+    [0, 0.5].every((T) => {
+      const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
+      return Math.abs(mp.clearance.min) < 1e-7 && mp.clearance.minAt % ST === 0;
+    }), "station 0 or 16 — read minMid for the gap");
+  checkTrue("...but once ducts overlap it goes negative at an INTERIOR station",
+    (() => {
+      const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: 1 });
+      return mp.clearance.min < -1e-6 && mp.clearance.minAt % ST !== 0;
+    })(), "signed, so the worst penetration wins over the tiling ends");
 
   for (const T of [0, 0.7, 1]) {
     const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
@@ -560,12 +600,541 @@ head("Hypex expansion profile");
   checkTrue("k > 1 is reachable and is reported, not clamped",
     g[2].kMax > 1 + 1e-6, `T=1 reaches kMax = ${g[2].kMax.toFixed(5)} — profile exceeds the tiling area`);
 
+  // TWO INDEPENDENT MEASUREMENTS OF THE SAME BOUNDARY. k is an area ratio the
+  // profile computes; minMid is a sampled point-to-segment distance between 18
+  // real duct outlines. They know nothing about each other, so their agreeing
+  // on where the ducts touch is a check and not a tautology: k <= 1 must mean
+  // a measurable gap the whole way, and k > 1 must mean the gap has closed.
+  const boundary = [0, 0.2, 0.4, 0.6, 0.7, 0.8, 0.9, 1].map((T) => {
+    const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
+    return { T, k: mp.profScaleMax, mid: mp.clearance.minMid };
+  });
+  checkTrue("k <= 1 and a measurable mid-path gap are the same condition",
+    boundary.every((x) => (x.k <= 1 + 1e-9) === (x.mid > 1e-3)),
+    boundary.map((x) => `${x.T}:${x.k <= 1 + 1e-9 ? "gap" : "touch"}`).join(" "));
+  // Monotone only WHILE a gap exists. Past the crossing the ducts are in
+  // contact and the measurement is a sampled distance bottoming out on zero,
+  // so its last digits are quadrature noise, not a trend to assert on.
+  const open = boundary.filter((x) => x.mid > 1e-3);
+  checkTrue("...and the gap closes monotonically as T rises toward it",
+    open.every((x, i) => i === 0 || x.mid < open[i - 1].mid) &&
+    boundary.filter((x) => x.mid <= 1e-3).every((x) => x.mid < 1e-3),
+    open.map((x) => x.mid.toFixed(3)).join(" > ") + " > touching");
+
+  // STATION BY STATION, not just in aggregate. CLAUDE.md records that overlap
+  // appears "at precisely the stations where k > 1" — that was established by
+  // ray cast and then only asserted in prose. Here the two detectors are
+  // compared per station: wherever any cell's k exceeds 1 the measured
+  // clearance must have collapsed, and wherever every k is at or below 1 there
+  // must be a real gap. Same claim as above, at the resolution that makes it
+  // falsifiable.
+  const mpk = M.mapThroatToMouth(L.throat, { ...mopt, profileT: 1 });
+  let agree = true, over = 0, detail = [];
+  for (let q = 1; q < ST; q++) {
+    const kq = Math.max(...mpk.rows.map((r) => r.profK[q]));
+    const touching = mpk.clearance.perStation[q] < 1e-3;
+    if (kq > 1 + 1e-6) over++;
+    if ((kq > 1 + 1e-6) !== touching) { agree = false; detail.push(`st${q}: k=${kq.toFixed(4)} gap=${mpk.clearance.perStation[q].toFixed(4)}`); }
+  }
+  checkTrue("the ducts touch at exactly the stations where k > 1", agree && over > 0,
+    over > 0 ? `${over} of ${ST - 1} interior stations are over, and every one of them is a contact` : detail.join("  "));
+
+  // and the per-station k must reproduce the range the tool reports from it
+  checkTrue("profScaleMin/Max are the range of the per-station k",
+    mpk.rows.every((r) => Math.abs(Math.min(...r.profK) - r.profScaleMin) < 1e-12 &&
+      Math.abs(Math.max(...r.profK) - r.profScaleMax) < 1e-12 &&
+      Math.abs(r.profK[r.profKMaxAt] - r.profScaleMax) < 1e-12),
+    `kMaxAt station ${mpk.rows[0].profKMaxAt} for cell ${mpk.rows[0].label}`);
+
+  // ── PHASE A CALIBRATION ───────────────────────────────────────────────
+  // The signed metric has to be calibrated WHILE the flow construction still
+  // holds, because that is the only regime where overlap is known analytically:
+  // scaling a tiling section about its centroid by k <= 1 maps it strictly
+  // inside itself, so overlap is impossible. Every k <= 1 case must therefore
+  // measure exactly zero overlap, and every k > 1 case must measure some. That
+  // agreement is what lets the measurement be trusted later, when sections stop
+  // coming from one shared flow and the k argument no longer applies.
+  const cal = [null, 0, 0.3, 0.6, 0.79, 0.8, 0.9, 1].map((T) => {
+    const mp = M.mapThroatToMouth(L.throat, { ...mopt, profileT: T });
+    return { T, k: mp.profScaleMax, ov: mp.clearance.overlap, n: mp.clearance.overlapStations };
+  });
+  checkTrue("signed clearance measures ZERO overlap wherever k <= 1",
+    cal.filter((x) => x.k == null || x.k <= 1 + 1e-9).every((x) => x.ov < 1e-6 && x.n === 0),
+    cal.filter((x) => x.k == null || x.k <= 1 + 1e-9).map((x) => `T=${x.T}`).join(" "));
+  checkTrue("...and measures real depth wherever k > 1",
+    cal.filter((x) => x.k > 1 + 1e-9).every((x) => x.ov > 0 && x.n > 0),
+    cal.filter((x) => x.k > 1 + 1e-9).map((x) => `T=${x.T}: ${x.ov.toFixed(4)}mm over ${x.n} st`).join("  "));
+  // depth is a MEASUREMENT now, not a yes/no — it has to grow with the breach
+  const deep = cal.filter((x) => x.k > 1 + 1e-9);
+  checkTrue("overlap depth grows as the profile breaches further past k = 1",
+    deep.every((x, i) => i === 0 || x.ov > deep[i - 1].ov),
+    deep.map((x) => `${x.ov.toFixed(3)}`).join(" < ") + " mm");
+  // the distinction the unsigned metric could not make: touching vs driven through
+  checkTrue("touching and interpenetrating are now distinguishable",
+    cal.find((x) => x.T === 0.79).ov === 0 && cal.find((x) => x.T === 1).ov > 0.2,
+    `T=0.79 touches (0 mm), T=1 is driven ${cal.find((x) => x.T === 1).ov.toFixed(3)} mm through — both read 0 unsigned`);
+
+  // a cell's own gap is the closest it comes to any neighbour, so the smallest
+  // of them has to be the global mid-path minimum — no cell can be closer than
+  // the closest pair, and the closest pair belongs to some cell
+  const mpc = M.mapThroatToMouth(L.throat, { ...mopt, profileT: 0 });
+  check("the per-cell gaps bottom out at exactly the global mid-path minimum",
+    Math.min(...mpc.clearance.perCell.values()), mpc.clearance.minMid, 1e-12, "mm");
+  checkTrue("every cell gets a gap, not just the pair that sets the minimum",
+    mpc.clearance.perCell.size === mpc.rows.length &&
+    [...mpc.clearance.perCell.values()].every((d) => d > 0),
+    `${mpc.clearance.perCell.size} cells, ${Math.min(...mpc.clearance.perCell.values()).toFixed(3)}-${Math.max(...mpc.clearance.perCell.values()).toFixed(3)} mm`);
+
   // every cell has the same expansion RATIO (equal throat areas, uniform mouth
   // grid), so fc differs between cells only through path length
   const mp1 = M.mapThroatToMouth(L.throat, { ...mopt, profileT: 1 });
   checkTrue("fc spread across cells is small, and tracks path length only",
     (mp1.profFcMax - mp1.profFcMin) / mp1.profFcMin < 0.1,
     `${mp1.profFcMin.toFixed(0)}-${mp1.profFcMax.toFixed(0)} Hz over dL = ${mp1.dL.toFixed(1)} mm`);
+}
+
+// ── 10a4b. the law is written on the OPEN passage ──────────────────────────
+// The wave travels through the open passage, not the gross cell outline, so
+// the expansion law is keyed on open area. NOTE these tests pass `t` INTO
+// mapThroatToMouth. Passing it only to buildLayout leaves the map at t = 0,
+// where open and gross coincide and every assertion below passes vacuously —
+// which is exactly how this path went untested when it was first written.
+head("Expansion law on the open passage");
+{
+  const ST = 16, DEF = 0.35;
+  for (const t of [0.4, 0.8]) {
+    const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+    const base = {
+      c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+      tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+      wallWidthAt: 200 / 6, t, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
+    };
+    const gross = M.mapThroatToMouth(Lay.throat, { ...base, profileArea: "gross" });
+    const open = M.mapThroatToMouth(Lay.throat, { ...base, profileArea: "open" });
+
+    // THE LAW MUST HOLD ON THE OPEN AREA, station by station, computed here
+    // from the inset polygons rather than read back off the model
+    let worst = 0, endK = 0;
+    for (const r of open.rows) {
+      const cell = Lay.throat.cells.find((x) => x.id === r.id);
+      const rim = cell.rimSide || [false, false, false, false];
+      const dAt = (u) => rim.map((isRim) => (isRim ? 0 : (t / 2) * Math.max(0, 1 - u / DEF)));
+      const openAt = (pts, d) => (d.some((v) => v > 0) ? M.polyArea3(M.insetSection3(pts, d)) : M.polyArea3(pts));
+      const A0 = openAt(r.sched[0].pts, dAt(0));
+      for (let q = 0; q <= ST; q++) {
+        const got = openAt(r.sched[q].pts, dAt(q / ST));
+        const want = A0 * M.hypexR(r.sched[q].sLen, 1, r.profM, 0.3) ** 2;
+        worst = Math.max(worst, Math.abs(got - want) / want);
+      }
+      endK = Math.max(endK, Math.abs(r.profK[0] - 1), Math.abs(r.profK[ST] - 1));
+    }
+    check(`t=${t}: OPEN area follows A_open x hypexR(x,1,m,T)^2 at every station`, worst, 0, 1e-9);
+    // and the ends must still be untouched, or the throat face and the mouth
+    // tiling go with them. This is not automatic: the inset is a fixed offset,
+    // so k = 1 at the ends is a property that has to be checked, not assumed.
+    check(`t=${t}: ...with k still exactly 1 at both ends`, endK, 0, 1e-9);
+
+    // keying on open RAISES the ratio, because the passage is smaller than the
+    // outline: the real expansion is bigger than gross-to-gross reported
+    checkTrue(`t=${t}: the open ratio exceeds the gross ratio`,
+      open.rows[0].profRatio > gross.rows[0].profRatio,
+      `${gross.rows[0].profRatio.toFixed(3)} -> ${open.rows[0].profRatio.toFixed(3)}, +${((open.rows[0].profRatio / gross.rows[0].profRatio - 1) * 100).toFixed(2)}%`);
+    checkTrue(`t=${t}: ...so the reported fc rises with it`,
+      open.profFcMin > gross.profFcMin,
+      `${gross.profFcMin.toFixed(0)} -> ${open.profFcMin.toFixed(0)} Hz`);
+
+    // THE PAYOFF. The equal-area solve equalises OPEN area to 1e-10, so keying
+    // the law on it makes the throat reference identical across cells and the
+    // ratio spread collapses. Gross cannot do this: it is unequal by
+    // construction once dividers exist, because a rim cell has fewer of them.
+    checkTrue(`t=${t}: keying on open collapses the ratio spread`,
+      open.ratioSpread < gross.ratioSpread / 5,
+      `${gross.ratioSpread.toFixed(3)}% gross -> ${open.ratioSpread.toFixed(3)}% open`);
+    checkTrue(`t=${t}: ...and with it the ratio's share of the fc spread`,
+      open.fcDecomp.fromRatio < gross.fcDecomp.fromRatio / 4,
+      `${gross.fcDecomp.fromRatio.toFixed(3)}% -> ${open.fcDecomp.fromRatio.toFixed(3)}%`);
+  }
+
+  // with no dividers there is nothing to subtract, so the two must agree
+  // exactly — the guard that says these tests are not silently comparing
+  // a mode against itself
+  const bare = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0, c });
+  const opts = {
+    c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+    tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    wallWidthAt: 200 / 6, t: 0, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
+  };
+  const g0 = M.mapThroatToMouth(bare.throat, { ...opts, profileArea: "gross" });
+  const o0 = M.mapThroatToMouth(bare.throat, { ...opts, profileArea: "open" });
+  check("with t = 0 the two conventions coincide exactly",
+    Math.abs(o0.rows[0].profRatio - g0.rows[0].profRatio), 0, 1e-12);
+}
+
+// ── 10a5. the path family ──────────────────────────────────────────────────
+head("Path family");
+{
+  const A = [0, 0, 0], dirA = [0, 0, 1], B = [60, 0, 140], dirB = [0.6, 0, 0.8];
+  const un = (v) => { const n = Math.hypot(...v); return [v[0] / n, v[1] / n, v[2] / n]; };
+  const dB = un(dirB);
+
+  // the defaults must reduce EXACTLY to the single-tight, one-straight-run form
+  const oldStyle = M.buildTrajectory(A, dirA, B, dB, { divergeLen: 12, tight: 0.55 });
+  const newStyle = M.buildTrajectory(A, dirA, B, dB, {
+    divergeLen: 12, arriveLen: 0, tightThroat: 0.55, tightMouth: 0.55 });
+  let same = 0;
+  for (let q = 0; q <= 400; q++) {
+    const u = q / 400, a = oldStyle(u), b = newStyle(u);
+    same = Math.max(same, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+  }
+  check("split tangents with no mouth run reproduce the old path exactly", same, 0, 1e-12, "mm");
+
+  // the straight runs must actually be straight, and exactly as long as asked
+  const tj = M.buildTrajectory(A, dirA, B, dB, { divergeLen: 20, arriveLen: 30, tight: 0.55 });
+  let offA = 0, offB = 0;
+  for (let q = 0; q <= 4000; q++) {
+    const u = q / 4000, P = tj(u);
+    const tA = P[2]; // along dirA = +z from the origin
+    if (tA <= 20 + 1e-9) offA = Math.max(offA, Math.hypot(P[0], P[1]));
+    const d = [B[0] - P[0], B[1] - P[1], B[2] - P[2]];
+    const along = d[0] * dB[0] + d[1] * dB[1] + d[2] * dB[2];
+    if (along <= 30 + 1e-9 && along >= 0)
+      offB = Math.max(offB, Math.hypot(d[0] - dB[0] * along, d[1] - dB[1] * along, d[2] - dB[2] * along));
+  }
+  check("the throat run is straight along dirA", offA, 0, 1e-9, "mm");
+  check("the mouth run is straight along dirB", offB, 0, 1e-9, "mm");
+
+  // G1 at BOTH joins: the Hermite leaves along dirA and arrives along dirB, so
+  // a dense walk must show no kink anywhere. A tangent discontinuity at a join
+  // would appear as one large angular step among small ones.
+  let maxStep = 0;
+  let prev = null;
+  for (let q = 0; q <= 3000; q++) {
+    const u = q / 3000, P = tj(u), Q = tj(Math.min(1, u + 1 / 3000));
+    const d = [Q[0] - P[0], Q[1] - P[1], Q[2] - P[2]];
+    const n = Math.hypot(...d);
+    if (n < 1e-12) continue;
+    const e = [d[0] / n, d[1] / n, d[2] / n];
+    if (prev) maxStep = Math.max(maxStep, Math.acos(Math.min(1, Math.max(-1, e[0] * prev[0] + e[1] * prev[1] + e[2] * prev[2]))) * 180 / Math.PI);
+    prev = e;
+  }
+  checkTrue("no kink at either straight-to-Hermite join", maxStep < 0.5,
+    `worst angular step ${maxStep.toFixed(4)} deg over 3000 samples`);
+
+  // ── AND THE KNOBS MUST MOVE THE BEND WHERE THEY CLAIM ────────────────────
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
+    flatten: 1, exitHalfAngle: 8, fTarget: 20000, dividerEndFrac: 0.35, stations: 16,
+    keepGeometry: true, wallWidthAt: 200 / 6,
+  };
+  const bend = (o) => {
+    const m = M.mapThroatToMouth(Lay.throat, { ...common, ...o });
+    const b = m.rows.map((r) => r.bendCentroid);
+    return { b: b.reduce((x, y) => x + y, 0) / b.length, tile: m.clearance.minMid, ov: m.clearance.overlap };
+  };
+  // a bigger MOUTH tangent holds the curve straight off the mouth for longer,
+  // so the turning is forced back toward the throat
+  const bm = [0.3, 0.55, 0.9].map((t) => bend({ tightThroat: 0.55, tightMouth: t }));
+  checkTrue("a larger mouth tangent pushes the bend toward the throat",
+    bm[0].b > bm[1].b && bm[1].b > bm[2].b,
+    bm.map((x) => x.b.toFixed(3)).join(" > ") + " (bend centroid, 0 = throat)");
+  // and a bigger THROAT tangent is the opposite lever
+  const bt = [0.3, 0.55, 0.9].map((t) => bend({ tightThroat: t, tightMouth: 0.55 }));
+  checkTrue("...and a larger throat tangent pushes it toward the mouth",
+    bt[0].b < bt[1].b && bt[1].b < bt[2].b,
+    bt.map((x) => x.b.toFixed(3)).join(" < "));
+  // the mouth-side straight run does the same job by a different mechanism
+  const ba = [0, 25, 45].map((a) => bend({ tight: 0.55, arriveLen: a }));
+  checkTrue("the mouth straight run also pushes the bend toward the throat",
+    ba[0].b > ba[1].b && ba[1].b > ba[2].b,
+    ba.map((x) => x.b.toFixed(3)).join(" > "));
+  // none of it may disturb the flow invariant — these are still flowed sections
+  checkTrue("every path setting still tiles exactly",
+    [...bm, ...bt, ...ba].every((x) => Math.abs(x.tile) < 1e-7 && x.ov < 1e-7),
+    `worst |gap| ${Math.max(...[...bm, ...bt, ...ba].map((x) => Math.abs(x.tile))).toExponential(2)} mm`);
+}
+
+// ── 10a4. the mouth by arc angles ──────────────────────────────────────────
+head("Mouth by arc angles");
+{
+  const ST = 16, TH = 90, TV = 60, apex = 120, depth = 150, rCap = apex + depth;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0, c });
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, apex, depth, exitHalfAngle: 8, tight: 0.55,
+    fTarget: 20000, dividerEndFrac: 0.35, stations: ST, keepGeometry: true, wallWidthAt: 200 / 6,
+  };
+  const rect = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1, profileT: 1 });
+  const arc = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "arc", thetaH: TH, thetaV: TV, profileT: 1 });
+  const aH = (TH / 2) * Math.PI / 180, eH = (TV / 2) * Math.PI / 180;
+
+  // the planar extent of a spherical cap is a chord, and it is exact
+  check("arc mouth width is the chord 2 r sin(Th_h/2)", arc.mouthWEff, 2 * rCap * Math.sin(aH), 1e-9, "mm");
+  check("arc mouth height is the chord 2 r sin(Th_v/2)", arc.mouthHEff, 2 * rCap * Math.sin(eH), 1e-9, "mm");
+
+  // total area against the closed form r^2 * (2 a_h) * (2 sin e_h). The 64-point
+  // ring is a chord approximation of a convex patch, so it must come out just
+  // BELOW the closed form — a value above it would mean the rings are not on
+  // the cap at all.
+  const areaCF = rCap * rCap * 2 * aH * 2 * Math.sin(eH);
+  checkTrue("total mouth area matches r^2 (2a_h)(2 sin e_h), from below",
+    arc.mouthAreaTotal < areaCF && arc.mouthAreaTotal > 0.99 * areaCF,
+    `${arc.mouthAreaTotal.toFixed(0)} against ${areaCF.toFixed(0)} mm2, ${((1 - arc.mouthAreaTotal / areaCF) * 100).toFixed(2)}% low — chord under-measure`);
+
+  // THE POINT OF THE MODE. Equal d(azimuth) and equal d(sin elevation) is the
+  // Lambert equal-area arrangement, so every cell gets the same solid angle and
+  // the same area while the cells still tile.
+  checkTrue("equal-solid-angle subdivision equalises the mouth areas",
+    arc.mouthAreaSpread < 0.05 && arc.mouthAreaSpread < rect.mouthAreaSpread / 100,
+    `${arc.mouthAreaSpread.toFixed(4)}% against ${rect.mouthAreaSpread.toFixed(4)}% for the uniform x/y lattice`);
+  checkTrue("...so every cell gets the same expansion ratio too",
+    arc.ratioSpread < 0.05 && arc.ratioSpread < rect.ratioSpread / 50,
+    `${arc.ratioSpread.toFixed(4)}% against ${rect.ratioSpread.toFixed(4)}%`);
+
+  // and it holds across coverages, not at one lucky setting
+  const cov = [[40, 30], [60, 40], [120, 80]].map(([h, v]) => {
+    const m = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "arc", thetaH: h, thetaV: v, profileT: 1 });
+    return { h, v, a: m.mouthAreaSpread, r: m.ratioSpread };
+  });
+  checkTrue("equal area holds across coverage, not at one setting",
+    cov.every((x) => x.a < 0.1 && x.r < 0.1),
+    cov.map((x) => `${x.h}x${x.v}: ${x.a.toFixed(3)}%`).join("  "));
+
+  // the reparameterisation must not disturb the tiling invariant: neighbours
+  // share an edge in GRID coordinates, so their boundary points are identical
+  const arcPlain = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "arc", thetaH: TH, thetaV: TV, profileT: null });
+  check("arc sections still tile — no gap and no overlap", arcPlain.clearance.minMid, 0, 1e-7, "mm");
+  check("...and the signed metric agrees there is no penetration", arcPlain.clearance.overlap, 0, 1e-7, "mm");
+
+  // a sphere about the apex, or the equal-area argument does not hold
+  const arcFlat = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "arc", thetaH: TH, thetaV: TV, flatten: 0.55 });
+  checkTrue("arc mode overrides flatten to 1 and reports it", arcFlat.flattenEff === 1,
+    "a flattened cap is not a sphere, so equal solid angle would stop being equal area");
+
+  // ── THE fc DECOMPOSITION, AND THE CLAIM IT CORRECTS ──────────────────────
+  // CLAUDE.md used to say every cell has the SAME expansion ratio, so fc
+  // differs only through path length. False for a uniform x/y mouth: the cap
+  // stretches the outer cells. The decomposition freezes one variable at its
+  // mean to separate the two contributions.
+  checkTrue("rect mouth: fc moves with BOTH path length and area ratio",
+    rect.fcDecomp.fromRatio > 1 && rect.fcDecomp.fromLength > 1,
+    `L alone ${rect.fcDecomp.fromLength.toFixed(2)}%, ratio alone ${rect.fcDecomp.fromRatio.toFixed(2)}%, full ${rect.fcDecomp.full.toFixed(2)}%`);
+  // and they partially cancel — an outer cell has both a longer path and a
+  // larger ratio, which push fc in opposite directions
+  checkTrue("...and the two partially cancel, so the full spread is the smaller",
+    rect.fcDecomp.full < rect.fcDecomp.fromLength,
+    `full ${rect.fcDecomp.full.toFixed(2)}% < path length alone ${rect.fcDecomp.fromLength.toFixed(2)}%`);
+  // arc mode is what makes the old claim TRUE: equal ratios leave path length
+  // as the only term, so equalising dL really does equalise the cutoff
+  checkTrue("arc mouth makes fc a function of path length ALONE",
+    arc.fcDecomp.fromRatio < 0.05 && Math.abs(arc.fcDecomp.full - arc.fcDecomp.fromLength) < 0.5,
+    `ratio alone ${arc.fcDecomp.fromRatio.toFixed(3)}%, full ${arc.fcDecomp.full.toFixed(2)}% = L alone ${arc.fcDecomp.fromLength.toFixed(2)}%`);
+}
+
+// ── 10a6. fc as an input ───────────────────────────────────────────────────
+head("fc as an input (depth solved)");
+{
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const arcOpts = {
+    c, nc: 6, nr: 3, R, rectangular: true, apex: 120, flatten: 1, exitHalfAngle: 8,
+    fTarget: 20000, dividerEndFrac: 0.35, stations: 16, wallWidthAt: 200 / 6, tight: 0.55,
+    mouthMode: "arc", thetaH: 90, thetaV: 60,
+  };
+  // THE ROUND TRIP, and it is closed against the forward model rather than
+  // against the solver's own bookkeeping: take the depth it returns, rebuild
+  // the mapping from scratch at that depth, and read the cutoff back out.
+  let worst = 0;
+  for (const target of [350, 500, 800]) {
+    const r = M.solveDepthForFc(Lay.throat, arcOpts, { fcTarget: target, T: 1 });
+    const back = M.mapThroatToMouth(Lay.throat, { ...arcOpts, depth: r.depth, profileT: 1, keepGeometry: false });
+    const fcs = back.rows.map((x) => x.profFc);
+    const mean = fcs.reduce((a, b) => a + b, 0) / fcs.length;
+    worst = Math.max(worst, Math.abs(mean - target) / target);
+  }
+  check("depth solved for fc reproduces that fc through the forward model", worst, 0, 1e-5);
+
+  // deeper is a lower cutoff, so a higher target must come back shallower
+  const byTarget = [300, 500, 900].map((t) => M.solveDepthForFc(Lay.throat, arcOpts, { fcTarget: t, T: 1 }));
+  checkTrue("a higher cutoff needs less depth, monotonically",
+    byTarget.every((r) => r.ok) && byTarget[0].depth > byTarget[1].depth && byTarget[1].depth > byTarget[2].depth,
+    byTarget.map((r) => `${r.depth.toFixed(1)}`).join(" > ") + " mm");
+
+  // cosh flares more slowly off the throat than exponential, so it needs more
+  // length to reach the same mouth area at the same cutoff
+  const byT = [0, 0.5, 1].map((T) => M.solveDepthForFc(Lay.throat, arcOpts, { fcTarget: 500, T }));
+  checkTrue("hyperbolic needs more depth than exponential for the same fc",
+    byT[0].depth > byT[1].depth && byT[1].depth > byT[2].depth,
+    byT.map((r) => r.depth.toFixed(1)).join(" > ") + " mm for T = 0, 0.5, 1");
+
+  // out of reach is REPORTED with the bound it ran into, never clamped to the
+  // nearest achievable value and presented as a solution
+  const tooLow = M.solveDepthForFc(Lay.throat, arcOpts, { fcTarget: 20, T: 1 });
+  const tooHigh = M.solveDepthForFc(Lay.throat, arcOpts, { fcTarget: 8000, T: 1 });
+  checkTrue("an unreachable cutoff is reported with its bound, not clamped",
+    !tooLow.ok && tooLow.reason === "too low" && tooLow.bound > 20 &&
+    !tooHigh.ok && tooHigh.reason === "too high" && tooHigh.bound < 8000,
+    `20 Hz floors at ${tooLow.bound.toFixed(0)} Hz, 8000 Hz ceilings at ${tooHigh.bound.toFixed(0)} Hz`);
+
+  // and it is not an arc-mode-only trick
+  const rectOpts = { ...arcOpts, mouthMode: "rect", mouthW: 200, mouthH: 100 };
+  const rr = M.solveDepthForFc(Lay.throat, rectOpts, { fcTarget: 500, T: 1 });
+  const rback = M.mapThroatToMouth(Lay.throat, { ...rectOpts, depth: rr.depth, profileT: 1, keepGeometry: false });
+  const rfc = rback.rows.map((x) => x.profFc);
+  check("the inversion works in rect mode too", rfc.reduce((a, b) => a + b, 0) / rfc.length, 500, 0.05, "Hz");
+
+  // ── WHAT IS LEFT IN THE fc SPREAD, AND WHERE IT COMES FROM ──────────────
+  // With an equal-area mouth AND no dividers, path length is the whole story,
+  // so the dL budget is the only lever left.
+  const bare = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0, c });
+  const solvedBare = M.solveDepthForFc(bare.throat, arcOpts, { fcTarget: 500, T: 1 });
+  checkTrue("with t = 0 the residual fc spread is path length ALONE",
+    solvedBare.fcDecomp.fromRatio < 0.05 && solvedBare.fcDecomp.fromLength > 1,
+    `${solvedBare.fcLo.toFixed(0)}-${solvedBare.fcHi.toFixed(0)} Hz: ratio alone ${solvedBare.fcDecomp.fromRatio.toFixed(3)}%, length alone ${solvedBare.fcDecomp.fromLength.toFixed(2)}%`);
+
+  // BUT the throat is not equal-area in the sense the profile uses. The solve
+  // equalises OPEN area; the duct section is built on the GROSS cell outline,
+  // and open = gross - (t/2) x divider length. A rim cell has fewer dividers,
+  // so equal open area means it needs LESS gross area — and the profile's
+  // expansion ratio, being gross to gross, inherits that inequality. This is a
+  // second, independent source of fc spread, sitting at the throat rather than
+  // the mouth, and it scales with the divider thickness.
+  const grossSpread = (t) => {
+    const lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+    const a = lay.throat.cells.map((x) => x.area), o = lay.throat.cells.map((x) => x.open);
+    const sp = (v) => ((Math.max(...v) - Math.min(...v)) / (v.reduce((x, y) => x + y, 0) / v.length)) * 100;
+    return { gross: sp(a), open: sp(o) };
+  };
+  const g0 = grossSpread(0), g4 = grossSpread(0.4), g8 = grossSpread(0.8);
+  checkTrue("the solve equalises OPEN area, at every divider thickness",
+    [g0, g4, g8].every((x) => x.open < 1e-6),
+    `open spread ${g4.open.toExponential(2)}% at t = 0.4`);
+  checkTrue("...but GROSS throat area is unequal once dividers exist, and grows with t",
+    g0.gross < 1e-6 && g4.gross > 1 && g8.gross > g4.gross,
+    `gross spread ${g0.gross.toFixed(3)}% / ${g4.gross.toFixed(2)}% / ${g8.gross.toFixed(2)}% at t = 0 / 0.4 / 0.8`);
+  // so an equal-area MOUTH does not by itself buy an equal expansion ratio
+  const ratioAt = (t) => {
+    const lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+    return M.mapThroatToMouth(lay.throat, { ...arcOpts, depth: 280.47, profileT: 1, keepGeometry: false });
+  };
+  const r0 = ratioAt(0), r4 = ratioAt(0.4), r8 = ratioAt(0.8);
+  checkTrue("the divider inset, not the mouth, is what is left in the ratio spread",
+    r0.mouthAreaSpread === r4.mouthAreaSpread && r4.mouthAreaSpread === r8.mouthAreaSpread &&
+    r0.ratioSpread < 0.05 && r4.ratioSpread > 1 && r8.ratioSpread > r4.ratioSpread,
+    `mouth fixed at ${r4.mouthAreaSpread.toFixed(4)}% while ratio goes ${r0.ratioSpread.toFixed(3)} -> ${r4.ratioSpread.toFixed(2)} -> ${r8.ratioSpread.toFixed(2)}%`);
+}
+
+// ── 10a7. swept sections (Phase D) ─────────────────────────────────────────
+// The flowed construction guarantees non-overlap by SHARING boundary points.
+// Swept sections give that up on purpose, so that each cell's centreline can be
+// manipulated independently — the only mechanism that can lengthen an interior
+// cell's path, which the dL measurements say is required at any useful
+// coverage. What must survive is the two ENDS: the driver mating face and the
+// mouth tiling. What is traded is the interior, and it is bounded by the SIGNED
+// clearance rather than asserted to be zero.
+head("Swept sections (Phase D)");
+{
+  const ST = 16, t = 0.4, DEF = 0.35;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+    tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    wallWidthAt: 200 / 6,
+  };
+  const modes = [["rect", { mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1 }],
+                 ["arc", { mouthMode: "arc", thetaH: 90, thetaV: 60 }]];
+
+  for (const [nm, mo] of modes) {
+    const flow = M.mapThroatToMouth(Lay.throat, { ...common, ...mo, profileT: 0.3, sectionMode: "flow" });
+    const swept = M.mapThroatToMouth(Lay.throat, { ...common, ...mo, profileT: 0.3, sectionMode: "swept" });
+
+    // ── THE ENDS MUST BE EXACT, or the trade is not worth making ───────────
+    let e0 = 0, eN = 0, z0 = 0;
+    swept.rows.forEach((r, i) => {
+      const f = flow.rows[i];
+      for (let k = 0; k < r.sched[0].pts.length; k++) {
+        const a = r.sched[0].pts[k], b = f.sched[0].pts[k];
+        e0 = Math.max(e0, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+        z0 = Math.max(z0, Math.abs(a[2]));
+        const p = r.sched[ST].pts[k], q = f.sched[ST].pts[k];
+        eN = Math.max(eN, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
+      }
+    });
+    check(`${nm}: station 0 IS the throat polygon`, e0, 0, 1e-12, "mm");
+    check(`${nm}: ...and lies flat in the throat plane`, z0, 0, 1e-12, "mm");
+    check(`${nm}: station N IS the mouth quad on the aperture`, eN, 0, 1e-11, "mm");
+
+    // both end rings are therefore still SHARED point-for-point between
+    // neighbours, which is what keeps the driver face seatable and the mouth
+    // tiling intact. This is the half of the old invariant that survives.
+    const share = (map, q) => {
+      const byIdx = new Map(map.rows.map((r) => [`${r.i},${r.j}`, r]));
+      let worst = 0;
+      for (let a = 0; a < 6; a++) for (let b = 0; b < 3; b++)
+        for (const [da, db] of [[1, 0], [0, 1]]) {
+          const A = byIdx.get(`${a},${b}`), B = byIdx.get(`${a + da},${b + db}`);
+          if (!A || !B) continue;
+          let best = Infinity;
+          for (const pa of A.sched[q].pts) {
+            let d = Infinity;
+            for (const pb of B.sched[q].pts)
+              d = Math.min(d, Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]));
+            best = Math.min(best, d);
+          }
+          worst = Math.max(worst, best);
+        }
+      return worst;
+    };
+    check(`${nm}: neighbours still share the throat ring exactly`, share(swept, 0), 0, 1e-9, "mm");
+    check(`${nm}: ...and the mouth ring exactly`, share(swept, ST), 0, 1e-9, "mm");
+
+    // ── THE IMPOSED TWIST ──────────────────────────────────────────────────
+    // End-ring exactness cannot show this: the rings are rebuilt from their own
+    // local coordinates and come out exact whatever the frame did. The residual
+    // after the roll is what says the roll actually landed on the mouth's +x.
+    checkTrue(`${nm}: the imposed roll lands the axis on the mouth's own +x`,
+      swept.sweptAimMax < 1e-9 && swept.sweptRollMax > 10,
+      `${swept.sweptRollMax.toFixed(1)} deg of roll imposed, residual ${swept.sweptAimMax.toExponential(1)} deg`);
+
+    // ── AND THE TRADE ITSELF, MEASURED ─────────────────────────────────────
+    checkTrue(`${nm}: the interior no longer shares — the deliberate trade`,
+      swept.clearance.overlap > 1e-3,
+      `${swept.clearance.overlap.toFixed(3)} mm over ${swept.clearance.overlapStations} interior station(s), against 0 for the flow`);
+    check(`${nm}: the flow it replaces still measures exactly zero overlap`,
+      flow.clearance.overlap, 0, 1e-7, "mm");
+
+    // THE k <= 1 ARGUMENT IS DEAD HERE, and this is why Phase A had to land
+    // first. k is an area ratio computed by the profile against the tiling
+    // configuration; it knows nothing about where a swept section actually
+    // sits. It reads <= 1 — "cannot overlap" — while ducts really do overlap.
+    checkTrue(`${nm}: k <= 1 no longer proves non-overlap, and must not be read as if it did`,
+      swept.profScaleMax <= 1 + 1e-9 && swept.clearance.overlap > 1e-3,
+      `kMax = ${swept.profScaleMax.toFixed(5)} says "safe" while the geometry measures ${swept.clearance.overlap.toFixed(3)} mm of penetration`);
+
+    // the profile is the one lever that exists on it today
+    const bare = M.mapThroatToMouth(Lay.throat, { ...common, ...mo, profileT: null, sectionMode: "swept" });
+    checkTrue(`${nm}: the profile pulls sections inward and cuts the overlap hard`,
+      bare.clearance.overlap > 4 * swept.clearance.overlap,
+      `${bare.clearance.overlap.toFixed(2)} mm with no law -> ${swept.clearance.overlap.toFixed(2)} mm at T = 0.3`);
+  }
+
+  // ── EXPORTS MUST STILL WORK, or none of this reaches a printer ───────────
+  const sw = M.mapThroatToMouth(Lay.throat, {
+    ...common, mouthMode: "arc", thetaH: 90, thetaV: 60, profileT: 0.3, sectionMode: "swept" });
+  const solids = M.ductSolids(Lay.throat, sw, { t, dividerEndFrac: DEF });
+  checkTrue("swept ducts are closed, consistently wound solids",
+    solids.length === Lay.throat.cells.length && solids.every((s) => s.manifold.ok),
+    `${solids.length} ducts, ${solids[0].manifold.edges} edges each, 0 unpaired`);
+  checkTrue("...with valid end caps",
+    solids.every((s) => M.fanIsValid(s.sections[0].pts).ok &&
+      M.fanIsValid(s.sections[s.sections.length - 1].pts).ok), "no folded caps");
+  let zw = 0;
+  for (const s of solids) for (const q of s.sections[0].pts) zw = Math.max(zw, Math.abs(q[2]));
+  check("...seating on a flat throat face", zw, 0, 1e-12, "mm");
+  const stl = M.buildSTL(solids);
+  const facets = new DataView(stl).getUint32(80, true);
+  const want = solids.reduce((a, s) => a + s.tris.length, 0);
+  checkTrue("...and exporting a well-formed binary STL",
+    facets === want && stl.byteLength === 84 + want * 50,
+    `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
 }
 
 // ── 10b. loft parameterisation ─────────────────────────────────────────────
@@ -752,6 +1321,105 @@ head("Duct solids");
   const facets = new DataView(stl).getUint32(80, true);
   const want = solids.reduce((a, s) => a + s.tris.length, 0);
   checkTrue("binary STL declares the facets it carries", facets === want && stl.byteLength === 84 + want * 50,
+    `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
+}
+
+// ── 10d. duct solids UNDER the expansion profile ───────────────────────────
+// The solids above are built with no expansion law. The profile rescales every
+// section, so none of what they establish carries over on its own: a mesh that
+// was closed can be reopened, and a volume identity that held can stop holding.
+// This repeats the load-bearing checks with the profile ON, at a T where k <= 1
+// so the geometry is legal and any failure would be the profile's doing.
+head("Duct solids under the profile");
+{
+  const t = 0.4, ST = 16, DEF = 0.35, PT = 0;
+  const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = L.throat;
+  const mopt = {
+    c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120,
+    depth: 150, flatten: 1, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+  };
+  const plain = M.mapThroatToMouth(th, { ...mopt, profileT: null });
+  const map = M.mapThroatToMouth(th, { ...mopt, profileT: PT });
+  checkTrue("the profile stays inside the tiling configuration at this T",
+    map.profScaleMax <= 1 + 1e-9, `kMax = ${map.profScaleMax.toFixed(6)}`);
+
+  const solids = M.ductSolids(th, map, { t, dividerEndFrac: DEF });
+  checkTrue("one solid per cell, with the profile on", solids.length === th.cells.length,
+    `${solids.length} ducts`);
+
+  // k = 1 at station 0, so the driver mating face must be as flat as it was
+  let zWorst = 0;
+  for (const sd of solids) for (const q of sd.sections[0].pts) zWorst = Math.max(zWorst, Math.abs(q[2]));
+  check("station 0 still lies in the throat plane", zWorst, 0, 1e-12, "mm");
+
+  const pSeg = (P, A, B) => {
+    const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = u[0] ** 2 + u[1] ** 2 + u[2] ** 2 || 1e-18;
+    let k = ((P[0] - A[0]) * u[0] + (P[1] - A[1]) * u[1] + (P[2] - A[2]) * u[2]) / L2;
+    k = Math.max(0, Math.min(1, k));
+    return Math.hypot(P[0] - A[0] - u[0] * k, P[1] - A[1] - u[1] * k, P[2] - A[2] - u[2] * k);
+  };
+  const sep = (A, B) => {
+    let m = Infinity;
+    for (const a of A) for (let k = 0; k < B.length; k++) m = Math.min(m, pSeg(a, B[k], B[(k + 1) % B.length]));
+    return m;
+  };
+  const byId = (id) => solids.find((sd) => sd.id === id);
+  let wMin = Infinity, wMax = 0;
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+    const d = sep(byId(i * 3 + j).sections[0].pts, byId((i + 1) * 3 + j).sections[0].pts);
+    wMin = Math.min(wMin, d); wMax = Math.max(wMax, d);
+  }
+  check("throat wall is still exactly t with the profile on", wMin, t, 1e-9, "mm");
+  check("...and still no thicker anywhere", wMax, t, 1e-9, "mm");
+
+  // and the far end: k = 1 there too, so the mouth must still tile
+  let mouthWorst = 0;
+  map.rows.forEach((r, i) => {
+    mouthWorst = Math.max(mouthWorst, Math.abs(r.sched[ST].area / plain.rows[i].sched[ST].area - 1));
+  });
+  check("the mouth tiling survives the profile", mouthWorst, 0, 1e-9);
+
+  const bad = solids.filter((sd) => !sd.manifold.ok);
+  checkTrue("every duct mesh is still closed and consistently wound", bad.length === 0,
+    `${solids.length} ducts, ${solids[0].manifold.edges} edges each, 0 unpaired`);
+  checkTrue("every end cap still fans from a point its outline can see",
+    solids.every((sd) => M.fanIsValid(sd.sections[0].pts).ok &&
+      M.fanIsValid(sd.sections[sd.sections.length - 1].pts).ok),
+    "no folded caps");
+
+  // the volume-vs-axial identity, re-established on the scaled sections
+  let vWorst = 0;
+  for (const cellRec of th.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    const sd = solids.find((x) => x.id === cellRec.id);
+    let V = 0;
+    for (let q = 1; q < sd.sections.length; q++) {
+      const a = sd.sections[q - 1].origin, b = sd.sections[q].origin;
+      const scale = (k) => row.sched[k].axial / row.sched[k].area;
+      V += 0.5 * (sd.sections[q].area * scale(q) + sd.sections[q - 1].area * scale(q - 1))
+         * Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    }
+    vWorst = Math.max(vWorst, Math.abs(sd.volume - V) / V);
+  }
+  checkTrue("mesh volume still agrees with the integrated AXIAL schedule", vWorst < 0.01,
+    `worst ${(vWorst * 100).toFixed(3)}% over ${ST} stations`);
+
+  // the gaps are real material, so the ducts must together hold LESS than they
+  // did tiling — that volume is exactly what opened the space between them
+  const vProf = solids.reduce((a, sd) => a + sd.volume, 0);
+  const vPlain = M.ductSolids(th, plain, { t, dividerEndFrac: DEF })
+    .reduce((a, sd) => a + sd.volume, 0);
+  checkTrue("the profile removes duct volume — that is the gap it opened",
+    vProf < vPlain && vProf > 0.5 * vPlain,
+    `${(vPlain / 1000).toFixed(0)} -> ${(vProf / 1000).toFixed(0)} cm3, ${((1 - vProf / vPlain) * 100).toFixed(0)}% removed`);
+
+  const stl = M.buildSTL(solids);
+  const facets = new DataView(stl).getUint32(80, true);
+  const want = solids.reduce((a, sd) => a + sd.tris.length, 0);
+  checkTrue("the profiled solids still export a well-formed binary STL",
+    facets === want && stl.byteLength === 84 + want * 50,
     `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
 }
 
