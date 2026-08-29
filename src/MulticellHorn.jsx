@@ -165,7 +165,7 @@ function Solving({ label = "solving" }) {
   );
 }
 
-export default function HGridThroat() {
+export default function MulticellHorn() {
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
   const [exitAngle, setExitAngle] = useState(8);
@@ -188,11 +188,7 @@ export default function HGridThroat() {
   const [request, setRequest] = useState(null);    // p_requested, or null for nominal
 
   // ── mouth ──
-  const [mouthW, setMouthW] = useState(200);
-  const [mouthH, setMouthH] = useState(100);
-  const [apex, setApex] = useState(120);
   const [depth, setDepth] = useState(150);
-  const [flatten, setFlatten] = useState(1);
   const [divergeLen, setDivergeLen] = useState(0);
   const [arriveLen, setArriveLen] = useState(0);
   const [tight, setTight] = useState(0.55);
@@ -204,21 +200,31 @@ export default function HGridThroat() {
   const [tightMouth, setTightMouth] = useState(0.55);
   // "rect" = the original uniform x/y lattice; "arc" = coverage angles,
   // subdivided at equal solid angle
-  const [mouthMode, setMouthMode] = useState("rect");
+  // The mouth is stated by what it must deliver: two arcs, each with its own
+  // angle and length. No apex, and the two radii are independent — Th = 0 on
+  // either axis is a flat one.
+  const mouthMode = "biradial";
   const [thetaH, setThetaH] = useState(90);
-  const [thetaV, setThetaV] = useState(60);
+  const [thetaV, setThetaV] = useState(40);
+  const [arcH, setArcH] = useState(480);
+  const [arcV, setArcV] = useState(213);
   const [fcSolve, setFcSolve] = useState(null);
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
-  const [sectionMode, setSectionMode] = useState("flow");
+  // Swept only. The flowed construction guarantees non-overlap by SHARING
+  // boundary points between neighbours, and that same sharing is what makes
+  // per-cell path length structurally impossible — a shared point cannot follow
+  // two different paths. It survives in the model as the comparison baseline
+  // the tests measure against, but it is not a design choice offered here.
+  const sectionMode = "swept";
   // the wave travels through the OPEN passage, not the gross cell outline
   const [profileArea, setProfileArea] = useState("open");
   const [fTarget, setFTarget] = useState(20000);
   const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
   // 0 hyperbolic (cosh), 1 exponential.
-  const [profileT, setProfileT] = useState(null);
+  const [profileT, setProfileT] = useState(0.7);
   // a target cutoff to compare against, NOT an input to the profile — m is
   // solved from the geometry, so fc is a result and this is the readout that
   // says how far the geometry is from delivering the one you wanted
@@ -240,6 +246,13 @@ export default function HGridThroat() {
 
   const c = useMemo(() => 331.3 * Math.sqrt(1 + temperature / 273.15), [temperature]);
   const R = exitDia / 2;
+  // The virtual apex of the DRIVER's own exit cone, and therefore the point the
+  // wave already appears to come from. Aiming the aperture cap at any other
+  // centre asks the horn to re-origin a wavefront it was handed, so this is
+  // derived rather than dialled: R / tan(half-angle). At 35.5 mm and 8 deg it
+  // is 126.3 mm, which is within 5% of the 120 mm that was being picked by
+  // hand before it was derived.
+  const apex = useMemo(() => R / Math.tan(Math.max(0.5, exitAngle) * D2R), [R, exitAngle]);
   const rings = useMemo(
     () => ringSpec.split(/[^0-9]+/).filter(Boolean).map(Number).filter((n) => n > 0),
     [ringSpec]
@@ -320,18 +333,27 @@ export default function HGridThroat() {
   }, [layout]);
   const alphaEff = shown.family === "hgrid" && solve.p ? solve.p[shown.alphaAt] * R2D : 45;
 
+  // The mouth's own chord extents, derived from the two arcs. Everything that
+  // used to read the mouthW/mouthH inputs now reads these, so the plan view and
+  // the aspect guidance describe the aperture actually being built.
+  const mouthGeo = useMemo(() => G.biradialMouth({
+    thetaH, thetaV, arcH, arcV, depth, nc: shown.nc || 6, nr: shown.nr || 3,
+  }), [thetaH, thetaV, arcH, arcV, depth, shown]);
+  const mouthW = mouthGeo.width, mouthH = mouthGeo.height;
+  const flatten = 1; // biradial carries curvature in its two radii, not here
+
   const map = useMemo(() => G.mapThroatToMouth(throat, {
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
-    mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
+    depth, exitHalfAngle: exitAngle,
     divergeLen, arriveLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true, profileT,
     // the profile is written on the OPEN passage, so it needs the divider
     // thickness — without this it silently falls back to the gross outline
     t: thickness, profileArea,
     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
-    mouthMode, thetaH, thetaV, sectionMode,
-    wallWidthAt: mouthW / shown.nc,
-  }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, arriveLen,
-    tight, tightSplit, tightThroat, tightMouth, mouthMode, thetaH, thetaV, sectionMode,
+    mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
+    wallWidthAt: arcH / shown.nc,
+  }), [layout, throat, shown, depth, exitAngle, divergeLen, arriveLen,
+    tight, tightSplit, tightThroat, tightMouth, thetaH, thetaV, arcH, arcV, sectionMode,
     fTarget, dividerEndFrac, stations, profileT, thickness, profileArea]);
 
   // What path length would deliver the cutoff you asked for? m is solved from
@@ -350,6 +372,14 @@ export default function HGridThroat() {
     const shortfall = Math.max(...map.rows.map((r, i) => need[i] - r.Lpath));
     return { ok: true, lo, hi, shortfall };
   }, [map, profileT, fcWanted, shown]);
+
+  // The 1-D Hypex horn this multicell is standing in for: same acoustic throat,
+  // same law, same cutoff. Advisory — it says what the cutoff demands, and the
+  // geometry below says what you have.
+  const href = useMemo(() => G.hypexReference({
+    throatArea: throat.openTotal, fc: fcWanted, T: profileT, c,
+    coverageDeg: mouthMode === "arc" ? thetaH : 90,
+  }), [throat, fcWanted, profileT, c, mouthMode, thetaH]);
 
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
@@ -392,8 +422,8 @@ export default function HGridThroat() {
         const cells = G.lineGridCells(sol.geometry, { c, t: thickness, per: 8 });
         const th = G.analyseThroat(cells, { c, R, dividerTotal: G.lineGridDividerLength(sol.geometry) });
         const mp = wTwist > 0 ? G.mapThroatToMouth(th, {
-          c, nc, nr, R, rectangular: true, mouthW, mouthH, apex, depth, flatten,
-          exitHalfAngle: exitAngle, divergeLen, tight, fTarget, samples: 16, stations: 6, wallWidthAt: mouthW / nc,
+          c, nc, nr, R, rectangular: true, depth, mouthMode: "biradial", thetaH, thetaV, arcH, arcV,
+          exitHalfAngle: exitAngle, divergeLen, tight, fTarget, samples: 16, stations: 6, wallWidthAt: arcH / nc,
         }) : null;
         return G.objective(th, mp, {
           wAspect, wTwist, wCorrection,
@@ -430,8 +460,8 @@ export default function HGridThroat() {
     if (map && map.band !== "ok")
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
     if (map && map.turnMax > map.turnLimitDeg)
-      w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
-    if (map && sectionMode === "swept" && map.clearance && map.clearance.overlap > 1e-3)
+      w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(arcH / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
+    if (map && map.clearance && map.clearance.overlap > 1e-3)
       w.push(`Swept sections interpenetrate ${fmt(map.clearance.overlap, 3)} mm at station ${map.clearance.overlapAt}, over ${map.clearance.overlapStations} station(s). This is the trade the mode makes on purpose — the ends stay shared, the interior does not — but it is not yet resolved: lower T pulls the sections further inward, and centreline manipulation is the stronger lever that is not built. Note the section scale reads k = ${fmt(map.profScaleMax, 4)} ≤ 1, which proves non-overlap ONLY for flowed sections; here it says nothing.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
       w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${map.clearance && map.clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(map.clearance.overlap, 4)} mm at station ${map.clearance.overlapAt}, over ${map.clearance.overlapStations} station(s).` : ""}`);
@@ -451,7 +481,7 @@ export default function HGridThroat() {
   }, [solve, throat, shown, alphaEff, thickness, fab, map, fTarget, mouthW]);
 
   // ── exports ────────────────────────────────────────────────────────────────
-  const stem = `hgrid_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
+  const stem = `multicell_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
 
   const buildDXF = () => {
     const L = [];
@@ -509,7 +539,15 @@ export default function HGridThroat() {
       monotonicityGap: solve.monotone ? solve.monotone.gap : undefined,
       note: "Areas are equal to the solver tolerance reported here, not by construction.",
     },
-    aperture: map ? { type: flatten === 1 ? "spherical cap" : "oblate spheroid", apexBehindThroat: apex, axialDepth: depth, flatten, mouthW, mouthH } : null,
+    aperture: map && map.biradial ? {
+      type: "biradial swept arc, no apex",
+      coverageDeg: { h: thetaH, v: thetaV },
+      arcLength: { h: arcH, v: arcV },
+      radius: { h: map.biradial.rH, v: map.biradial.rV },
+      sagitta: { h: map.biradial.sagH, v: map.biradial.sagV },
+      chord: { w: map.mouthWEff, h: map.mouthHEff },
+      axialDepth: depth, mouthAreaTotal: map.mouthAreaTotal,
+    } : null,
     cells: throat.cells.map((cc) => {
       const r = map && map.rows.find((x) => x.id === cc.id);
       return {
@@ -575,13 +613,21 @@ export default function HGridThroat() {
        g.axial.toFixed(3), (2 * Math.sqrt(g.axial / Math.PI)).toFixed(3)].join(","));
     return [
       "# Sum of cell cross-sections along the loft, for Hornresp / ABEC.",
-      "# s is the fraction of each cell's own developed centreline, so axial_z",
-      "# and developed_s are MEANS across cells whose paths differ in length.",
+      "# s is the fraction of each cell's own developed path, so axial_z and",
+      "# developed_s are MEANS across cells whose paths differ in length.",
+      "# Both are measured at the SECTION CENTROIDS, not on the centreline:",
+      "# the two drift apart by up to ~4.5 mm on a wide-coverage mouth, and",
+      "# attributing an area to the centreline's position would put the",
+      "# schedule that far out of register with the areas it reports.",
       "# section_area is the sections' own area; flux_area is their projection",
       "# on the direction of travel. A flowed section is a level set of the",
       "# flow, not a cut square to the path, so the two differ by the section's",
-      "# obliquity. USE flux_area for a 1-D horn schedule — it is the one that",
-      "# integrates to the duct volume. equivalent_diameter follows flux_area.",
+      "# obliquity. USE flux_area for a 1-D horn schedule — it is the",
+      "# cross-section normal to propagation, and equivalent_diameter follows",
+      "# it. It is NOT exactly what integrates to the duct volume: that is the",
+      "# vector area dotted with the centroid step, which differs because",
+      "# flux_area projects on the centreline tangent while the volume",
+      "# advances along the section's own displacement.",
       profileT != null
         ? `# Hypex expansion profile imposed, T = ${profileT.toFixed(3)}, f_c = ${fmt(map.profFcMin, 0)}-${fmt(map.profFcMax, 0)} Hz.`
         : "# NO expansion law is imposed: this schedule is whatever the routing produced.",
@@ -961,6 +1007,52 @@ export default function HGridThroat() {
         )}
       </div>
 
+      {/* HYPEX EXPANSION — the design intent, before any geometry */}
+      <div style={card}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ ...secTitle, marginBottom: 0 }}>Hypex expansion</span>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>T</span>
+          <input type="range" min={0} max={1} step={0.01} value={profileT}
+            onChange={(e) => setProfileT(parseFloat(e.target.value))}
+            style={{ width: 150, accentColor: C.series3 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
+            {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
+          </span>
+          <NumInput label="Cutoff f_c" value={fcWanted} onChange={setFcWanted} unit="Hz" min={20} max={20000} step={10} accent={C.series3} />
+        </div>
+        {href && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+            <Metric label="Acoustic throat" value={`${fmt(throat.openTotal / 100, 2)} cm²`}
+              sub={`summed open area · ⌀${fmt(2 * href.rt, 1)} mm equivalent`} />
+            <Metric label="Flare constant m" value={`${(href.m * 1000).toFixed(3)} /m`}
+              sub={`f_c = mc/2π at ${fmt(c, 1)} m/s`} />
+            <Metric label="Mouth area needed" value={`${fmt(href.mouthArea / 100, 0)} cm²`}
+              sub={`⌀${fmt(href.dia, 0)} mm · ${href.governedBy} governs`} color={C.series3} />
+            <Metric label="Minimum horn length" value={`${fmt(href.minLength, 0)} mm`}
+              sub={`expansion ratio ${fmt(href.ratio, 1)}×`} color={C.series3} />
+            {map && <Metric label="Mouth you have" value={`${fmt(map.mouthAreaTotal / 100, 0)} cm²`}
+              sub={map.mouthAreaTotal >= href.mouthArea
+                ? `${fmt(map.mouthAreaTotal / href.mouthArea, 2)}× the requirement`
+                : `${fmt(100 * (1 - map.mouthAreaTotal / href.mouthArea), 0)}% under`}
+              color={map.mouthAreaTotal >= href.mouthArea ? C.series4 : C.series5} />}
+            {map && <Metric label="Path you have" value={`${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} mm`}
+              sub={map.Lmin >= href.minLength
+                ? `clears the ${fmt(href.minLength, 0)} mm minimum`
+                : `short of ${fmt(href.minLength, 0)} mm by ${fmt(href.minLength - map.Lmin, 0)} mm`}
+              color={map.Lmin >= href.minLength ? C.series4 : C.series5} />}
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
+          The same calculation the standalone horn tool does, run on this multicell's <strong style={{ color: C.inkDim }}>acoustic</strong> throat —
+          the summed open area of the cells, not the driver's bore, because the dividers are in the way and the wave only sees what is left.
+          Two criteria compete for the mouth size: <em>loading</em> wants a mouth circumference of about λ at cutoff (⌀{fmt(href ? href.diaLoading : 0, 0)} mm here),
+          and <em>directivity</em> wants λ/sin(Θ/2) (⌀{fmt(href ? href.diaDirectivity : 0, 0)} mm). The larger binds. Note the direction:
+          <strong style={{ color: C.inkDim }}> wider coverage needs a smaller mouth</strong>, so it is the narrow-pattern horn that comes out enormous.
+          {" "}These are <strong style={{ color: C.inkDim }}>reference</strong> figures, not constraints — the mouth below comes from the coverage and
+          cap geometry, and these say how far short of the 1-D requirement it falls.
+        </div>
+      </div>
+
       {/* THROAT + MOUTH */}
       <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 1fr) minmax(300px, 1.15fr)", gap: 14, marginBottom: 14 }}>
         <div style={{ ...card, marginBottom: 0 }}>
@@ -988,56 +1080,45 @@ export default function HGridThroat() {
             Mouth aperture · same colour identity
             {stale && <Solving />}
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
-            <button onClick={() => setMouthMode(mouthMode === "rect" ? "arc" : "rect")}
-              style={btn(mouthMode === "arc", C.series2)}>
-              {mouthMode === "rect" ? "size in mm" : "coverage in degrees"}
-            </button>
-            {mouthMode === "arc" && map && (
-              <span style={{ fontFamily: C.mono, fontSize: 10 }}>
-                <span style={{ color: C.inkMuted }}>gives </span>
-                <span style={{ color: C.ink }}>{fmt(map.mouthWEff, 1)} × {fmt(map.mouthHEff, 1)} mm</span>
-                <span style={{ color: C.inkMuted }}> · Ω {fmt(map.omegaTotal, 3)} sr · per-cell area spread </span>
-                <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 3)}%</span>
-              </span>
-            )}
-            {mouthMode === "rect" && map && (
-              <span style={{ fontFamily: C.mono, fontSize: 10 }}>
-                <span style={{ color: C.inkMuted }}>per-cell mouth area spread </span>
-                <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 2)}%</span>
-                <span style={{ color: C.inkMuted }}> · solid angle {fmt(map.omegaSpread, 2)}%</span>
-              </span>
-            )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "0 10px" }}>
+            <NumInput label="Coverage Θh" value={thetaH} onChange={setThetaH} unit="°" min={0} max={170} step={1} accent={C.accent} />
+            <NumInput label="Arc length h" value={arcH} onChange={setArcH} unit="mm" min={40} max={3000} step={5} accent={C.accent} />
+            <NumInput label="Coverage Θv" value={thetaV} onChange={setThetaV} unit="°" min={0} max={170} step={1} accent={C.series2} />
+            <NumInput label="Arc length v" value={arcV} onChange={setArcV} unit="mm" min={40} max={3000} step={5} accent={C.series2} />
+            <NumInput label="Axial depth" value={depth} onChange={setDepth} unit="mm" min={10} max={2000} step={5} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "0 10px" }}>
-            {mouthMode === "rect" ? <>
-              <NumInput label="Mouth width" value={mouthW} onChange={setMouthW} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
-              <NumInput label="Mouth height" value={mouthH} onChange={setMouthH} unit="mm" min={20} max={1200} step={5} accent={C.accent} />
-            </> : <>
-              <NumInput label="Coverage Θh" value={thetaH} onChange={setThetaH} unit="°" min={10} max={170} step={1} accent={C.accent} />
-              <NumInput label="Coverage Θv" value={thetaV} onChange={setThetaV} unit="°" min={10} max={170} step={1} accent={C.accent} />
-            </>}
-            <NumInput label="Apex behind" value={apex} onChange={setApex} unit="mm" min={5} max={2000} step={5} />
-            <NumInput label="Axial depth" value={depth} onChange={setDepth} unit="mm" min={10} max={1500} step={5} />
-            <NumInput label="Oblate flatten" value={flatten} onChange={setFlatten} min={1} max={3} step={0.05} disabled={mouthMode === "arc"} />
-            <NumInput label="Target f" value={fTarget} onChange={setFTarget} unit="Hz" min={2000} max={40000} step={500} accent={C.series5} />
-          </div>
-          {mouthMode === "arc" && (
-            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 4, lineHeight: 1.5 }}>
-              The cap is a <strong style={{ color: C.inkDim }}>sphere about the apex</strong> — flatten is overridden to 1, because a flattened cap
-              is not one and the equal-area argument below needs it to be. Cells subdivide the coverage at equal Δazimuth and equal Δ(sin elevation),
-              which is the Lambert equal-area arrangement: on a sphere area = r²Ω, so <em>equal solid angle and equal area are the same constraint</em>,
-              and both hold while the cell mouths still tile. What is given up is equal angular <em>width</em> per cell — outer rows span more degrees —
-              which is the right trade, since what you specify is the total Θ, not the per-cell angle. A traditional multicell makes the opposite
-              trade: identical cells on a radial fan get equal area and equal solid angle for free but cannot tile a curved surface, which is what
-              the flat filler webs between cell mouths are. Those webs diffract; tiling has none.
+          {map && map.biradial && (
+            <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+              <span><span style={{ color: C.inkMuted }}>radii </span>
+                <span style={{ color: C.ink }}>
+                  {isFinite(map.biradial.rH) ? `${fmt(map.biradial.rH, 0)}` : "flat"} h ·{" "}
+                  {isFinite(map.biradial.rV) ? `${fmt(map.biradial.rV, 0)}` : "flat"} v</span>
+                <span style={{ color: C.inkMuted }}> mm</span></span>
+              <span><span style={{ color: C.inkMuted }}>chord </span>
+                <span style={{ color: C.ink }}>{fmt(map.mouthWEff, 1)} × {fmt(map.mouthHEff, 1)} mm</span></span>
+              <span><span style={{ color: C.inkMuted }}>sagitta </span>
+                <span style={{ color: C.ink }}>{fmt(map.biradial.sagH, 1)} / {fmt(map.biradial.sagV, 1)} mm</span></span>
+              <span><span style={{ color: C.inkMuted }}>area </span>
+                <span style={{ color: C.ink }}>{fmt(map.mouthAreaTotal / 100, 0)} cm²</span>
+                <span style={{ color: C.inkMuted }}> · per-cell spread </span>
+                <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 4)}%</span></span>
             </div>
           )}
+          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
+            The aperture is stated by what it has to deliver — a horizontal arc of Θh over its own length, and a vertical arc of Θv over
+            its own — and the two radii are <strong style={{ color: C.inkDim }}>independent</strong>. Θ = 0 on either axis makes that axis
+            flat, so a vertically straight-sided mouth is just Θv = 0. There is <strong style={{ color: C.inkDim }}>no apex</strong>: it was
+            an artifact of building the mouth as one spherical cap, which forced both curvatures to be the same number. Ducts arrive normal
+            to the surface, which is the direction the aperture itself points, so no common radiating centre is needed to define it.
+            Cells subdivide at equal <em>area</em> on both axes at every curvature — exactly equal when an axis is flat — which is what keeps
+            the expansion ratio identical across cells. Axial depth is the free variable the path optimiser will take over; for now set it
+            here or solve it from the cutoff below.
+          </div>
           <div style={{ opacity: stale ? 0.35 : 1 }}>{mouthSVG()}</div>
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-            Choose the aperture surface from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement — apparent apex position and
-            coverage angle — then equalise the paths <em>to</em> it, then close what is left with S-bend padding. A surface shaped for routing
-            convenience radiates its own curvature error phase-coherently, and no EQ removes that.
+            Choose the aperture from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement — the two coverage angles and the
+            arc length each needs — then equalise the paths <em>to</em> it. A surface shaped for routing convenience radiates its own curvature
+            error phase-coherently, and no EQ removes that, which is why the mouth is a constraint here and the connection to it is what gets solved.
             {" "}Flatten = 1 is a spherical cap about the apex, where the surface normal <em>is</em> the wavefront normal and the aim error is zero by construction.
           </div>
         </div>
@@ -1135,11 +1216,8 @@ export default function HGridThroat() {
           <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ ...secTitle, marginBottom: 0 }}>Section construction</span>
-              <button onClick={() => setSectionMode(sectionMode === "flow" ? "swept" : "flow")}
-                style={btn(sectionMode === "swept", C.series1)}>
-                {sectionMode === "flow" ? "flowed — boundaries shared" : "swept — per-cell planes"}
-              </button>
-              {sectionMode === "swept" && map.sweptRollMax != null && (
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>swept — per-cell planes</span>
+              {map.sweptRollMax != null && (
                 <span style={{ fontFamily: C.mono, fontSize: 10 }}>
                   <span style={{ color: C.inkMuted }}>imposed roll </span>
                   <span style={{ color: C.ink }}>{fmt(map.sweptRollMax, 1)}°</span>
@@ -1148,33 +1226,22 @@ export default function HGridThroat() {
               )}
             </div>
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-              {sectionMode === "flow"
-                ? <>Every boundary point runs its own trajectory, so two neighbours share their whole boundary at every station and
-                  can neither gap nor interpenetrate — non-overlap is guaranteed by construction, not measured. The cost is that a
-                  cell's centreline cannot be moved independently, which is the only mechanism that could lengthen an interior cell's path.</>
-                : <>Each cell's sections are built in planes <strong style={{ color: C.inkDim }}>specified</strong> along its own centreline —
-                  ẑ at the throat, blending through the tangent to the aperture normal — with the residual roll <strong style={{ color: C.inkDim }}>imposed
-                  and distributed</strong> so the section lands on the mouth quad rather than arriving rotated. Both end rings are still shared exactly,
-                  so the driver face stays flat and the mouth still tiles; only the interior is free. That freedom is the point, and the
-                  interpenetration below is its price — note that <em>k</em> ≤ 1 no longer proves anything here, so read the measured clearance.</>}
+              Each cell's sections are built in planes <strong style={{ color: C.inkDim }}>specified</strong> along its own centreline — ẑ at the
+              throat, blending through the tangent to the aperture normal — with the residual roll <strong style={{ color: C.inkDim }}>imposed and
+              distributed</strong> so the section lands on the mouth quad rather than arriving rotated. Both end rings are still shared exactly, so
+              the driver face stays flat and the mouth still tiles; only the interior is free. That freedom is the point: it is what makes a cell's
+              centreline movable, and moving centrelines is the only mechanism that can lengthen an interior cell's path. The interpenetration
+              below is its price, and is not yet resolved. Note <em>k</em> ≤ 1 proves nothing here — read the measured clearance.
             </div>
           </div>
 
           {/* EXPANSION PROFILE */}
           <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ ...secTitle, marginBottom: 0 }}>Expansion profile</span>
-              <button onClick={() => setProfileT(profileT == null ? 1 : null)}
-                style={btn(profileT != null, C.series3)}>
-                {profileT == null ? "emergent — no law imposed" : "Hypex"}
-              </button>
-              {profileT != null && <>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>T</span>
-                <input type="range" min={0} max={1} step={0.01} value={profileT}
-                  onChange={(e) => setProfileT(parseFloat(e.target.value))}
-                  style={{ width: 130, accentColor: C.series3 }} />
-                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
-                  {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
+              <span style={{ ...secTitle, marginBottom: 0 }}>Per-cell realisation</span>
+              {<>
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+                  T {fmt(profileT, 2)} · f_c {fmt(fcWanted, 0)} Hz set above
                 </span>
                 <button onClick={() => setProfileArea(profileArea === "open" ? "gross" : "open")}
                   style={btn(profileArea === "open", C.series6)}>
@@ -1240,8 +1307,7 @@ export default function HGridThroat() {
             )}
             {profileT != null && map.profFcMin != null && (
               <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>if you wanted f_c</span>
-                <NumInput label="" value={fcWanted} onChange={setFcWanted} unit="Hz" min={20} max={20000} step={10} accent={C.series3} />
+                <span style={{ fontSize: 10, color: C.inkMuted }}>to reach f_c = {fmt(fcWanted, 0)} Hz</span>
                 {/* m is solved from the geometry, so fc is a RESULT. Until path length
                     is independently controllable, the honest way to ask for an fc is
                     to show the path length that would deliver it against the length
@@ -1265,7 +1331,7 @@ export default function HGridThroat() {
                     mouthW, mouthH, apex, flatten, exitHalfAngle: exitAngle,
                     divergeLen, arriveLen, tight, dividerEndFrac, stations, t: thickness, profileArea,
                     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
-                    mouthMode, thetaH, thetaV, fTarget, wallWidthAt: mouthW / shown.nc,
+                    mouthMode, thetaH, thetaV, fTarget, wallWidthAt: arcH / shown.nc,
                   }, { fcTarget: fcWanted, T: profileT });
                   setFcSolve(r);
                   if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
@@ -1285,11 +1351,7 @@ export default function HGridThroat() {
               </div>
             )}
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-              {profileT == null
-                ? <>No expansion law is imposed: the area schedule is whatever the routing happens to produce, and because it comes out
-                  near-linear in <em>√A</em> the cells tile the whole way with no gap between them. Impedance transformation is the
-                  motivating reason for a multicell, so this is the setting to move off.</>
-                : <>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
+              {<>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
                   set to land each cell exactly on its own mouth area at its own path length. That makes the scale <em>k</em> = 1 at both ends,
                   leaving the throat mating face and the mouth tiling untouched, and turns f_c into a readout of the loading you got.
                   {" "}The law is written on the <strong style={{ color: C.inkDim }}>open</strong> passage — the cell outline less the half-divider

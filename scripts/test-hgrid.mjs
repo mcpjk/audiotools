@@ -770,6 +770,96 @@ head("Expansion law on the open passage");
     Math.abs(o0.rows[0].profRatio - g0.rows[0].profRatio), 0, 1e-12);
 }
 
+// ── 10a4c. the apex-free biradial mouth ────────────────────────────────────
+// The mouth is stated by what it must deliver — two arcs, each with its own
+// angle and length — and not by a shared apex. The apex was an artifact of
+// building the aperture as one spherical cap; it forced the two curvatures to
+// be equal and made "solid angle at the apex" look like a design criterion,
+// which it is not once each cell's path is independently aimed.
+head("Biradial mouth (apex-free)");
+{
+  const ST = 16, t = 0.4, DEF = 0.35, depth = 200;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const rad = Math.PI / 180;
+
+  // ── IT GENERALISES THE SPHERE, IT DOES NOT REPLACE IT ───────────────────
+  // With rH = rV the swept-arc surface must reproduce the old cap about an
+  // apex exactly, or the earlier arc-mode results would not carry over.
+  const rSph = 305.6, TH = 90, TV = 40;
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
+    dividerEndFrac: DEF, stations: ST, keepGeometry: true, wallWidthAt: 80, t, profileT: 0.3,
+  };
+  const asArc = M.mapThroatToMouth(Lay.throat, {
+    ...common, mouthMode: "arc", apex: rSph - depth, depth, thetaH: TH, thetaV: TV });
+  const asBi = M.mapThroatToMouth(Lay.throat, {
+    ...common, mouthMode: "biradial", depth, thetaH: TH, thetaV: TV,
+    arcH: rSph * TH * rad, arcV: rSph * TV * rad });
+  let worst = 0;
+  asBi.rows.forEach((r, i) => {
+    for (let k = 0; k < r.sched[ST].pts.length; k++) {
+      const a = r.sched[ST].pts[k], b = asArc.rows[i].sched[ST].pts[k];
+      worst = Math.max(worst, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+    }
+  });
+  check("rH = rV reproduces the sphere-about-apex mouth exactly", worst, 0, 1e-9, "mm");
+
+  // ── THE FLAT LIMITS, against their closed forms ─────────────────────────
+  const flatV = M.biradialMouth({ thetaH: TH, thetaV: 0, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+  checkTrue("Th_v = 0 is a vertically FLAT mouth", !isFinite(flatV.rV) && flatV.sagV === 0,
+    "vertical radius infinite, zero sagitta");
+  check("...and its height is the arc length exactly", flatV.height, 213, 1e-9, "mm");
+  const flatH = M.biradialMouth({ thetaH: 0, thetaV: TV, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+  check("Th_h = 0 gives a width equal to its arc length exactly", flatH.width, 480, 1e-9, "mm");
+  // a curved axis reports the CHORD as its extent, which is shorter than the arc
+  const cur = M.biradialMouth({ thetaH: TH, thetaV: TV, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+  check("a curved axis has radius arcLength / angle", cur.rH, 480 / (TH * rad), 1e-9, "mm");
+  check("...and reports the chord 2 r sin(Th/2) as its extent",
+    cur.width, 2 * cur.rH * Math.sin((TH / 2) * rad), 1e-9, "mm");
+  check("...with sagitta r(1 - cos(Th/2))",
+    cur.sagH, cur.rH * (1 - Math.cos((TH / 2) * rad)), 1e-9, "mm");
+
+  // ── THE NORMAL IS APEX-FREE ─────────────────────────────────────────────
+  // (sin a cos e, sin e, cos a cos e) depends on neither radius, which is what
+  // lets the arrival direction be stated without a common radiating point.
+  let nWorst = 0;
+  for (const [th, tv] of [[90, 40], [90, 10], [60, 60]]) {
+    const b = M.biradialMouth({ thetaH: th, thetaV: tv, arcH: 480, arcV: 213, depth, nc: 6, nr: 3 });
+    for (let u = 0; u <= 6; u++) for (let v = 0; v <= 3; v++) {
+      const n = b.normal(u, v);
+      const a = (b.arcH * (u / 6 - 0.5)) / b.rH, e = (b.svAt(v)) / b.rV;
+      const want = [Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)];
+      nWorst = Math.max(nWorst, Math.hypot(n[0] - want[0], n[1] - want[1], n[2] - want[2]));
+    }
+  }
+  check("the outward normal is (sin a cos e, sin e, cos a cos e), radius-free", nWorst, 0, 1e-12);
+
+  // ── EQUAL AREA AT EVERY CURVATURE, which is the property that must not move
+  const sweep = [40, 20, 0].map((tv) => {
+    const m = M.mapThroatToMouth(Lay.throat, {
+      ...common, mouthMode: "biradial", depth, thetaH: TH, thetaV: tv, arcH: 480, arcV: 213,
+      sectionMode: "flow" });
+    const A = m.rows.map((r) => r.mouthArea);
+    const mean = A.reduce((x, y) => x + y, 0) / A.length;
+    return { tv, spread: ((Math.max(...A) - Math.min(...A)) / mean) * 100, m };
+  });
+  checkTrue("equal mouth area survives the whole curvature range",
+    sweep.every((x) => x.spread < 0.02),
+    sweep.map((x) => `Th_v ${x.tv}: ${x.spread.toFixed(4)}%`).join("  "));
+  checkTrue("...and the vertically flat case is EXACTLY equal-area",
+    sweep[2].spread < 1e-9, `${sweep[2].spread.toExponential(1)}% at Th_v = 0`);
+
+  // the aperture IS the arrival target now, so there is no aim error left
+  checkTrue("arriving normal to the surface leaves no aim error",
+    sweep.every((x) => x.m.aimMax < 1e-4),
+    `worst ${Math.max(...sweep.map((x) => x.m.aimMax)).toExponential(1)} deg`);
+  // and none of it disturbs the tiling: the normal is a function of (u,v), so
+  // two cells sharing a boundary point still get an identical arrival direction
+  checkTrue("the sections still tile at every curvature",
+    sweep.every((x) => Math.abs(x.m.clearance.minMid) < 1e-6 || x.m.clearance.minMid > 0),
+    sweep.map((x) => x.m.clearance.overlap.toFixed(6)).join(" / ") + " mm overlap");
+}
+
 // ── 10a5. the path family ──────────────────────────────────────────────────
 head("Path family");
 {
@@ -930,6 +1020,48 @@ head("Mouth by arc angles");
     `ratio alone ${arc.fcDecomp.fromRatio.toFixed(3)}%, full ${arc.fcDecomp.full.toFixed(2)}% = L alone ${arc.fcDecomp.fromLength.toFixed(2)}%`);
 }
 
+// ── 10a5b. the 1-D Hypex reference ─────────────────────────────────────────
+head("1-D Hypex reference");
+{
+  const St = 895.3, fc = 500, T = 0.7, cov = 90;
+  const ref = M.hypexReference({ throatArea: St, fc, T, c, coverageDeg: cov });
+  const lam = (c / fc) * 1000;
+  // the two mouth criteria, against their closed forms
+  check("loading mouth diameter is lambda/pi", ref.diaLoading, lam / Math.PI, 1e-9, "mm");
+  check("directivity mouth diameter is lambda / sin(Th/2)",
+    ref.diaDirectivity, lam / Math.sin((cov / 2) * Math.PI / 180), 1e-9, "mm");
+  checkTrue("the binding criterion is the larger of the two",
+    ref.dia === Math.max(ref.diaLoading, ref.diaDirectivity) && ref.governedBy === "directivity",
+    `directivity ${ref.diaDirectivity.toFixed(0)} mm governs over loading ${ref.diaLoading.toFixed(0)} mm`);
+
+  // the length must be the one that actually reaches that mouth under the law,
+  // checked by running the profile forward rather than trusting the solver
+  const ratio = (ref.dia / 2) / Math.sqrt(St / Math.PI);
+  check("minimum length is the length that reaches the required ratio",
+    M.hypexR(ref.minLength, 1, ref.m, T), ratio, 1e-9);
+  check("...and the ratio it reports is that same ratio", ref.ratio, ratio, 1e-12);
+  check("m is the cutoff's own flare constant", ref.m, M.hypexMForFc(fc, c), 1e-15, "/mm");
+
+  // WIDER coverage needs a SMALLER mouth — the relation is 1/sin(Th/2), which
+  // is why the narrow-coverage horn is the one that comes out enormous
+  const wide = M.hypexReference({ throatArea: St, fc, T, c, coverageDeg: 120 });
+  const narrow = M.hypexReference({ throatArea: St, fc, T, c, coverageDeg: 40 });
+  checkTrue("wider coverage needs a smaller mouth, not a larger one",
+    wide.dia < ref.dia && ref.dia < narrow.dia,
+    `120deg ${wide.dia.toFixed(0)} < 90deg ${ref.dia.toFixed(0)} < 40deg ${narrow.dia.toFixed(0)} mm`);
+  // and a lower cutoff needs a bigger mouth and a longer horn, both ~1/fc
+  const lower = M.hypexReference({ throatArea: St, fc: 250, T, c, coverageDeg: cov });
+  check("halving the cutoff doubles the required mouth diameter",
+    lower.dia / ref.dia, 2, 1e-9);
+  checkTrue("...and lengthens the horn", lower.minLength > ref.minLength,
+    `${ref.minLength.toFixed(0)} -> ${lower.minLength.toFixed(0)} mm`);
+  // cosh needs more length than exponential for the same mouth, as ever
+  const t0 = M.hypexReference({ throatArea: St, fc, T: 0, c, coverageDeg: cov });
+  const t1 = M.hypexReference({ throatArea: St, fc, T: 1, c, coverageDeg: cov });
+  checkTrue("hyperbolic needs more length than exponential for the same mouth",
+    t0.minLength > t1.minLength, `${t0.minLength.toFixed(0)} vs ${t1.minLength.toFixed(0)} mm`);
+}
+
 // ── 10a6. fc as an input ───────────────────────────────────────────────────
 head("fc as an input (depth solved)");
 {
@@ -1020,6 +1152,85 @@ head("fc as an input (depth solved)");
     r0.mouthAreaSpread === r4.mouthAreaSpread && r4.mouthAreaSpread === r8.mouthAreaSpread &&
     r0.ratioSpread < 0.05 && r4.ratioSpread > 1 && r8.ratioSpread > r4.ratioSpread,
     `mouth fixed at ${r4.mouthAreaSpread.toFixed(4)}% while ratio goes ${r0.ratioSpread.toFixed(3)} -> ${r4.ratioSpread.toFixed(2)} -> ${r8.ratioSpread.toFixed(2)}%`);
+}
+
+// ── 10a6b. the volume identity, done properly ──────────────────────────────
+// The swept volume of a tube is exactly INT A_vec . dr, so the identity has
+// three parts that all have to be right: the VECTOR area (not its magnitude
+// times a scalar obliquity), the SECTION CENTROID displacement (not the
+// centreline's), and the trapezoid rule over stations. Get the first two right
+// and the residual is pure quadrature, which must fall as O(h^2). Get either
+// wrong and it hits a geometric floor that more stations cannot clear — which
+// is the failure this block exists to pin down, because a fixed tolerance on a
+// coarse station count hides it completely.
+head("Volume identity and its convergence");
+{
+  const t = 0.4, DEF = 0.35;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const vecArea = (r) => {
+    let ax = 0, ay = 0, az = 0;
+    for (let k = 0; k < r.length; k++) {
+      const a = r[k], b = r[(k + 1) % r.length];
+      ax += a[1] * b[2] - a[2] * b[1];
+      ay += a[2] * b[0] - a[0] * b[2];
+      az += a[0] * b[1] - a[1] * b[0];
+    }
+    return [ax / 2, ay / 2, az / 2];
+  };
+  const ctrOf = (r) => {
+    const q = [0, 0, 0];
+    for (const p of r) { q[0] += p[0] / r.length; q[1] += p[1] / r.length; q[2] += p[2] / r.length; }
+    return q;
+  };
+  // worst relative error over all 18 ducts, for a given integral form
+  const err = (mo, ST, form) => {
+    const map = M.mapThroatToMouth(Lay.throat, {
+      c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+      tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, keepGeometry: true,
+      wallWidthAt: 200 / 6, t, stations: ST, profileT: 0.3, ...mo });
+    const solids = M.ductSolids(Lay.throat, map, { t, dividerEndFrac: DEF });
+    let worst = 0;
+    for (const cell of Lay.throat.cells) {
+      const row = map.rows.find((r) => r.id === cell.id);
+      const sd = solids.find((x) => x.id === cell.id);
+      let V = 0;
+      for (let q = 1; q < sd.sections.length; q++) {
+        const c0 = ctrOf(sd.sections[q - 1].pts), c1 = ctrOf(sd.sections[q].pts);
+        const dC = [c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]];
+        if (form === "exact") {
+          const A0 = vecArea(sd.sections[q - 1].pts), A1 = vecArea(sd.sections[q].pts);
+          V += 0.5 * ((A0[0] + A1[0]) * dC[0] + (A0[1] + A1[1]) * dC[1] + (A0[2] + A1[2]) * dC[2]);
+        } else {
+          // the old form: scalar area x tangent obliquity x CENTRELINE step
+          const o0 = sd.sections[q - 1].origin, o1 = sd.sections[q].origin;
+          const sc = (k) => row.sched[k].axial / row.sched[k].area;
+          V += 0.5 * (sd.sections[q].area * sc(q) + sd.sections[q - 1].area * sc(q - 1))
+             * Math.hypot(o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]);
+        }
+      }
+      worst = Math.max(worst, Math.abs(Math.abs(V) - sd.volume) / sd.volume);
+    }
+    return worst;
+  };
+  const cases = [
+    ["rect, flow", { mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1, sectionMode: "flow" }],
+    ["arc, flow", { mouthMode: "arc", thetaH: 90, thetaV: 40, sectionMode: "flow" }],
+    ["arc, swept", { mouthMode: "arc", thetaH: 90, thetaV: 40, sectionMode: "swept" }],
+  ];
+  for (const [nm, mo] of cases) {
+    const e16 = err(mo, 16, "exact"), e32 = err(mo, 32, "exact");
+    checkTrue(`${nm}: the exact identity converges at second order`,
+      e32 < e16 / 3 && e32 < 0.0025,
+      `${(e16 * 100).toFixed(3)}% -> ${(e32 * 100).toFixed(3)}% doubling the stations, ${(e16 / e32).toFixed(1)}x`);
+  }
+  // AND THE COUNTER-CASE, so nobody "simplifies" it back. Attributing a
+  // section's area to the CENTRELINE's position instead of its own leaves a
+  // geometric offset — 0.775 mm rect, 4.466 mm arc — that no amount of
+  // quadrature clears, so the residual stalls instead of falling.
+  const o16 = err(cases[1][1], 16, "origin"), o32 = err(cases[1][1], 32, "origin");
+  checkTrue("...while the centreline-referenced form stalls instead of converging",
+    o32 > o16 / 2.2 && o32 > 4 * err(cases[1][1], 32, "exact"),
+    `${(o16 * 100).toFixed(3)}% -> ${(o32 * 100).toFixed(3)}%, only ${(o16 / o32).toFixed(1)}x for a 2x refinement`);
 }
 
 // ── 10a7. swept sections (Phase D) ─────────────────────────────────────────

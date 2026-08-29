@@ -8,8 +8,8 @@ Five loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
-A sixth, CD Exit Cell Division, was deleted once the H-Grid Throat Partition
-superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
+A sixth, CD Exit Cell Division, was deleted once the Multicell Horn tool
+(then called H-Grid Throat Partition) superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
 defaults `not_found_handling` to none — but `npm run preview` falls back to the
 landing page instead, so a 200 there is not the deployed behaviour. If that
 link ever needs to live again, the tool is in the history.
@@ -25,7 +25,7 @@ horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
-h-grid-throat.html        → src/hgrid-main.jsx       → HGridThroat
+multicell-horn.html       → src/multicell-main.jsx   → MulticellHorn
 src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -151,7 +151,7 @@ Match what is already there rather than modernising it:
 - Inline style objects, no CSS modules, no styling library.
 - Hand-rolled SVG for all plots — no charting library.
 - Physics helpers as plain top-level functions above the component.
-- **One exception, deliberate**: `HGridThroat.jsx` keeps its physics in
+- **One exception, deliberate**: `MulticellHorn.jsx` keeps its physics in
   `src/hgrid-model.js` — a plain module with no React and no colour — so that
   `scripts/test-hgrid.mjs` can import it under node and check it against closed
   forms. Split a tool this way only when it has enough physics AND enough
@@ -336,15 +336,24 @@ exists.
   and because the mouth grid's parametric cell centre is not its polygon
   centroid. It was predicted that swept sections would remove this by
   construction; they do NOT — measured identical in both modes, since the
-  offset comes from the mouth grid rather than the loft. Consequences: the
-  volume-vs-axial identity holds to 0.038% when integrated against the section
-  CENTROID displacement but only 0.55% (rect) and 2.78% (arc) against `origin`,
-  and that residual does not converge with more stations because it is a
-  geometric offset, not quadrature. The SigmaA CSV inherits it — `axial_z_mm`
-  and `developed_s_mm` are centreline-derived while the areas are the
-  sections' own, so the schedule attributes each area to a station up to 4.5 mm
-  off. Exported SOLIDS are unaffected: `ductSections` only passes `origin`
-  through and insets the polygon itself.
+  offset comes from the mouth grid rather than the loft. `sched[].centroid`
+  (with `zc` / `sc` as its position axis) is the section's own centre, and the
+  SigmaA CSV is now plotted against it, so each summed area is attributed to
+  the position of the sections that produced it. `origin` is kept because it
+  is the centreline point and `ductSections` passes it through; exported
+  SOLIDS never depended on it, since the inset works on the polygon itself.
+- **The volume identity is `INT A_vec . dr` and all three parts matter.** The
+  VECTOR area, the SECTION CENTROID displacement, and the trapezoid rule. Get
+  the first two right and the residual is pure quadrature and falls as O(h^2):
+  measured 0.333 -> 0.085% (rect), 0.711 -> 0.176% (arc), 0.725 -> 0.208%
+  (arc swept) doubling 16 to 32 stations, i.e. 3.5-4.1x each. Get either wrong
+  and it hits a geometric floor no refinement clears — the old form, scalar
+  area x tangent obliquity x CENTRELINE step, goes 2.298 -> 1.699%, only 1.4x
+  for a 2x refinement. **Test the convergence RATE, not a fixed tolerance**: a
+  1% bound at 16 stations passed the stalling form for three sessions. Note
+  `axial` is still the right scalar to REPORT — it is the flux-carrying
+  cross-section — it is just not what to multiply by a step length, because it
+  projects on the tangent while the volume advances along the centroid step.
 - **A flowed section is not planar, and its area is not its cross-section.** It
   is a level set of the flow, not a cut square to the path, so it runs oblique
   — up to 14.5% at 6x3. `sched[].area` is the section's own area; `axial` is its
@@ -359,6 +368,17 @@ exists.
   perpendicular to its own centreline, and at the throat that already points
   down the exit cone: station 0 came out tilted by up to 6.85 deg, straddling
   z = +-0.5 mm, with no common face across the eighteen ducts to seat on.
+- **Per-cell path manipulation is IMPOSSIBLE in flow mode, and that is what
+  swept sections unlocked.** Under the flow every boundary point runs its own
+  trajectory from its throat position to its mouth position, and neighbours
+  SHARE those points exactly — that is what makes the ducts tile. A shared
+  point cannot follow cell A's lengthened path and cell B's unlengthened one at
+  the same time, so per-cell path length is not merely unimplemented, it is
+  structurally unavailable. In swept mode each cell's sections are built around
+  its own centreline, so moving that centreline moves only that cell. Phase D
+  therefore did not build centre-cell lengthening; it removed the blocker. The
+  price is the interpenetration swept mode admits, which is why the signed
+  clearance had to land before it and not after.
 - **Radial launch EXPANDS cells; it does not separate them. Those are two
   different mechanisms and the tool currently only has the first.**
   `buildTrajectory`'s straight run moves each boundary point along `dirA`, the
@@ -471,22 +491,65 @@ exists.
   nearest one: a point driven deep into a neighbour is FAR from that
   neighbour's boundary, so the minimum unsigned distance is exactly the point
   that says least about penetration.
-- **The mouth can be stated as COVERAGE, and then equal area and equal solid
-  angle stop being two constraints.** `mouthMode: "arc"` takes Thh x Thv about
-  the apex on a spherical cap and subdivides at equal d(azimuth) and equal
-  d(sin elevation) — the Lambert equal-area arrangement. On a sphere A = r^2
-  Omega, so equal solid angle IS equal area, and the cells still tile: all
-  three constraints at once. Measured at 6x3, 90x60: per-cell mouth area
-  spread 0.0289% against 5.71% for the uniform x/y lattice, radius ratio
-  0.025% against 2.87%. It holds across coverage (0.002% at 40x30, 0.093% at
-  120x80), and the mouth W x H comes out exactly on the chord closed forms
-  2 r sin(Th/2). What it gives up is equal angular WIDTH per cell — outer rows
-  span more degrees — which is the right trade, since what is specified is the
-  total Th. A traditional multicell makes the opposite trade: identical cells
-  on a radial fan get equal area and equal solid angle free but cannot tile a
-  curved surface, which is what the flat filler webs between cell mouths ARE.
-  Arc mode forces flatten = 1 and reports it as `flattenEff`, because a
-  flattened cap is not a sphere and the equal-area argument needs one.
+- **THE MOUTH HAS NO APEX, and that was an architectural correction, not a
+  feature.** The aperture is stated by what it must deliver — a horizontal arc
+  of Th_h over its own arc length, a vertical arc of Th_v over its own — and
+  the two radii are INDEPENDENT (`mouthMode: "biradial"`, `arcH` / `arcV`).
+  Th = 0 on an axis makes that axis flat, so a vertically straight-sided mouth
+  is just Th_v = 0.
+  The apex was never a design input; it was an artifact of building the mouth
+  as one spherical cap, and it forced both curvatures to be the same number.
+  Worse, it made "equal solid angle at the apex" look like a design criterion.
+  It is not one: once each cell's path is independently aimed, the cells can
+  deliver whatever wavefront is wanted, so partitioning by angle at a common
+  point measures the CONSTRUCTION rather than the horn. What the mouth owes the
+  design is its shape and area; what the paths owe it is the wavefront.
+  The surface is a swept arc — the vertical arc swept along the horizontal one
+  in the plane normal to it:
+    V(a,e) = ((rH - rV(1-cos e)) sin a, rV sin e,
+              depth - rH(1-cos a) - rV(1-cos e) cos a)
+  It reduces EXACTLY to the old sphere-about-apex when rH = rV (verified
+  8e-14 mm), so nothing from the arc-mode era is lost. Two properties earn it:
+  the parameter tangents are ORTHOGONAL with |dV/da| = rH - rV(1-cos e)
+  independent of a, so equal d(azimuth) is exactly equal area horizontally at
+  any curvature; and the outward normal is (sin a cos e, sin e, cos a cos e),
+  which depends on NEITHER radius — it is simply the direction that angular
+  position points, and that is what makes the arrival direction apex-free.
+  Ducts now arrive along that normal, so `aimErr` is 0 by construction: the
+  aperture IS the arrival target.
+  Vertical cuts sit at equal cumulative area, inverted from the CLOSED FORM
+  F(sv) = sv(1 - rV/rH) + (rV^2/rH) sin(sv/rV), not quadratured — a 2000-sample
+  cumulative left 1.5e-6 mm of error against the sphere it must reproduce
+  identically. F reduces to r sin(e) at rH = rV (Lambert) and to sv when either
+  radius is infinite (equal d(arc length)).
+  `mouthMode` "rect" and "arc" survive in the model as the comparison baselines
+  the tests measure against; the tool offers only biradial.
+- **Decoupling vertical from horizontal curvature is a CONTINUUM,- **Decoupling vertical from horizontal curvature is a CONTINUUM, and the one
+  thing it trades is equal solid angle.** The aperture is an ellipsoid of
+  REVOLUTION today — `(x^2+y^2)/A^2 + (z+apex)^2/Cz^2 = 1` with a single A — so
+  horizontal and vertical radii are locked identical and `flatten` scales both
+  together. A vertically-flat mouth (cylinder: horizontal arc, vertical
+  straight) is a legitimate CD-horn geometry and is NOT currently reachable.
+  Measured at 6x3, Th_h 90 deg, vertical arc 213 mm, with equal-AREA vertical
+  subdivision enforced at every curvature — one rule covers the family, since
+  equal cumulative area reduces to Lambert's equal d(sin elev) at the sphere
+  and to equal d(y) at the cylinder:
+    kappa 1.00 (sphere) area 0.081%, solid angle 0.090%, dL 29.9 mm
+    kappa 0.50          area 0.021%, solid angle 3.358%, dL 33.7 mm
+    kappa 0.00 (flat)   area 0.000%, solid angle 7.873%, dL 37.5 mm
+  So equal area SURVIVES the whole range — the cylinder is exactly equal-area,
+  better than the sphere's 0.081% which is only chord discretisation — and what
+  degrades is equal solid angle. Per row at kappa 0: bottom 0.0562, middle
+  0.0608, top 0.0562 sr, so the middle row owns ~8% more of the pattern for the
+  same area. The cause is geometric: on a cylinder the outer rows sit at
+  sqrt(r^2+y^2) from the apex rather than r, and their surface is oblique to
+  the line of sight; on a sphere both terms vanish, which is exactly why the
+  spherical cap gets equal area and equal solid angle simultaneously.
+  Equal output per cell into unequal solid angle is roughly 0.33 dB of vertical
+  non-uniformity — an order-of-magnitude figure, not a prediction, since this
+  tool computes no radiated pattern and real vertical control is dominated by
+  mouth height and edge diffraction. dL degrades smoothly with curvature, so
+  there is no cliff to avoid, only a trade to price.
 - **The path has four knobs, not one, and `bendCentroid` is what measures
   them.** A cubic Hermite with both endpoints and both end directions fixed
   has exactly two free scalars — the tangent magnitudes — and one `tight`
