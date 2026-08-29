@@ -368,6 +368,17 @@ exists.
   perpendicular to its own centreline, and at the throat that already points
   down the exit cone: station 0 came out tilted by up to 6.85 deg, straddling
   z = +-0.5 mm, with no common face across the eighteen ducts to seat on.
+- **Per-cell path manipulation is IMPOSSIBLE in flow mode, and that is what
+  swept sections unlocked.** Under the flow every boundary point runs its own
+  trajectory from its throat position to its mouth position, and neighbours
+  SHARE those points exactly — that is what makes the ducts tile. A shared
+  point cannot follow cell A's lengthened path and cell B's unlengthened one at
+  the same time, so per-cell path length is not merely unimplemented, it is
+  structurally unavailable. In swept mode each cell's sections are built around
+  its own centreline, so moving that centreline moves only that cell. Phase D
+  therefore did not build centre-cell lengthening; it removed the blocker. The
+  price is the interpenetration swept mode admits, which is why the signed
+  clearance had to land before it and not after.
 - **Radial launch EXPANDS cells; it does not separate them. Those are two
   different mechanisms and the tool currently only has the first.**
   `buildTrajectory`'s straight run moves each boundary point along `dirA`, the
@@ -496,6 +507,32 @@ exists.
   curved surface, which is what the flat filler webs between cell mouths ARE.
   Arc mode forces flatten = 1 and reports it as `flattenEff`, because a
   flattened cap is not a sphere and the equal-area argument needs one.
+- **Decoupling vertical from horizontal curvature is a CONTINUUM, and the one
+  thing it trades is equal solid angle.** The aperture is an ellipsoid of
+  REVOLUTION today — `(x^2+y^2)/A^2 + (z+apex)^2/Cz^2 = 1` with a single A — so
+  horizontal and vertical radii are locked identical and `flatten` scales both
+  together. A vertically-flat mouth (cylinder: horizontal arc, vertical
+  straight) is a legitimate CD-horn geometry and is NOT currently reachable.
+  Measured at 6x3, Th_h 90 deg, vertical arc 213 mm, with equal-AREA vertical
+  subdivision enforced at every curvature — one rule covers the family, since
+  equal cumulative area reduces to Lambert's equal d(sin elev) at the sphere
+  and to equal d(y) at the cylinder:
+    kappa 1.00 (sphere) area 0.081%, solid angle 0.090%, dL 29.9 mm
+    kappa 0.50          area 0.021%, solid angle 3.358%, dL 33.7 mm
+    kappa 0.00 (flat)   area 0.000%, solid angle 7.873%, dL 37.5 mm
+  So equal area SURVIVES the whole range — the cylinder is exactly equal-area,
+  better than the sphere's 0.081% which is only chord discretisation — and what
+  degrades is equal solid angle. Per row at kappa 0: bottom 0.0562, middle
+  0.0608, top 0.0562 sr, so the middle row owns ~8% more of the pattern for the
+  same area. The cause is geometric: on a cylinder the outer rows sit at
+  sqrt(r^2+y^2) from the apex rather than r, and their surface is oblique to
+  the line of sight; on a sphere both terms vanish, which is exactly why the
+  spherical cap gets equal area and equal solid angle simultaneously.
+  Equal output per cell into unequal solid angle is roughly 0.33 dB of vertical
+  non-uniformity — an order-of-magnitude figure, not a prediction, since this
+  tool computes no radiated pattern and real vertical control is dominated by
+  mouth height and edge diffraction. dL degrades smoothly with curvature, so
+  there is no cliff to avoid, only a trade to price.
 - **The path has four knobs, not one, and `bendCentroid` is what measures
   them.** A cubic Hermite with both endpoints and both end directions fixed
   has exactly two free scalars — the tangent magnitudes — and one `tight`
