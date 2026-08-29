@@ -693,6 +693,83 @@ head("Hypex expansion profile");
     `${mp1.profFcMin.toFixed(0)}-${mp1.profFcMax.toFixed(0)} Hz over dL = ${mp1.dL.toFixed(1)} mm`);
 }
 
+// ── 10a4b. the law is written on the OPEN passage ──────────────────────────
+// The wave travels through the open passage, not the gross cell outline, so
+// the expansion law is keyed on open area. NOTE these tests pass `t` INTO
+// mapThroatToMouth. Passing it only to buildLayout leaves the map at t = 0,
+// where open and gross coincide and every assertion below passes vacuously —
+// which is exactly how this path went untested when it was first written.
+head("Expansion law on the open passage");
+{
+  const ST = 16, DEF = 0.35;
+  for (const t of [0.4, 0.8]) {
+    const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+    const base = {
+      c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+      tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+      wallWidthAt: 200 / 6, t, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
+    };
+    const gross = M.mapThroatToMouth(Lay.throat, { ...base, profileArea: "gross" });
+    const open = M.mapThroatToMouth(Lay.throat, { ...base, profileArea: "open" });
+
+    // THE LAW MUST HOLD ON THE OPEN AREA, station by station, computed here
+    // from the inset polygons rather than read back off the model
+    let worst = 0, endK = 0;
+    for (const r of open.rows) {
+      const cell = Lay.throat.cells.find((x) => x.id === r.id);
+      const rim = cell.rimSide || [false, false, false, false];
+      const dAt = (u) => rim.map((isRim) => (isRim ? 0 : (t / 2) * Math.max(0, 1 - u / DEF)));
+      const openAt = (pts, d) => (d.some((v) => v > 0) ? M.polyArea3(M.insetSection3(pts, d)) : M.polyArea3(pts));
+      const A0 = openAt(r.sched[0].pts, dAt(0));
+      for (let q = 0; q <= ST; q++) {
+        const got = openAt(r.sched[q].pts, dAt(q / ST));
+        const want = A0 * M.hypexR(r.sched[q].sLen, 1, r.profM, 0.3) ** 2;
+        worst = Math.max(worst, Math.abs(got - want) / want);
+      }
+      endK = Math.max(endK, Math.abs(r.profK[0] - 1), Math.abs(r.profK[ST] - 1));
+    }
+    check(`t=${t}: OPEN area follows A_open x hypexR(x,1,m,T)^2 at every station`, worst, 0, 1e-9);
+    // and the ends must still be untouched, or the throat face and the mouth
+    // tiling go with them. This is not automatic: the inset is a fixed offset,
+    // so k = 1 at the ends is a property that has to be checked, not assumed.
+    check(`t=${t}: ...with k still exactly 1 at both ends`, endK, 0, 1e-9);
+
+    // keying on open RAISES the ratio, because the passage is smaller than the
+    // outline: the real expansion is bigger than gross-to-gross reported
+    checkTrue(`t=${t}: the open ratio exceeds the gross ratio`,
+      open.rows[0].profRatio > gross.rows[0].profRatio,
+      `${gross.rows[0].profRatio.toFixed(3)} -> ${open.rows[0].profRatio.toFixed(3)}, +${((open.rows[0].profRatio / gross.rows[0].profRatio - 1) * 100).toFixed(2)}%`);
+    checkTrue(`t=${t}: ...so the reported fc rises with it`,
+      open.profFcMin > gross.profFcMin,
+      `${gross.profFcMin.toFixed(0)} -> ${open.profFcMin.toFixed(0)} Hz`);
+
+    // THE PAYOFF. The equal-area solve equalises OPEN area to 1e-10, so keying
+    // the law on it makes the throat reference identical across cells and the
+    // ratio spread collapses. Gross cannot do this: it is unequal by
+    // construction once dividers exist, because a rim cell has fewer of them.
+    checkTrue(`t=${t}: keying on open collapses the ratio spread`,
+      open.ratioSpread < gross.ratioSpread / 5,
+      `${gross.ratioSpread.toFixed(3)}% gross -> ${open.ratioSpread.toFixed(3)}% open`);
+    checkTrue(`t=${t}: ...and with it the ratio's share of the fc spread`,
+      open.fcDecomp.fromRatio < gross.fcDecomp.fromRatio / 4,
+      `${gross.fcDecomp.fromRatio.toFixed(3)}% -> ${open.fcDecomp.fromRatio.toFixed(3)}%`);
+  }
+
+  // with no dividers there is nothing to subtract, so the two must agree
+  // exactly — the guard that says these tests are not silently comparing
+  // a mode against itself
+  const bare = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0, c });
+  const opts = {
+    c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+    tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    wallWidthAt: 200 / 6, t: 0, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
+  };
+  const g0 = M.mapThroatToMouth(bare.throat, { ...opts, profileArea: "gross" });
+  const o0 = M.mapThroatToMouth(bare.throat, { ...opts, profileArea: "open" });
+  check("with t = 0 the two conventions coincide exactly",
+    Math.abs(o0.rows[0].profRatio - g0.rows[0].profRatio), 0, 1e-12);
+}
+
 // ── 10a5. the path family ──────────────────────────────────────────────────
 head("Path family");
 {

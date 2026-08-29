@@ -1462,7 +1462,10 @@ function rmfTransport(pts, tans, r0) {
 export function mapThroatToMouth(throat, opts) {
   const {
     c = 343, mouthW = 200, mouthH = 100, apex = 120, depth = 150, flatten = 1,
-    exitHalfAngle = 8, tight = 0.55, fTarget = 20000, dividerEndFrac = 0.35,
+    exitHalfAngle = 8, tight = 0.55, fTarget = 20000, dividerEndFrac = 0.35, t = 0,
+    // Which area the expansion law is written on. "open" is the acoustically
+    // meaningful one — see the note at the profile block.
+    profileArea = "open",
     stations = 24, wallWidthAt = 10, samples = 64, keepGeometry = false,
     divergeLen = 0, arriveLen = 0, profileT = null,
     tightThroat = tight, tightMouth = tight,
@@ -1812,12 +1815,56 @@ export function mapThroatToMouth(throat, opts) {
     // both ends by construction — the throat mating face and the mouth tiling
     // are therefore untouched, whatever T is — and turns fc into a readout of
     // the loading you actually got.
+    // ── WHICH AREA THE LAW IS WRITTEN ON ────────────────────────────────────
+    // The wave travels through the OPEN passage: the cell outline less the
+    // half-divider taken off each shared side. The gross outline is a
+    // bookkeeping boundary that includes wall the wave never sees, so a
+    // gross-to-gross ratio understates the real expansion and reports fc lower
+    // than the horn actually delivers.
+    //
+    // This is NOT a change of reference constant. The inset is a fixed t/2
+    // OFFSET, not a proportion, so scaling a section by k does not scale its
+    // open area by k^2 — the target has to be solved for k at each station
+    // inside the divider region. Past dividerEndFrac the inset is gone and
+    // open IS gross, so the solve collapses to the closed form there.
+    //
+    // Both ends still land on k = 1, which is what keeps the throat mating
+    // face and the mouth tiling exact:
+    //   station 0 — open(1 x ring) is A_open by definition, and A_open is the
+    //               law's own starting value
+    //   station L — the inset has tapered to nothing, so open is gross, and m
+    //               was solved to put the law exactly on the mouth area
+    // Enlarging the outline to give back what the wall takes is the same
+    // argument as the shell oversize in `fabrication`, applied per station.
     let profM = null, profFc = null, profScaleMin = 1, profScaleMax = 1;
-    let profRatio = null, profK = null, profKMaxAt = 0;
+    let profRatio = null, profK = null, profKMaxAt = 0, profRatioGross = null;
     if (profileT != null) {
-      const A0 = nrm3(vecArea(rings[0])), AL = nrm3(vecArea(rings[stations]));
+      const rimSide = cellRec.rimSide || [false, false, false, false];
+      // per-side inset at a station, exactly as ductSections applies it
+      const insetAt = (u) => {
+        if (!(t > 0) || !(dividerEndFrac > 1e-9)) return null;
+        const taper = Math.max(0, 1 - u / dividerEndFrac);
+        if (taper <= 1e-12) return null;
+        const d = rimSide.map((isRim) => (isRim ? 0 : (t / 2) * taper));
+        return d.some((v) => v > 0) ? d : null;
+      };
+      const openArea = (ring, d) => (d ? polyArea3(insetSection3(ring, d)) : nrm3(vecArea(ring)));
+      const scaleRing = (ring, k) => {
+        const n = ring.length, ctr = [0, 0, 0];
+        for (const q of ring) { ctr[0] += q[0] / n; ctr[1] += q[1] / n; ctr[2] += q[2] / n; }
+        return ring.map((q) => [
+          ctr[0] + (q[0] - ctr[0]) * k,
+          ctr[1] + (q[1] - ctr[1]) * k,
+          ctr[2] + (q[2] - ctr[2]) * k,
+        ]);
+      };
+      const useOpen = profileArea === "open";
+      const d0 = useOpen ? insetAt(0) : null;
+      const A0 = useOpen ? openArea(rings[0], d0) : nrm3(vecArea(rings[0]));
+      const AL = nrm3(vecArea(rings[stations])); // no dividers left at the mouth
       const ratio = A0 > 1e-12 ? Math.sqrt(AL / A0) : 1;
       profRatio = ratio;
+      profRatioGross = Math.sqrt(AL / Math.max(1e-12, nrm3(vecArea(rings[0]))));
       profM = solveHypexM(ratio, L, profileT);
       profFc = fcForHypexM(profM, c);
       // k is kept PER STATION, not just as a range. k > 1 is the one way this
@@ -1825,9 +1872,36 @@ export function mapThroatToMouth(throat, opts) {
       // at is the actionable part — a range says only that it happened.
       profK = new Array(stations + 1).fill(1);
       for (let q = 0; q <= stations; q++) {
-        const want = A0 * hypexR(sArr[Math.round((q / stations) * M)], 1, profM, profileT) ** 2;
-        const have = nrm3(vecArea(rings[q]));
-        const k = have > 1e-12 ? Math.sqrt(want / have) : 1;
+        const u = q / stations;
+        const want = A0 * hypexR(sArr[Math.round(u * M)], 1, profM, profileT) ** 2;
+        const dq = useOpen ? insetAt(u) : null;
+        const gross = nrm3(vecArea(rings[q]));
+        let k;
+        if (!dq) {
+          // no wall to give back here, so the k^2 closed form is exact
+          k = gross > 1e-12 ? Math.sqrt(want / gross) : 1;
+        } else {
+          // open(k) ~= k^2 A - k d P to first order, which is an accurate seed;
+          // then secant on the TRUE inset area, because the corner mitres and
+          // the curved sides put the exact value off the quadratic slightly
+          const have = openArea(rings[q], dq);
+          const dP = Math.max(0, gross - have); // the wall's first-order bite
+          const F = (kk) => openArea(scaleRing(rings[q], kk), dq) - want;
+          let k0 = (dP + Math.sqrt(dP * dP + 4 * gross * want)) / (2 * gross);
+          let f0 = F(k0);
+          if (Math.abs(f0) > 1e-12 * want) {
+            let k1 = k0 * (1 + 1e-4), f1 = F(k1);
+            for (let it = 0; it < 24 && Math.abs(f1) > 1e-12 * want; it++) {
+              const den = f1 - f0;
+              if (Math.abs(den) < 1e-300) break;
+              let kn = k1 - (f1 * (k1 - k0)) / den;
+              if (!(kn > 1e-6) || !isFinite(kn)) kn = 0.5 * (k0 + k1);
+              k0 = k1; f0 = f1; k1 = kn; f1 = F(k1);
+            }
+            k0 = Math.abs(f1) < Math.abs(f0) ? k1 : k0;
+          }
+          k = k0;
+        }
         profK[q] = k;
         profScaleMin = Math.min(profScaleMin, k);
         if (k > profScaleMax) { profScaleMax = k; profKMaxAt = q; }
@@ -1894,6 +1968,7 @@ export function mapThroatToMouth(throat, opts) {
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
       sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll,
+      profRatioGross,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
       // configuration — profScaleMin is what opened the gap
@@ -2125,7 +2200,8 @@ export function mapThroatToMouth(throat, opts) {
   const turnLimitDeg = ((lam / 8) / wallWidthAt) * R2D;
   return {
     clearance,
-    profileT,
+    profileT, profileArea,
+    ratioSpreadGross: spreadOf(rows.map((r) => r.profRatioGross || 1)),
     profFcMin: profileT != null ? Math.min(...rows.map((r) => r.profFc)) : null,
     profFcMax: profileT != null ? Math.max(...rows.map((r) => r.profFc)) : null,
     profScaleMin: profileT != null ? Math.min(...rows.map((r) => r.profScaleMin)) : null,

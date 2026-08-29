@@ -514,20 +514,37 @@ exists.
   mm at T = 0 / 0.5 / 1 for 500 Hz). Unreachable targets are REPORTED with the
   bound they hit — 20 Hz floors at 86 Hz, 8000 Hz ceilings at 1819 Hz — never
   clamped and presented as a solution.
-- **The equal-area solve equalises OPEN area, but the duct section is built on
-  the GROSS outline, and dividers make those different.** open = gross - (t/2)
-  x divider length, and a rim cell has fewer dividers, so for equal open area
-  it needs LESS gross area. Measured at 6x3: open spread 1e-10% at every t, but
-  GROSS spread 0% / 5.21% / 10.86% at t = 0 / 0.4 / 0.8. The profile's
-  expansion ratio is gross to gross, so it inherits that: ratio spread 0.025%
-  / 2.62% / 5.50%, contributing 0.009% / 0.947% / 1.979% to the fc spread even
-  with a perfectly equal-area ARC mouth. So there are TWO independent sources
-  of unequal expansion ratio — the mouth lattice (fixed by arc mode) and the
-  divider inset at the throat (not fixed by anything yet) — and the second is
-  the larger of the two at realistic wall thicknesses. This is reported, not
-  patched: which area the profile should key on is a physics decision, since
-  the driver sees the OPEN throat area while the mouth has no dividers left to
-  subtract by then.
+- **The expansion law is written on the OPEN passage, and that is a physics
+  decision, not bookkeeping.** The wave travels through the open area — the
+  cell outline less the half-divider on each shared side — while the gross
+  outline includes wall the wave never sees. Keying on gross understates the
+  expansion and reports fc low: measured at arc 90x40, ratio 9.012 -> 9.327 at
+  t = 0.4 (+3.50%) and 9.162 -> 9.843 at t = 0.8 (+7.43%), with fc following
+  733 -> 742 and 738 -> 758 Hz. `profileArea` defaults to `"open"`; `"gross"`
+  is kept for comparison.
+  The payoff is that the equal-area solve equalises OPEN area to 1e-10, so
+  keying the law on it makes the throat reference identical across cells and
+  the ratio spread collapses — 2.640% -> 0.122% at t = 0.4, 5.513% -> 0.483%
+  at t = 0.8, taking the ratio's share of the fc spread from 1.015% to 0.046%
+  and 2.114% to 0.179%. Gross can never do that: a rim cell has fewer dividers,
+  so for equal open area it needs LESS gross area, and gross spreads 5.21% /
+  10.86% at t = 0.4 / 0.8 by construction.
+  **It is NOT a change of reference constant.** The inset is a fixed t/2
+  OFFSET, not a proportion, so scaling a section by k does not scale its open
+  area by k^2, and the scale has to be SOLVED per station inside the divider
+  region (quadratic seed, then secant on the true inset area; converges to
+  1e-12 relative). Physically that solve enlarges the outline to give back what
+  the wall takes — the same argument as the shell oversize in `fabrication`,
+  applied station by station. Both ends still land on k = 1 exactly, which is
+  what keeps the throat mating face and the mouth tiling intact: at station 0
+  the open area IS the law's starting value, and at the mouth the inset has
+  tapered to nothing so open is gross.
+  **`t` must be passed INTO `mapThroatToMouth`, not only into `buildLayout`.**
+  With t = 0 in the map, open and gross coincide and every open-area assertion
+  passes vacuously. That is exactly how this path went untested when first
+  written — 259 checks passed against a feature that was inert — so the tests
+  now pass `t` explicitly and a t = 0 case asserts the two conventions
+  coincide, to prove the comparison is not a mode against itself.
 - **Two things must never be tested on the residual alone.** The Schwarz–
   Christoffel inversion converges on its STEP, because its residual has a
   quadrature floor; and the equal-area solve converges on the residual AND the

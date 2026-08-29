@@ -212,6 +212,8 @@ export default function HGridThroat() {
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
   const [sectionMode, setSectionMode] = useState("flow");
+  // the wave travels through the OPEN passage, not the gross cell outline
+  const [profileArea, setProfileArea] = useState("open");
   const [fTarget, setFTarget] = useState(20000);
   const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
@@ -322,11 +324,15 @@ export default function HGridThroat() {
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
     mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
     divergeLen, arriveLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true, profileT,
+    // the profile is written on the OPEN passage, so it needs the divider
+    // thickness — without this it silently falls back to the gross outline
+    t: thickness, profileArea,
     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
     mouthMode, thetaH, thetaV, sectionMode,
     wallWidthAt: mouthW / shown.nc,
   }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, arriveLen,
-    tight, tightSplit, tightThroat, tightMouth, mouthMode, thetaH, thetaV, sectionMode, fTarget, dividerEndFrac, stations, profileT]);
+    tight, tightSplit, tightThroat, tightMouth, mouthMode, thetaH, thetaV, sectionMode,
+    fTarget, dividerEndFrac, stations, profileT, thickness, profileArea]);
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -1170,6 +1176,10 @@ export default function HGridThroat() {
                 <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
                   {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
                 </span>
+                <button onClick={() => setProfileArea(profileArea === "open" ? "gross" : "open")}
+                  style={btn(profileArea === "open", C.series6)}>
+                  on {profileArea} area
+                </button>
                 {map.profFcMin != null && (
                   <span style={{ fontFamily: C.mono, fontSize: 10, marginLeft: 6 }}>
                     <span style={{ color: C.inkMuted }}>f_c </span>
@@ -1205,6 +1215,16 @@ export default function HGridThroat() {
                 cell has both a longer path and a larger ratio, which move fc in
                 opposite directions — so the full spread sits below the larger term
                 and quoting either alone misleads. */}
+            {profileT != null && thickness > 0 && map.rows[0].profRatioGross && (
+              <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+                <span><span style={{ color: C.inkMuted }}>expansion ratio </span>
+                  <span style={{ color: C.series4 }}>{fmt(map.rows[0].profRatio, 3)}</span>
+                  <span style={{ color: C.inkMuted }}> · gross would read {fmt(map.rows[0].profRatioGross, 3)}</span></span>
+                <span><span style={{ color: C.inkMuted }}>ratio spread </span>
+                  <span style={{ color: map.ratioSpread < 0.5 ? C.series4 : C.series5 }}>{fmt(map.ratioSpread, 3)}%</span>
+                  <span style={{ color: C.inkMuted }}> · gross {fmt(map.ratioSpreadGross, 2)}%</span></span>
+              </div>
+            )}
             {profileT != null && map.fcDecomp && (
               <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
                 <span><span style={{ color: C.inkMuted }}>f_c spread </span>
@@ -1243,7 +1263,7 @@ export default function HGridThroat() {
                   const r = G.solveDepthForFc(throat, {
                     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
                     mouthW, mouthH, apex, flatten, exitHalfAngle: exitAngle,
-                    divergeLen, arriveLen, tight, dividerEndFrac, stations,
+                    divergeLen, arriveLen, tight, dividerEndFrac, stations, t: thickness, profileArea,
                     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
                     mouthMode, thetaH, thetaV, fTarget, wallWidthAt: mouthW / shown.nc,
                   }, { fcTarget: fcWanted, T: profileT });
@@ -1272,9 +1292,12 @@ export default function HGridThroat() {
                 : <>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
                   set to land each cell exactly on its own mouth area at its own path length. That makes the scale <em>k</em> = 1 at both ends,
                   leaving the throat mating face and the mouth tiling untouched, and turns f_c into a readout of the loading you got.
-                  {" "}Cells do <strong style={{ color: C.inkDim }}>not</strong> all share one expansion ratio: a uniform x/y mouth stretches the
-                  outer cells on the cap, and the divider inset makes the gross throat areas unequal too. So f_c moves with both path length and
-                  the cell's own ratio — see the decomposition below. Switching the mouth to coverage angles removes the first of those.
+                  {" "}The law is written on the <strong style={{ color: C.inkDim }}>open</strong> passage — the cell outline less the half-divider
+                  on each shared side — because that is what the wave travels through. The gross outline includes wall the wave never sees, so keying
+                  on it understates the expansion and reports f_c low. Since the equal-area solve equalises <em>open</em> area, this also makes the
+                  throat reference identical across cells, which is what collapses the ratio spread. Note it is not a change of reference constant:
+                  the inset is a fixed offset, not a proportion, so the scale is solved per station inside the divider region — the outline is
+                  enlarged to give back what the wall takes, exactly the shell-oversize argument applied station by station.
                   {" "}Leaving the <strong style={{ color: C.inkDim }}>axial depth</strong> free turns f_c from a readout into an input: solve depth
                   for the cutoff you want.
                   {" "}The gap between ducts is not a separate feature: it is the convex profile dipping below the near-linear fan of the centrelines,
