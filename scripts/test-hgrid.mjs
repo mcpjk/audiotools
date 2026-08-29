@@ -945,6 +945,121 @@ head("fc as an input (depth solved)");
     `mouth fixed at ${r4.mouthAreaSpread.toFixed(4)}% while ratio goes ${r0.ratioSpread.toFixed(3)} -> ${r4.ratioSpread.toFixed(2)} -> ${r8.ratioSpread.toFixed(2)}%`);
 }
 
+// ── 10a7. swept sections (Phase D) ─────────────────────────────────────────
+// The flowed construction guarantees non-overlap by SHARING boundary points.
+// Swept sections give that up on purpose, so that each cell's centreline can be
+// manipulated independently — the only mechanism that can lengthen an interior
+// cell's path, which the dL measurements say is required at any useful
+// coverage. What must survive is the two ENDS: the driver mating face and the
+// mouth tiling. What is traded is the interior, and it is bounded by the SIGNED
+// clearance rather than asserted to be zero.
+head("Swept sections (Phase D)");
+{
+  const ST = 16, t = 0.4, DEF = 0.35;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
+    tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    wallWidthAt: 200 / 6,
+  };
+  const modes = [["rect", { mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1 }],
+                 ["arc", { mouthMode: "arc", thetaH: 90, thetaV: 60 }]];
+
+  for (const [nm, mo] of modes) {
+    const flow = M.mapThroatToMouth(Lay.throat, { ...common, ...mo, profileT: 0.3, sectionMode: "flow" });
+    const swept = M.mapThroatToMouth(Lay.throat, { ...common, ...mo, profileT: 0.3, sectionMode: "swept" });
+
+    // ── THE ENDS MUST BE EXACT, or the trade is not worth making ───────────
+    let e0 = 0, eN = 0, z0 = 0;
+    swept.rows.forEach((r, i) => {
+      const f = flow.rows[i];
+      for (let k = 0; k < r.sched[0].pts.length; k++) {
+        const a = r.sched[0].pts[k], b = f.sched[0].pts[k];
+        e0 = Math.max(e0, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+        z0 = Math.max(z0, Math.abs(a[2]));
+        const p = r.sched[ST].pts[k], q = f.sched[ST].pts[k];
+        eN = Math.max(eN, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
+      }
+    });
+    check(`${nm}: station 0 IS the throat polygon`, e0, 0, 1e-12, "mm");
+    check(`${nm}: ...and lies flat in the throat plane`, z0, 0, 1e-12, "mm");
+    check(`${nm}: station N IS the mouth quad on the aperture`, eN, 0, 1e-11, "mm");
+
+    // both end rings are therefore still SHARED point-for-point between
+    // neighbours, which is what keeps the driver face seatable and the mouth
+    // tiling intact. This is the half of the old invariant that survives.
+    const share = (map, q) => {
+      const byIdx = new Map(map.rows.map((r) => [`${r.i},${r.j}`, r]));
+      let worst = 0;
+      for (let a = 0; a < 6; a++) for (let b = 0; b < 3; b++)
+        for (const [da, db] of [[1, 0], [0, 1]]) {
+          const A = byIdx.get(`${a},${b}`), B = byIdx.get(`${a + da},${b + db}`);
+          if (!A || !B) continue;
+          let best = Infinity;
+          for (const pa of A.sched[q].pts) {
+            let d = Infinity;
+            for (const pb of B.sched[q].pts)
+              d = Math.min(d, Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]));
+            best = Math.min(best, d);
+          }
+          worst = Math.max(worst, best);
+        }
+      return worst;
+    };
+    check(`${nm}: neighbours still share the throat ring exactly`, share(swept, 0), 0, 1e-9, "mm");
+    check(`${nm}: ...and the mouth ring exactly`, share(swept, ST), 0, 1e-9, "mm");
+
+    // ── THE IMPOSED TWIST ──────────────────────────────────────────────────
+    // End-ring exactness cannot show this: the rings are rebuilt from their own
+    // local coordinates and come out exact whatever the frame did. The residual
+    // after the roll is what says the roll actually landed on the mouth's +x.
+    checkTrue(`${nm}: the imposed roll lands the axis on the mouth's own +x`,
+      swept.sweptAimMax < 1e-9 && swept.sweptRollMax > 10,
+      `${swept.sweptRollMax.toFixed(1)} deg of roll imposed, residual ${swept.sweptAimMax.toExponential(1)} deg`);
+
+    // ── AND THE TRADE ITSELF, MEASURED ─────────────────────────────────────
+    checkTrue(`${nm}: the interior no longer shares — the deliberate trade`,
+      swept.clearance.overlap > 1e-3,
+      `${swept.clearance.overlap.toFixed(3)} mm over ${swept.clearance.overlapStations} interior station(s), against 0 for the flow`);
+    check(`${nm}: the flow it replaces still measures exactly zero overlap`,
+      flow.clearance.overlap, 0, 1e-7, "mm");
+
+    // THE k <= 1 ARGUMENT IS DEAD HERE, and this is why Phase A had to land
+    // first. k is an area ratio computed by the profile against the tiling
+    // configuration; it knows nothing about where a swept section actually
+    // sits. It reads <= 1 — "cannot overlap" — while ducts really do overlap.
+    checkTrue(`${nm}: k <= 1 no longer proves non-overlap, and must not be read as if it did`,
+      swept.profScaleMax <= 1 + 1e-9 && swept.clearance.overlap > 1e-3,
+      `kMax = ${swept.profScaleMax.toFixed(5)} says "safe" while the geometry measures ${swept.clearance.overlap.toFixed(3)} mm of penetration`);
+
+    // the profile is the one lever that exists on it today
+    const bare = M.mapThroatToMouth(Lay.throat, { ...common, ...mo, profileT: null, sectionMode: "swept" });
+    checkTrue(`${nm}: the profile pulls sections inward and cuts the overlap hard`,
+      bare.clearance.overlap > 4 * swept.clearance.overlap,
+      `${bare.clearance.overlap.toFixed(2)} mm with no law -> ${swept.clearance.overlap.toFixed(2)} mm at T = 0.3`);
+  }
+
+  // ── EXPORTS MUST STILL WORK, or none of this reaches a printer ───────────
+  const sw = M.mapThroatToMouth(Lay.throat, {
+    ...common, mouthMode: "arc", thetaH: 90, thetaV: 60, profileT: 0.3, sectionMode: "swept" });
+  const solids = M.ductSolids(Lay.throat, sw, { t, dividerEndFrac: DEF });
+  checkTrue("swept ducts are closed, consistently wound solids",
+    solids.length === Lay.throat.cells.length && solids.every((s) => s.manifold.ok),
+    `${solids.length} ducts, ${solids[0].manifold.edges} edges each, 0 unpaired`);
+  checkTrue("...with valid end caps",
+    solids.every((s) => M.fanIsValid(s.sections[0].pts).ok &&
+      M.fanIsValid(s.sections[s.sections.length - 1].pts).ok), "no folded caps");
+  let zw = 0;
+  for (const s of solids) for (const q of s.sections[0].pts) zw = Math.max(zw, Math.abs(q[2]));
+  check("...seating on a flat throat face", zw, 0, 1e-12, "mm");
+  const stl = M.buildSTL(solids);
+  const facets = new DataView(stl).getUint32(80, true);
+  const want = solids.reduce((a, s) => a + s.tris.length, 0);
+  checkTrue("...and exporting a well-formed binary STL",
+    facets === want && stl.byteLength === 84 + want * 50,
+    `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
+}
+
 // ── 10b. loft parameterisation ─────────────────────────────────────────────
 head("Loft parameterisation");
 {

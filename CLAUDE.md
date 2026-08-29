@@ -275,34 +275,76 @@ exists.
   inside the neighbour, from station 1 onward — invisible on screen, fatal to
   any solid export, and it made the area schedule up to ~30% optimistic because
   it summed cross-sections sharing the same space.
-- **PHASE D IS NOT DONE, and the test that guards it is still correct.** The
-  plan's phases are A signed clearance, B arc mouth, C path family, D swept
-  sections in specified planes with imposed twist, E fc as an input. A, B, C
-  and E are built; D is not. E was ordered last but does NOT depend on D — it
-  needs the coverage mouth and the path knobs, not a change to how sections are
-  constructed — so it was taken early and the risky architecture switch was
-  left alone.
-  When D is attempted it WILL regress the test *"neighbours share their whole
-  boundary at every station"* (currently 6.6e-10 mm). That test encodes an
-  invariant traded away ON PURPOSE. Replace it with a signed-clearance bound;
-  do not delete it silently, and update this note to say the trade was
-  intentional and what replaced it — otherwise a future session reads the
-  interpenetration as the old 2.8-5.8 mm bug returning and reverts D on sight.
-  What makes the trade defensible is that both halves of the old failure have
-  changed. It was fatal because it was INVISIBLE and UNFIXABLE: no metric saw
-  it and no parameter could move two ducts apart. Phase A makes it visible with
-  a signed depth, and the profile already moves sections inward (k < 1 is what
-  opens today's gaps) with centreline manipulation as a stronger second lever.
-  Overlap becomes a constraint to solve rather than an artifact to live with —
-  but only because A landed first. Do not start D without it.
-  Two obstacles are known and unaddressed. The section plane must be SPECIFIED,
-  not inherited from the tangent, or the throat mating face goes non-planar
-  again (the recorded 6.85 deg / +-0.5 mm bug); blend the section normal from
-  z-hat at s=0 through the tangent to the aperture normal at s=1. And twist
-  must be IMPOSED and distributed along the path, not merely measured as
-  `twistDeg` is today, or the section arrives rotated against the mouth quad
-  and corner-to-corner correspondence breaks — the exact failure the
-  side-by-side resampling was written to prevent.
+- **PHASE D IS BUILT, and the interpenetration it admits is DELIBERATE.** Read
+  this before "fixing" it. `sectionMode: "swept"` builds each cell's sections
+  independently in planes specified along its own centreline; `"flow"` is the
+  original shared-boundary construction and remains the DEFAULT. The invariant
+  *"neighbours share their whole boundary at every station"* still holds and is
+  still tested — in flow mode, where it measures 6.6e-10 mm. Swept mode gives
+  it up ON PURPOSE, and what replaced it is a pair of narrower tests: the two
+  END rings are still shared exactly (3e-15 mm at the throat, 2.6e-14 at the
+  mouth), and the interior is bounded by the SIGNED clearance rather than
+  asserted to be zero. This is NOT the 2.8-5.8 mm bug from two sessions ago
+  returning. That failure was fatal because it was invisible and unfixable;
+  both halves have changed. Phase A measures the depth, and the profile already
+  moves sections inward — 14.24 mm of overlap with no law falls to 1.03 mm at
+  T = 0.3, arc 90x60.
+  **`k <= 1` NO LONGER PROVES NON-OVERLAP in swept mode, and this is the trap.**
+  k is an area ratio the profile computes against the tiling configuration; it
+  knows nothing about where a swept section actually sits. Measured: kMax reads
+  exactly 1.00000 — "cannot overlap" — while the geometry measures 0.359 mm
+  (rect) and 1.034 mm (arc) of real penetration. The shrink argument holds only
+  for flowed sections. Read `clearance.overlap`, never k, in swept mode.
+  Two obstacles named in the plan are both addressed. The section plane is
+  SPECIFIED, not inherited from the tangent — blended z-hat -> tangent ->
+  aperture normal on a quadratic Bernstein basis — so station 0 is the throat
+  polygon in the throat plane to 4e-15 mm and the 6.85 deg / +-0.5 mm mating
+  face bug cannot recur. And the twist is IMPOSED and distributed, not merely
+  measured: the residual roll is computed at both ends and interpolated on a
+  smoothstep, 31.5 deg (rect) and 37.0 deg (arc) of roll applied, landing the
+  section axis on the mouth's own +x to 8e-15 deg. End-ring exactness cannot
+  show that the roll landed — the rings are rebuilt from their own local
+  coordinates and come out exact whatever the frame did — so the residual after
+  the roll is reported separately as `sweptAimMax` and that is what the test
+  reads.
+  What is NOT done is resolving the overlap. The profile is the only lever on
+  it today; centreline manipulation is the stronger one and is the next build.
+- **Path length: the centre cell is ALWAYS the shortest, and no geometry knob
+  changes that.** It was worth checking whether depth could flip the ordering
+  so rim cells became the ones needing correction — it cannot. On a cap centred
+  at the apex every mouth point is at radius r from it, so the distance from
+  the throat to a point at angle th, sqrt(apex^2 + r^2 - 2 apex r cos th), is
+  minimised at th = 0 for any r. Measured: centre minus corner stays negative
+  at every depth 40-700 mm and every apex 60-300 mm (-66, -55, -51, -55, -67 at
+  apex 120). So path-length correction is ALWAYS centre-cell lengthening, never
+  rim, which is a narrower problem than a general equaliser — and it needs room
+  exactly where there is least, since the interior cells are boxed in on four
+  sides. Measured at arc 90x60: cells 3,2 and 4,2 need 52.1 mm and have 0.350
+  mm of gap; the corner cells need 0.0 mm and have 0.614 mm, monotonically
+  inverse across all 18.
+  dL IS convex in depth with an interior minimum near 1.7-1.9x apex, so the
+  optimisation intuition is real, but it is weak: 16% at apex 120, 3% at apex
+  60 and 200. The dominant term is horn SIZE, and at 90 deg coverage the trade
+  is unforgiving — a 500 Hz horn needs a ~650 mm mouth and lands at dL = 53.5
+  mm against a lambda/8 budget of 2.14 mm at 20 kHz, i.e. 25x over. Narrowing
+  the vertical coverage barely helps (18.1 -> 16.2 mm going 60 to 25 deg). So
+  dL cannot be brought into budget by depth, apex or coverage at 90 deg, and
+  some centre-cell lengthening mechanism is required rather than optional.
+- **`sched[].origin` is the CENTRELINE point, not the section's centre, in
+  BOTH construction modes.** They drift 0.775 mm in rect and 4.466 mm in arc,
+  because the mean of the flowed boundary points is not the flow of the mean,
+  and because the mouth grid's parametric cell centre is not its polygon
+  centroid. It was predicted that swept sections would remove this by
+  construction; they do NOT — measured identical in both modes, since the
+  offset comes from the mouth grid rather than the loft. Consequences: the
+  volume-vs-axial identity holds to 0.038% when integrated against the section
+  CENTROID displacement but only 0.55% (rect) and 2.78% (arc) against `origin`,
+  and that residual does not converge with more stations because it is a
+  geometric offset, not quadrature. The SigmaA CSV inherits it — `axial_z_mm`
+  and `developed_s_mm` are centreline-derived while the areas are the
+  sections' own, so the schedule attributes each area to a station up to 4.5 mm
+  off. Exported SOLIDS are unaffected: `ductSections` only passes `origin`
+  through and insets the polygon itself.
 - **A flowed section is not planar, and its area is not its cross-section.** It
   is a level set of the flow, not a cut square to the path, so it runs oblique
   — up to 14.5% at 6x3. `sched[].area` is the section's own area; `axial` is its

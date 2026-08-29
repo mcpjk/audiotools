@@ -1469,6 +1469,10 @@ export function mapThroatToMouth(throat, opts) {
     // "rect" is the original: a uniform x/y lattice projected onto the cap.
     // "arc" defines the mouth by COVERAGE instead — see mouthGrid below.
     mouthMode = "rect", thetaH = 90, thetaV = 60,
+    // "flow" = every boundary point on its own trajectory (neighbours share
+    // their boundary exactly). "swept" = sections built per cell in specified
+    // planes, which trades that invariant for centreline freedom.
+    sectionMode = "flow",
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
   // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
@@ -1673,8 +1677,123 @@ export function mapThroatToMouth(throat, opts) {
       return [ax / 2, ay / 2, az / 2];
     };
 
+    // ── SECTION CONSTRUCTION: FLOWED, OR SWEPT IN SPECIFIED PLANES ─────────
+    // "flow" is the construction described above: every boundary point on its
+    // own trajectory, so neighbours share their whole boundary and can neither
+    // gap nor interpenetrate. It stays the default.
+    //
+    // "swept" builds each cell's sections independently, in planes SPECIFIED
+    // along its own centreline, and lets the expansion profile drive their
+    // scale directly. It gives up the shared-boundary invariant ON PURPOSE:
+    // that is what makes centreline manipulation possible, and centreline
+    // manipulation is the only mechanism that can lengthen an interior cell's
+    // path. The overlap it admits is measured by the SIGNED clearance metric,
+    // which was calibrated against the k <= 1 proof while the flow still held.
+    //
+    // Two things make this different from the construction that failed two
+    // sessions ago with 2.8-5.8 mm of undetected interpenetration:
+    //
+    //  1. THE SECTION PLANE IS SPECIFIED, NOT INHERITED FROM THE TANGENT.
+    //     Sweeping perpendicular to the tangent tilts station 0 down the exit
+    //     cone — the recorded 6.85 deg, +-0.5 mm bug — and eighteen ducts each
+    //     tilted their own way have no common face to seat on the driver. The
+    //     section normal is blended z-hat -> tangent -> aperture normal on a
+    //     quadratic Bernstein basis, so it is EXACTLY z-hat at s = 0 and
+    //     EXACTLY the aperture normal at s = 1.
+    //  2. THE TWIST IS IMPOSED AND DISTRIBUTED, NOT MERELY MEASURED. The
+    //     rotation-minimising frame does not arrive aligned with the mouth
+    //     quad; the residual roll is computed at BOTH ends and interpolated
+    //     along the path. Without it the section lands rotated against the
+    //     mouth and a throat corner flows to the middle of a mouth edge.
+    //
+    // Both end rings are reconstructed from their own frames as full 3-D local
+    // offsets — including the out-of-plane component, because the mouth
+    // outline lies on a curved cap and is not planar. That makes s = 0 the
+    // throat polygon exactly and s = 1 the mouth quad exactly, so the driver
+    // mating face and the mouth tiling both survive: neighbours still share
+    // those two rings point for point. Only the interior is free.
     const rings = [];
-    for (let q = 0; q <= stations; q++) rings.push(traj.map((tr) => tr(q / stations)));
+    // diagnostics for the imposed twist: the roll applied at each end, and the
+    // residual angle left between the rolled axis and the mouth's own +x. The
+    // residual is the number that says the roll actually LANDED — end-ring
+    // exactness cannot show it, because the rings are rebuilt from their own
+    // local coordinates and would come out exact whatever the frame did.
+    let sweptRoll = null;
+    if (sectionMode !== "swept") {
+      for (let q = 0; q <= stations; q++) rings.push(traj.map((tr) => tr(q / stations)));
+    } else {
+      const throatWorld = throatLocal.map((q) => v3(q[0] + cellRec.centroid[0], q[1] + cellRec.centroid[1], 0));
+      const mouthWorld = mouthUV.map((q) => mouthAt(q[0], q[1]));
+      const zHat = v3(0, 0, 1);
+      // the section normal at s: z-hat at the throat, the aperture normal at
+      // the mouth, the tangent in between
+      const normalAt = (u, T) => {
+        const b0 = (1 - u) * (1 - u), b1 = 2 * u * (1 - u), b2 = u * u;
+        return un3(v3(
+          b0 * zHat[0] + b1 * T[0] + b2 * nSurf[0],
+          b0 * zHat[1] + b1 * T[1] + b2 * nSurf[1],
+          b0 * zHat[2] + b1 * T[2] + b2 * nSurf[2]));
+      };
+      // in-plane axis from the transported frame, projected into the section
+      const axisAt = (n, r) => {
+        let a = s3(r, m3(n, dot3(r, n)));
+        if (!(nrm3(a) > 1e-9)) a = s3(v3(1, 0, 0), m3(n, n[0]));
+        return un3(a);
+      };
+      const rollTo = (n, from, to) =>
+        Math.atan2(dot3(cr3(from, to), n), dot3(from, to));
+      // the residual roll at each end, which is what gets distributed
+      const n0 = normalAt(0, tans[0]), n1 = normalAt(1, tans[M]);
+      const a0 = axisAt(n0, frames[0]), a1 = axisAt(n1, rEnd);
+      const want0 = un3(s3(throatI, m3(n0, dot3(throatI, n0))));
+      const want1 = un3(s3(mouthI, m3(n1, dot3(mouthI, n1))));
+      const phi0 = rollTo(n0, a0, want0), phi1 = rollTo(n1, a1, want1);
+      const rolled = (n, aRaw, phi) =>
+        un3(a3(m3(aRaw, Math.cos(phi)), m3(cr3(n, aRaw), Math.sin(phi))));
+      const resid = (n, aRaw, phi, want) =>
+        Math.abs(Math.atan2(dot3(cr3(rolled(n, aRaw, phi), want), n),
+          dot3(rolled(n, aRaw, phi), want))) * R2D;
+      sweptRoll = {
+        phi0Deg: phi0 * R2D, phi1Deg: phi1 * R2D,
+        residThroatDeg: resid(n0, a0, phi0, want0),
+        residMouthDeg: resid(n1, a1, phi1, want1),
+      };
+      const frameAt = (u, idx) => {
+        const T = tans[idx], n = normalAt(u, T);
+        const aRaw = axisAt(n, frames[idx]);
+        // smoothstep so the twist rate is zero at both ends rather than
+        // stepping on at the throat, where the mating face has to stay put
+        const g = u * u * (3 - 2 * u);
+        const phi = phi0 * (1 - g) + phi1 * g;
+        const cp = Math.cos(phi), sp = Math.sin(phi);
+        const uAx = un3(a3(m3(aRaw, cp), m3(cr3(n, aRaw), sp)));
+        return { n, u: uAx, v: cr3(n, uAx) };
+      };
+      // both end rings as 3-D offsets in their own frames. The out-of-plane
+      // component is kept, or the curved mouth outline could not be rebuilt.
+      const F0 = frameAt(0, 0), F1 = frameAt(1, M);
+      const toLocal = (P, C, F) => {
+        const d = s3(P, C);
+        return [dot3(d, F.u), dot3(d, F.v), dot3(d, F.n)];
+      };
+      const lo0 = throatWorld.map((P) => toLocal(P, pts[0], F0));
+      const lo1 = mouthWorld.map((P) => toLocal(P, pts[M], F1));
+      for (let q = 0; q <= stations; q++) {
+        const u = q / stations, idx = Math.round(u * M);
+        const F = frameAt(u, idx), C = pts[idx];
+        const h = u; // shape morphs linearly; the profile sets the area
+        rings.push(lo0.map((A, k) => {
+          const B = lo1[k];
+          const x = A[0] + (B[0] - A[0]) * h;
+          const y = A[1] + (B[1] - A[1]) * h;
+          const z = A[2] + (B[2] - A[2]) * h;
+          return v3(
+            C[0] + x * F.u[0] + y * F.v[0] + z * F.n[0],
+            C[1] + x * F.u[1] + y * F.v[1] + z * F.n[1],
+            C[2] + x * F.u[2] + y * F.v[2] + z * F.n[2]);
+        }));
+      }
+    }
 
     // ── EXPANSION PROFILE, AND THE GAP IT OPENS ─────────────────────────────
     // The flowed sections tile: neighbours share their boundary exactly, so
@@ -1774,7 +1893,7 @@ export function mapThroatToMouth(throat, opts) {
       mouthCentroid: mc, mouthCorners: corners, mouthNormal: nSurf,
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
-      sched, kappaMax: Math.max(...kappa), bendCentroid,
+      sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
       // configuration — profScaleMin is what opened the gap
@@ -2035,6 +2154,11 @@ export function mapThroatToMouth(throat, opts) {
     mouthMode, thetaH: arc ? thetaH : null, thetaV: arc ? thetaV : null,
     mouthWEff, mouthHEff, flattenEff: arc ? 1 : flatten,
     bendCentroidMean: rows.reduce((a, r) => a + r.bendCentroid, 0) / rows.length,
+    sectionMode,
+    sweptRollMax: rows[0].sweptRoll
+      ? Math.max(...rows.map((r) => Math.abs(r.sweptRoll.phi1Deg))) : null,
+    sweptAimMax: rows[0].sweptRoll
+      ? Math.max(...rows.map((r) => Math.max(r.sweptRoll.residThroatDeg, r.sweptRoll.residMouthDeg))) : null,
     omegaTotal: omegas.reduce((a, x) => a + x, 0),
     omegaSpread: spreadOf(omegas),
     mouthAreaSpread: spreadOf(rows.map((r) => r.mouthArea)),

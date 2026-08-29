@@ -208,6 +208,10 @@ export default function HGridThroat() {
   const [thetaH, setThetaH] = useState(90);
   const [thetaV, setThetaV] = useState(60);
   const [fcSolve, setFcSolve] = useState(null);
+  // "flow" = every boundary point on its own trajectory, so neighbours share
+  // their boundary and cannot overlap. "swept" = per-cell sections in
+  // specified planes, which trades that for centreline freedom.
+  const [sectionMode, setSectionMode] = useState("flow");
   const [fTarget, setFTarget] = useState(20000);
   const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
@@ -319,10 +323,10 @@ export default function HGridThroat() {
     mouthW, mouthH, apex, depth, flatten, exitHalfAngle: exitAngle,
     divergeLen, arriveLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true, profileT,
     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
-    mouthMode, thetaH, thetaV,
+    mouthMode, thetaH, thetaV, sectionMode,
     wallWidthAt: mouthW / shown.nc,
   }), [layout, throat, shown, mouthW, mouthH, apex, depth, flatten, exitAngle, divergeLen, arriveLen,
-    tight, tightSplit, tightThroat, tightMouth, mouthMode, thetaH, thetaV, fTarget, dividerEndFrac, stations, profileT]);
+    tight, tightSplit, tightThroat, tightMouth, mouthMode, thetaH, thetaV, sectionMode, fTarget, dividerEndFrac, stations, profileT]);
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -421,6 +425,8 @@ export default function HGridThroat() {
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
     if (map && map.turnMax > map.turnLimitDeg)
       w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(mouthW / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
+    if (map && sectionMode === "swept" && map.clearance && map.clearance.overlap > 1e-3)
+      w.push(`Swept sections interpenetrate ${fmt(map.clearance.overlap, 3)} mm at station ${map.clearance.overlapAt}, over ${map.clearance.overlapStations} station(s). This is the trade the mode makes on purpose — the ends stay shared, the interior does not — but it is not yet resolved: lower T pulls the sections further inward, and centreline manipulation is the stronger lever that is not built. Note the section scale reads k = ${fmt(map.profScaleMax, 4)} ≤ 1, which proves non-overlap ONLY for flowed sections; here it says nothing.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
       w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${map.clearance && map.clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(map.clearance.overlap, 4)} mm at station ${map.clearance.overlapAt}, over ${map.clearance.overlapStations} station(s).` : ""}`);
     if (map && map.clearance && profileT != null && map.clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
@@ -1117,6 +1123,35 @@ export default function HGridThroat() {
             cubic's only other freedom. Raising the <em>mouth</em> tangent, or lengthening the arrival run, holds the path straight off the
             aperture and forces the turning back toward the throat — which is where you want it, because the section is small there and large
             at the mouth. Past about 1.2 the tangent overshoots into a loop; the turning-angle warning catches it.
+          </div>
+
+          {/* SECTION CONSTRUCTION */}
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ ...secTitle, marginBottom: 0 }}>Section construction</span>
+              <button onClick={() => setSectionMode(sectionMode === "flow" ? "swept" : "flow")}
+                style={btn(sectionMode === "swept", C.series1)}>
+                {sectionMode === "flow" ? "flowed — boundaries shared" : "swept — per-cell planes"}
+              </button>
+              {sectionMode === "swept" && map.sweptRollMax != null && (
+                <span style={{ fontFamily: C.mono, fontSize: 10 }}>
+                  <span style={{ color: C.inkMuted }}>imposed roll </span>
+                  <span style={{ color: C.ink }}>{fmt(map.sweptRollMax, 1)}°</span>
+                  <span style={{ color: C.inkMuted }}> · lands to {map.sweptAimMax.toExponential(0)}°</span>
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
+              {sectionMode === "flow"
+                ? <>Every boundary point runs its own trajectory, so two neighbours share their whole boundary at every station and
+                  can neither gap nor interpenetrate — non-overlap is guaranteed by construction, not measured. The cost is that a
+                  cell's centreline cannot be moved independently, which is the only mechanism that could lengthen an interior cell's path.</>
+                : <>Each cell's sections are built in planes <strong style={{ color: C.inkDim }}>specified</strong> along its own centreline —
+                  ẑ at the throat, blending through the tangent to the aperture normal — with the residual roll <strong style={{ color: C.inkDim }}>imposed
+                  and distributed</strong> so the section lands on the mouth quad rather than arriving rotated. Both end rings are still shared exactly,
+                  so the driver face stays flat and the mouth still tiles; only the interior is free. That freedom is the point, and the
+                  interpenetration below is its price — note that <em>k</em> ≤ 1 no longer proves anything here, so read the measured clearance.</>}
+            </div>
           </div>
 
           {/* EXPANSION PROFILE */}
