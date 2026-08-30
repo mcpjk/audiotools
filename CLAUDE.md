@@ -263,7 +263,11 @@ exists.
   flare cutoff 500 Hz, loading limit (circumference = lambda) 312 Hz — so
   loading is comfortable — but pattern control (lambda/sin(Th/2)) only down
   to 1385 Hz, because 90 deg at 500 Hz wants 7653 cm2 and there is 997.
-  All three are now printed together in the Hypex card. A horn can honestly
+  All three are now printed SEPARATELY, and deliberately not together: flare
+  and loading in the Hypex card, PATTERN PER AXIS beside the arcs that set it
+  (each axis holds its own angle over its own chord, so they are two numbers
+  — measured 1142 Hz horizontal against 4890 Hz vertical at 90x40 with a
+  432 x 209 mm chord). Merging them into one "cutoff" is the trap. A horn can honestly
   have a 500 Hz flare cutoff, load below it, and lose 90 deg control above
   1 kHz; that is the behaviour of a small-mouthed horn, not an inconsistency.
   Note the direction of the directivity term: WIDER coverage needs a SMALLER

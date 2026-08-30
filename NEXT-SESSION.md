@@ -127,9 +127,24 @@ thing being controlled.
 - **`solveBow`**: enumerate direction x lobes x region, measure each, take
   the lowest wall spread inside an overlap floor. Winner on the curved
   mouth: short axis / 3 lobes / [0.3, 0.95].
-- **The three frequencies are printed together** — flare cutoff, loading
-  limit, pattern limit — because f_c alone reads as contradicting the
-  "mouth area needed" figure and does not.
+- **The three limits are printed SEPARATELY** — flare cutoff and loading in
+  the Hypex card, pattern PER AXIS beside the arcs that set it. f_c is the
+  flare constant and reads as contradicting the "mouth area needed" figure
+  when it is not.
+- **Defaults at the owner's call**: stations 16 -> 64 (bend structure was
+  visibly faceted at 16; costs ~101 ms in the render pass and ~496 ms for
+  the deferred clearance at 6x3), lobes 1 or 2 with 1 the default, bow
+  region default [0, 0.5] with only "throat half" and "divider region"
+  offered.
+
+## Known cost worth watching
+
+At stations 64 the render-pass mapping is ~101 ms at 6x3 (it was ~19 ms at
+16 with no bows). That is ~10 fps on a slider drag. If it starts to grate,
+the fix is to decouple PREVIEW resolution from EXPORT resolution — build the
+live map at 16-24 stations and re-run at the export setting only when the
+STL/DXF/STEP button is pressed. Not done yet because the deferred clearance
+already keeps the worst cost off the interactive path.
 - **3-D duct preview**: the exported solids (inset and all) on a hand-rolled
   canvas — orthographic, painter's sort, two-sided lambert, palette-derived
   shading. Deferred off the render pass like the clearance. No three.js;
