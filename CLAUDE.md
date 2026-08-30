@@ -373,9 +373,22 @@ exists.
     ratio 1.32 1.43 1.54 1.65 1.76 1.87 1.98 2.09 2.20 2.64
     fc     309 1218 1321 1390 1434 1462 1429 1378 1329 1202 Hz
   so the peak is ~1462 Hz near arcH 85, where the ratio is ~1.87. Below about
-  arcH 45 the ratio passes 1 and there is no expansion left at all. The peak's
-  LOCATION moves with coverage and with the aspect rule, so treat ~1.5 kHz as
-  the order of the ceiling at 90x40, not a constant.
+  arcH 45 the ratio passes 1 and there is no expansion left at all.
+  A peak MUST exist, and the exponential case says why in closed form. Scale
+  the whole horn by a factor: the mouth radius scales, so the radius ratio rho
+  scales with it, and the dL rule scales the length L with it too. For T = 1,
+  rho = exp(mL), so m = ln(rho)/L — a logarithm over a linear term. It rises,
+  turns over and falls, with the turning point at rho = e for exactly
+  proportional scaling. Measured it lands at rho ~ 2.2 rather than 2.718,
+  because L is not quite proportional to the mouth radius. Lower T needs more
+  m for the same ratio, so the peak moves to a smaller mouth and a higher
+  cutoff: measured 1087 Hz at rho 2.20 (T=1), 1273 Hz at rho 2.20 (T=0.7),
+  2076 Hz at rho 1.76 (T=0).
+  **Do not quote the ceiling to three figures.** The dL-optimal depth search is
+  shallow and slack at small mouths, and two golden-section brackets that
+  agree everywhere else give 1462 Hz at arcH 85 and 1273 Hz at arcH 100 for the
+  same T. The peak's location also moves with coverage and with the aspect
+  rule. Treat ~1.3-1.5 kHz as the ORDER of the ceiling at 90x40 and T = 0.7.
   One tension dissolves at the optimum and is worth knowing: with a shared fc
   the law wants cells with LONGER paths to have LARGER mouth areas, which
   fights the equal-area subdivision. When path lengths are equalised the two
