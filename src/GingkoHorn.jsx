@@ -247,13 +247,11 @@ export default function GingkoHorn() {
 
   const c = useMemo(() => 331.3 * Math.sqrt(1 + temperature / 273.15), [temperature]);
   const R = exitDia / 2;
-  // The virtual apex of the DRIVER's own exit cone, and therefore the point the
-  // wave already appears to come from. Aiming the aperture cap at any other
-  // centre asks the horn to re-origin a wavefront it was handed, so this is
-  // derived rather than dialled: R / tan(half-angle). At 35.5 mm and 8 deg it
-  // is 126.3 mm, which is within 5% of the 120 mm that was being picked by
-  // hand before it was derived.
-  const apex = useMemo(() => R / Math.tan(Math.max(0.5, exitAngle) * D2R), [R, exitAngle]);
+  // No derived apex any more: the launch direction is computed inside the
+  // model from R and the exit half-angle, and the omega readouts that were
+  // the apex's last consumer are gone — per-cell solid angle at a reference
+  // point stops predicting the pattern once the mouth radiates as one
+  // coupled surface, so it was removed rather than surfaced.
   const rings = useMemo(
     () => ringSpec.split(/[^0-9]+/).filter(Boolean).map(Number).filter((n) => n > 0),
     [ringSpec]
@@ -345,6 +343,19 @@ export default function GingkoHorn() {
   // moment that geometry moves, or a stale "depth X → Y Hz" sits beside inputs
   // it no longer belongs to
   useEffect(() => { setFcSolve(null); setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT, fcWanted]);
+  // EVERY depth solve runs from the same reference state for the two straight
+  // runs — divergence 0, arrival 0 — and resets the sliders to it. A solve is
+  // then a repeatable reference point rather than a function of wherever the
+  // last experiment left the runs; the sliders stay live afterwards, and
+  // lengthening the arrival run FROM the solved state is the experiment
+  // (it holds the path straight off the aperture and pushes the turning back
+  // toward the throat, where the section is small).
+  const RUN_DEFAULTS = { divergeLen: 0, arriveLen: 0 };
+  const solveRefOpts = () => {
+    setDivergeLen(RUN_DEFAULTS.divergeLen);
+    setArriveLen(RUN_DEFAULTS.arriveLen);
+    return { ...mapOpts, ...RUN_DEFAULTS };
+  };
   // THE DEPTH THAT EQUALISES PATH LENGTH. When the mouth's curvature centre
   // lands on the throat the mouth IS a sphere about the throat, so every cell
   // is equidistant and dL collapses. That happens at depth ~ the mouth radius;
@@ -1155,7 +1166,7 @@ export default function GingkoHorn() {
                       golden section on the REAL dL through the forward model
                       and lands on the measured optimum, not the estimate */}
                   <button onClick={() => {
-                    const r = G.solveDepthForMinDL(throat, mapOpts);
+                    const r = G.solveDepthForMinDL(throat, solveRefOpts());
                     setDlSolve(r);
                     if (r.ok) setDepth(Math.round(r.depth));
                   }} style={{ ...btn(false, C.series4), marginLeft: 6 }}>solve min ΔL</button>
@@ -1392,6 +1403,8 @@ export default function GingkoHorn() {
             cubic's only other freedom. Raising the <em>mouth</em> tangent, or lengthening the arrival run, holds the path straight off the
             aperture and forces the turning back toward the throat — which is where you want it, because the section is small there and large
             at the mouth. Past about 1.2 the tangent overshoots into a loop; the turning-angle warning catches it.
+            {" "}Both depth solves <strong style={{ color: C.inkDim }}>reset the two runs to 0</strong> as their reference state, so a solve is
+            repeatable; adjust the runs afterwards to experiment from that point.
           </div>
 
           {/* SECTION CONSTRUCTION */}
@@ -1511,8 +1524,9 @@ export default function GingkoHorn() {
                 <button style={btn(false, C.series3)} onClick={() => {
                   // the SAME options the live mapping uses — this once carried
                   // its own copy with arcH/arcV missing, and solved the default
-                  // mouth whatever the sliders said
-                  const r = G.solveDepthForFc(throat, mapOpts, { fcTarget: fcWanted, T: profileT });
+                  // mouth whatever the sliders said. The straight runs reset to
+                  // the reference state, like every depth solve.
+                  const r = G.solveDepthForFc(throat, solveRefOpts(), { fcTarget: fcWanted, T: profileT });
                   setFcSolve(r);
                   if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
                 }}>solve depth for it</button>

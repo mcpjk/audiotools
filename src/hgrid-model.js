@@ -2137,26 +2137,23 @@ export function mapThroatToMouth(throat, opts) {
   // render pass the same way it defers the equal-area solve.
   const clearance = keepGeometry && computeClearance ? ductClearance(rows) : null;
 
-  // ── COVERAGE, AND THE fc SPREAD DECOMPOSED ────────────────────────────────
-  // Solid angle each cell subtends at the apex, by spherical excess
-  // (Van Oosterom-Strackee) over the two triangles of its mouth quad. Exact
-  // for a spherical quad and a good measure for any cap, and it is what says
-  // whether the cells share the coverage evenly.
-  const apexPt = v3(0, 0, -apex);
-  const triOmega = (A, B, C) => {
-    const num = Math.abs(dot3(A, cr3(B, C)));
-    const den = 1 + dot3(A, B) + dot3(B, C) + dot3(C, A);
-    return 2 * Math.atan2(num, den);
-  };
-  rows.forEach((r) => {
-    const u = r.mouthCorners.map((P) => un3(s3(P, apexPt)));
-    r.mouthOmega = triOmega(u[0], u[1], u[2]) + triOmega(u[0], u[2], u[3]);
-  });
+  // ── THE fc SPREAD DECOMPOSED ──────────────────────────────────────────────
+  // There is deliberately NO per-cell solid-angle readout here any more. It
+  // measured the angle each mouth quad subtends at a chosen reference point,
+  // and in an apex-free architecture no point is privileged — worse, past the
+  // aperture the mouth radiates as ONE coupled surface (mutual coupling, edge
+  // diffraction, mouth size against wavelength), so per-cell solid-angle
+  // bookkeeping at a construction point stops predicting the pattern exactly
+  // where the pattern starts to exist. This tool computes no radiated field;
+  // what the design owes the far field is the aperture shape, area and the
+  // wavefront the paths deliver to it, and those are all reported. Removed by
+  // owner decision; if a coverage-share diagnostic is ever wanted, measure it
+  // in DIRECTION space (area swept on the unit sphere by the cell's surface
+  // normals) — that needs no reference point.
   const spreadOf = (a) => {
     const mean = a.reduce((x, y) => x + y, 0) / a.length;
     return mean > 0 ? ((Math.max(...a) - Math.min(...a)) / mean) * 100 : 0;
   };
-  const omegas = rows.map((r) => r.mouthOmega);
 
   // THE fc SPREAD IS NOT PATH LENGTH ALONE. A uniform x/y mouth lattice
   // projected onto a curved cap stretches the outer cells — surface area goes
@@ -2220,8 +2217,6 @@ export function mapThroatToMouth(throat, opts) {
       ? Math.max(...rows.map((r) => Math.abs(r.sweptRoll.phi1Deg))) : null,
     sweptAimMax: rows[0].sweptRoll
       ? Math.max(...rows.map((r) => Math.max(r.sweptRoll.residThroatDeg, r.sweptRoll.residMouthDeg))) : null,
-    omegaTotal: omegas.reduce((a, x) => a + x, 0),
-    omegaSpread: spreadOf(omegas),
     mouthAreaSpread: spreadOf(rows.map((r) => r.mouthArea)),
     ratioSpread: spreadOf(rows.map((r) => r.profRatio || 1)),
     fcDecomp,

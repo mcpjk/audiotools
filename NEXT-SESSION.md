@@ -46,19 +46,21 @@ Decisions the owner has made and that should not be relitigated:
 - `arcV` and `arcH` stay under the user's control even when that costs dL.
 - **Path lengthening must be a flexible per-cell mechanism**, not a
   centre-row special case (owner, review session). See Task 1.
-
-## Decisions OPEN — put to the owner, awaiting answers
-
-1. **`solveDepthForFc` keep/drop.** The arc bug in its UI call is fixed
-   regardless. The case for keeping it: it is one leg of the pick-two-of-three
-   and the only way to state fc directly.
-2. **The omega readouts.** `mouthOmega` / `omegaTotal` / `omegaSpread` are
-   computed on every mapping about a 120 mm default apex (the UI never passes
-   the derived one) and displayed nowhere. Options: delete; or fix the
-   reference and surface `omegaSpread` as the flat-mouth coverage-share
-   diagnostic; or replace with a solid angle measured in DIRECTION space
-   (area swept on the unit sphere by the cell's surface normals), which needs
-   no reference point at all and matches the apex-free architecture.
+- **BOTH depth solvers stay** — fc and min-dL are the two legs of the
+  pick-two-of-three and each solve is a useful reference point.
+- **The omega readouts are DELETED, completely** (owner). Per-cell solid
+  angle at a reference point describes the construction up to the aperture;
+  past it the mouth radiates as one coupled surface (mutual coupling, edge
+  diffraction, mouth size against wavelength), so the number stops
+  predicting the horn + free-air system exactly where the pattern starts to
+  exist. If a coverage-share diagnostic is ever wanted, measure it in
+  DIRECTION space (area swept on the unit sphere by the cell's surface
+  normals) — no reference point needed. Do not resurrect apex-referenced
+  solid angle.
+- **Every depth solve resets `divergeLen`/`arriveLen` to the 0/0 reference
+  state** and the sliders stay adjustable afterwards — a solve is a
+  repeatable reference point, the runs are the experiment on top of it. The
+  owner's working direction is arrival run long, divergence run short.
 
 ## Task 1 — flexible per-cell path lengthening (the main build)
 
@@ -122,7 +124,6 @@ curvature is the thing being controlled.
 - The long comment block at the top of `src/GingkoHorn.jsx` and the model
   notes in `src/hgrid-model.js` are part of the deliverable. If the physics
   changes, they change in the same edit.
-- Resolve the two OPEN decisions above, then delete or wire accordingly.
 
 ## How to verify anything here
 
