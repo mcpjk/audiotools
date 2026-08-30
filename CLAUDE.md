@@ -309,8 +309,58 @@ exists.
   reads.
   What is NOT done is resolving the overlap. The profile is the only lever on
   it today; centreline manipulation is the stronger one and is the next build.
-- **Path length: the centre cell is ALWAYS the shortest, and no geometry knob
-  changes that.** It was worth checking whether depth could flip the ordering
+- **AXIAL DEPTH IS THE DOMINANT dL LEVER, and the optimum is closed form.**
+  This supersedes the note below, which was measured on the old apex-sphere
+  mouth. On the BIRADIAL mouth the path-length ordering DOES flip with depth —
+  centre shortest when shallow, rim shortest when deep — so there is a depth in
+  between where every cell is equidistant. Measured at 90x40 deg, 600 mm
+  horizontal arc: dL falls 118 -> 81 -> 31 -> **2.04 mm at depth 425**, i.e.
+  from 54x the lambda/8 budget to 0.95x, with NO path manipulation at all.
+  The mechanism is simple: when the mouth's curvature centre lands on the
+  throat, the mouth IS a sphere about the throat and every point on it is the
+  same distance away. So the seed is **depth ~ 1.09 x mean(rH, rV)**, the 1.09
+  because paths curve and so run slightly longer than the chord (measured
+  factor 1.00-1.14 across geometries). A short 1-D search refines it.
+  It generalises: dL at the optimum measured 1.3-3.2 mm across 90x40, 90x25,
+  120x40, 60x40 and arcs from 480 to 700 mm, against 38-121 mm at depth 200.
+  **It is completely independent of T** — best depth 425 and dL 2.04 at
+  T = 0, 0.35, 0.7 and 1.0 alike — so it is purely geometric and can be solved
+  once, before any loading decision.
+  **The aspect ratio is NOT free under it.** Both radii have to land together,
+  so dL is lowest near arcH/arcV ~ Th_h/Th_v and rises steeply away: at 90x40,
+  2.4 mm at matched radii, 9.2 mm at aspect 1.4; worst cases 16-18 mm. The
+  minimum is broad, so near enough is enough, but it is a real constraint on
+  any scheme that wants aspect ratio as a free input.
+  Room to snake SURVIVES the optimum (widest half-gap 9.2-12.1 mm at depth
+  425), and dL there is small enough that a single half-wave would cover it.
+  Swept-mode interpenetration is NOT fixed by this and stays independent:
+  0 mm at T=0, 0.98 at T=0.35, 1.97 at T=0.7.
+- **Enforcing the law by making mouth area an OUTPUT over-determines the
+  geometry — pick two of three.** The proposal was: coverage angles stay
+  inputs, mouth AREA comes from the Hypex law, only aspect ratio is user-set.
+  It cannot also have depth free for dL, because the dL optimum ties depth to
+  the mouth radius while the law ties mouth area to path length (hence depth).
+  Together they pin everything and fc falls out. So the choosable set is any
+  TWO of {fc, mouth size, dL-optimal depth}.
+  The clean formulation that results: inputs are Th_h, Th_v, aspect ratio and
+  ONE of {mouth size, fc}; depth is derived from the dL optimum; the other of
+  {size, fc} is derived from the law. Measured design curve at 90x40, aspect
+  2.14, T 0.7, depth at the optimum — mouth size alone sets the cutoff:
+    arcH  200 300 400 500 600 700 900 1100 mm
+    fc    665 546 464 405 361 326 275  239 Hz
+    dL    6.5 5.5 4.3 3.1 2.1 2.3 3.7  6.1 mm
+  fc has a CEILING under this rule: it peaks near 1168 Hz (arcH 120, dL 1.67)
+  and falls again for smaller mouths as the expansion ratio collapses. A horn
+  above ~1.2 kHz at 90x40 cannot sit at the dL-optimal depth.
+  One tension dissolves at the optimum and is worth knowing: with a shared fc
+  the law wants cells with LONGER paths to have LARGER mouth areas, which
+  fights the equal-area subdivision. When path lengths are equalised the two
+  agree exactly, so equalising dL is also what makes equal-area cells and
+  equal-fc cells the same design.
+- **Path length on the APEX-SPHERE mouth: the centre cell is always shortest.**
+  SUPERSEDED for the biradial mouth by the note above — on that surface the
+  ordering does flip with depth. Kept because it is still true of the legacy
+  apex-based modes. It was worth checking whether depth could flip the ordering
   so rim cells became the ones needing correction — it cannot. On a cap centred
   at the apex every mouth point is at radius r from it, so the distance from
   the throat to a point at angle th, sqrt(apex^2 + r^2 - 2 apex r cos th), is

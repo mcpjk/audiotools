@@ -340,6 +340,18 @@ export default function MulticellHorn() {
     thetaH, thetaV, arcH, arcV, depth, nc: shown.nc || 6, nr: shown.nr || 3,
   }), [thetaH, thetaV, arcH, arcV, depth, shown]);
   const mouthW = mouthGeo.width, mouthH = mouthGeo.height;
+  // THE DEPTH THAT EQUALISES PATH LENGTH. When the mouth's curvature centre
+  // lands on the throat the mouth IS a sphere about the throat, so every cell
+  // is equidistant and dL collapses. That happens at depth ~ the mouth radius;
+  // measured optima run about 9% deeper because the paths curve rather than
+  // running straight. Both radii have to be close for it to work, which pins
+  // the aspect ratio near Th_h/Th_v — see the note under the drawing.
+  const depthEqualising = useMemo(() => {
+    const rH = mouthGeo.rH, rV = mouthGeo.rV;
+    const fin = [rH, rV].filter((x) => isFinite(x));
+    if (!fin.length) return null;
+    return 1.09 * (fin.reduce((a, b) => a + b, 0) / fin.length);
+  }, [mouthGeo]);
   const flatten = 1; // biradial carries curvature in its two radii, not here
 
   const map = useMemo(() => G.mapThroatToMouth(throat, {
@@ -698,6 +710,87 @@ export default function MulticellHorn() {
   };
 
   // ── path-length chart ──────────────────────────────────────────────────────
+  // ── HORIZONTAL CROSS-SECTION ───────────────────────────────────────────────
+  // Looking down on the horn: the throat plane at left, the mouth arc at right,
+  // and the centreline of every cell in the middle row drawn between them. This
+  // is the view that shows WHY the path lengths differ — the mouth curves away
+  // from the throat, so the outer cells reach further — and it is the one to
+  // watch while depth is varied, because the whole point is to find the depth
+  // at which the mouth's curvature centre lands on the throat and every cell
+  // becomes equidistant.
+  const crossSVG = () => {
+    if (!map || !map.rows.length || !map.rows[0].sched[0].origin)
+      return <div style={{ fontSize: 11, color: C.inkMuted, padding: 20 }}>No mapping to draw.</div>;
+    const midJ = Math.floor(shown.nr / 2);
+    const band = map.rows.filter((r) => r.j === midJ);
+    if (!band.length) return null;
+
+    // world (x, z) -> screen; z runs left to right, x runs up the page
+    const zMax = depth * 1.14, xMax = Math.max(mouthW / 2, 40) * 1.16;
+    const vb = `${-zMax * 0.09} ${-xMax} ${zMax * 1.09} ${2 * xMax}`;
+    const sw = zMax * 0.0022;
+    const els = [];
+
+    // axis of symmetry
+    els.push(<line key="ax" x1={-zMax * 0.06} y1={0} x2={zMax} y2={0}
+      stroke={C.inkMuted} strokeWidth={sw * 0.8} strokeDasharray={`${sw * 5} ${sw * 7}`} opacity={0.5} />);
+
+    // throat plane — the driver mating face, flat by construction
+    els.push(<line key="th" x1={0} y1={-R} x2={0} y2={R}
+      stroke={C.accent} strokeWidth={sw * 3.2} strokeLinecap="round" />);
+    els.push(<text key="thl" x={-zMax * 0.012} y={R + xMax * 0.075} fill={C.inkDim}
+      fontSize={xMax * 0.055} fontFamily={C.mono} textAnchor="middle">throat</text>);
+
+    // mouth arc, traced along the horizontal edge of the aperture
+    const arcPts = [];
+    for (let u = 0; u <= 48; u++) {
+      const P = mouthGeo.point((u / 48) * shown.nc, shown.nr / 2);
+      arcPts.push([P[2], P[0]]);
+    }
+    els.push(<path key="mo" d={"M" + arcPts.map(([z, x]) => `${z.toFixed(2)},${(-x).toFixed(2)}`).join(" L")}
+      fill="none" stroke={C.series2} strokeWidth={sw * 3.2} strokeLinecap="round" />);
+    els.push(<text key="mol" x={arcPts[0][0]} y={-arcPts[0][1] - xMax * 0.045} fill={C.series2}
+      fontSize={xMax * 0.055} fontFamily={C.mono} textAnchor="middle">mouth</text>);
+
+    // each centreline in the middle row, coloured by how far it is from the mean
+    const Ls = band.map((r) => r.Lpath);
+    const Lmean = Ls.reduce((a, b) => a + b, 0) / Ls.length;
+    const spread = Math.max(1e-6, map.Lmax - map.Lmin);
+    band.forEach((r) => {
+      const pts = r.sched.map((st) => [st.origin[2], st.origin[0]]);
+      const dev = (r.Lpath - Lmean) / spread;          // -0.5 short .. +0.5 long
+      const col = dev < -0.08 ? C.series5 : dev > 0.08 ? C.series1 : C.series4;
+      els.push(<path key={`c${r.id}`}
+        d={"M" + pts.map(([z, x]) => `${z.toFixed(2)},${(-x).toFixed(2)}`).join(" L")}
+        fill="none" stroke={col} strokeWidth={sw * 2.2} strokeLinecap="round"
+        opacity={hover === r.id ? 1 : 0.85}
+        onMouseEnter={hoverEnter(r.id)} onMouseLeave={() => setHover(null)}
+        style={{ cursor: "crosshair" }} />);
+      // rough duct extent: the section's own horizontal spread at each station
+      const hi = [], lo = [];
+      r.sched.forEach((st) => {
+        if (!st.pts) return;
+        let a = Infinity, b = -Infinity;
+        for (const q of st.pts) { if (q[0] < a) a = q[0]; if (q[0] > b) b = q[0]; }
+        hi.push([st.origin[2], b]); lo.push([st.origin[2], a]);
+      });
+      if (hi.length) els.push(<path key={`w${r.id}`}
+        d={"M" + hi.map(([z, x]) => `${z.toFixed(2)},${(-x).toFixed(2)}`).join(" L")
+          + " L" + lo.reverse().map(([z, x]) => `${z.toFixed(2)},${(-x).toFixed(2)}`).join(" L") + " Z"}
+        fill={col} fillOpacity={0.10} stroke="none" style={{ pointerEvents: "none" }} />);
+    });
+
+    // depth dimension
+    const yDim = xMax * 0.88;
+    els.push(<line key="dl" x1={0} y1={yDim} x2={depth} y2={yDim} stroke={C.inkMuted} strokeWidth={sw} />);
+    els.push(<line key="dl0" x1={0} y1={yDim - xMax * 0.03} x2={0} y2={yDim + xMax * 0.03} stroke={C.inkMuted} strokeWidth={sw} />);
+    els.push(<line key="dl1" x1={depth} y1={yDim - xMax * 0.03} x2={depth} y2={yDim + xMax * 0.03} stroke={C.inkMuted} strokeWidth={sw} />);
+    els.push(<text key="dlt" x={depth / 2} y={yDim - xMax * 0.028} fill={C.inkDim}
+      fontSize={xMax * 0.055} fontFamily={C.mono} textAnchor="middle">depth {fmt(depth, 0)}</text>);
+
+    return <svg viewBox={vb} width="100%" style={{ display: "block", maxHeight: 340 }}>{els}</svg>;
+  };
+
   const pathSVG = () => {
     if (!map) return null;
     const W = 780, H = 40 + map.rows.length * 15, pl = 46, pr = 130, pt = 26, pb = 22;
@@ -1006,6 +1099,49 @@ export default function MulticellHorn() {
           </>
         )}
       </div>
+
+      {/* HORIZONTAL CROSS-SECTION — the view that shows path length differing */}
+      {map && (
+        <div style={card}>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
+            <span style={{ ...secTitle, marginBottom: 0 }}>Horizontal section</span>
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+              middle row · centrelines and rough duct extent
+            </span>
+            <span style={{ marginLeft: "auto", display: "flex", gap: 14, fontFamily: C.mono, fontSize: 11 }}>
+              <span><span style={{ color: C.inkMuted }}>ΔL </span>
+                <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : map.dLfrac <= 0.25 ? C.series1 : C.series5 }}>
+                  {fmt(map.dL, 1)} mm</span>
+                <span style={{ color: C.inkMuted }}> · {fmt(map.dL / (map.lambda / 8), 1)}× the λ/8 budget</span></span>
+              {depthEqualising && (
+                <span><span style={{ color: C.inkMuted }}>equalising depth ≈ </span>
+                  <span style={{ color: C.series4 }}>{fmt(depthEqualising, 0)} mm</span>
+                  {Math.abs(depth - depthEqualising) > 4 && (
+                    <button onClick={() => setDepth(Math.round(depthEqualising))}
+                      style={{ ...btn(false, C.series4), marginLeft: 6 }}>go there</button>
+                  )}</span>
+              )}
+            </span>
+          </div>
+          <div style={{ opacity: stale ? 0.35 : 1 }}>{crossSVG()}</div>
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 2, flexWrap: "wrap", fontSize: 10 }}>
+            <span style={{ color: C.series5 }}>━ shorter than mean</span>
+            <span style={{ color: C.series4 }}>━ near mean</span>
+            <span style={{ color: C.series1 }}>━ longer than mean</span>
+          </div>
+          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
+            Watch this while moving <strong style={{ color: C.inkDim }}>axial depth</strong>. Shallow, and the mouth curves away from the
+            throat so the outer cells reach further — they are the long ones. Deep, and the mouth flattens out ahead of the throat so the
+            centre cell becomes the long one. Between the two there is a depth where the mouth's curvature centre sits ON the throat, the
+            mouth is momentarily a sphere about it, and <strong style={{ color: C.inkDim }}>every cell is the same distance away</strong>.
+            Measured at 90°×40° with a 600 mm arc, ΔL falls from 81 mm at 200 mm depth to <strong style={{ color: C.inkDim }}>2.0 mm at
+            425 mm</strong> — from 38× the phase budget to about 1×, with no path manipulation at all.
+            {" "}It needs <em>both</em> mouth radii to land together, so the aspect ratio is not free: ΔL is lowest near
+            arc<sub>h</sub>/arc<sub>v</sub> ≈ Θh/Θv, and rises steeply away from it (2.4 mm at matched radii, 9.2 mm at aspect 1.4 for
+            90°×40°). The minimum is broad, so near enough is enough.
+          </div>
+        </div>
+      )}
 
       {/* HYPEX EXPANSION — the design intent, before any geometry */}
       <div style={card}>
