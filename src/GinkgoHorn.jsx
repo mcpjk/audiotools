@@ -394,7 +394,6 @@ export default function GinkgoHorn() {
   // the wave travels through the OPEN passage, not the gross cell outline
   const [profileArea, setProfileArea] = useState("open");
   const [fTarget, setFTarget] = useState(20000);
-  const [dividerEndFrac, setDividerEndFrac] = useState(0.35);
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
   // 0 hyperbolic (cosh), 1 exponential.
   const [profileT, setProfileT] = useState(0.7);
@@ -557,7 +556,7 @@ export default function GinkgoHorn() {
   const mapOpts = useMemo(() => ({
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
     exitHalfAngle: exitAngle,
-    divergeLen, arriveLen, tight, fTarget, dividerEndFrac, stations,
+    divergeLen, arriveLen, tight, fTarget, stations,
     // the profile is written on the OPEN passage, so it needs the divider
     // thickness — without this it silently falls back to the gross outline
     t: thickness, profileArea,
@@ -567,7 +566,7 @@ export default function GinkgoHorn() {
     wallWidthAt: arcH / shown.nc,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     thetaH, thetaV, arcH, arcV,
-    fTarget, dividerEndFrac, stations, thickness, profileArea,
+    fTarget, stations, thickness, profileArea,
     lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes]);
 
   // The clearance is skipped HERE and measured in the deferred effect below:
@@ -742,8 +741,6 @@ export default function GinkgoHorn() {
       w.push(`Two grid lines come within ${solve.monotone.gap.toExponential(2)} of each other in parameter space — the areas are equal but a cell is pinched to nearly nothing there, which will not print and will not behave like a duct. Ease the bow, raise the shape order m, or move the corner angle.`);
     if (throat.curvatureFlagged)
       w.push(`${throat.curvatureFlagged} cell(s) have edge curvature strong relative to their own short dimension. The flat-rectangle first-mode model errs as O((L/r_curv)²) with the sign not established — verify these in ABEC.`);
-    if (map && map.rows.some((r) => r.runNeeded && r.straightAvail < r.runNeeded))
-      w.push(`Some cells have less straight run before the trailing edge than the three evanescent decay lengths they need. Below cut-on the field decays as exp(−α x) with α = (2π/c)·√(f1²−f²); a bend inside that distance re-excites what the duct just suppressed.`);
     if (shown.family !== "hgrid")
       w.push(`An O-grid throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
     return w;
@@ -847,7 +844,6 @@ export default function GinkgoHorn() {
       "aspect", "diameter_mm", "convex", "pw_floor_Hz", "min_curv_radius_mm", "curvature_flag",
       "f1_Hz", "f1_model", "centroid_x", "centroid_y",
       "path_length_mm", "s_pad_mm", "turn_deg", "twist_deg", "aim_err_deg",
-      "f1_at_divider_end_Hz", "decay_len_mm", "straight_run_needed_mm", "straight_run_avail_mm",
       // the expansion profile, per cell. Empty when no law is imposed.
       "profile_T", "hypex_m_per_mm", "fc_Hz", "expansion_ratio", "k_min", "k_max", "min_gap_mm",
       // lateral bow amplitude from path lengthening; empty when it is off
@@ -864,8 +860,6 @@ export default function GinkgoHorn() {
         cc.centroid[0].toFixed(4), cc.centroid[1].toFixed(4),
         r ? r.Lpath.toFixed(4) : "", r ? r.pad.toFixed(4) : "", r ? r.turnDeg.toFixed(3) : "",
         r ? r.twistDeg.toFixed(3) : "", r ? r.aimErrDeg.toFixed(3) : "",
-        r ? r.f1End.toFixed(1) : "", r && r.decayLen ? r.decayLen.toFixed(3) : "",
-        r && r.runNeeded ? r.runNeeded.toFixed(2) : "", r ? r.straightAvail.toFixed(2) : "",
         profileT != null ? profileT.toFixed(4) : "",
         r && r.profM != null ? r.profM.toExponential(6) : "",
         r && r.profFc != null ? r.profFc.toFixed(2) : "",
@@ -928,7 +922,7 @@ export default function GinkgoHorn() {
       for (const cc of throat.cells) {
         const r = map.rows.find((x) => x.id === cc.id);
         if (!r) continue;
-        const secs = G.ductSections(cc, r, { t: thickness, dividerEndFrac });
+        const secs = G.ductSections(cc, r, { t: thickness });
         if (!secs) continue;
         ducts.push({
           id: cc.id, color: cellFill(cc),
@@ -1693,7 +1687,6 @@ export default function GinkgoHorn() {
           {hoverRow && <>
             <div><span style={{ color: C.inkMuted }}>path </span>{fmt(hoverRow.Lpath, 2)} mm · pad {fmt(hoverRow.pad, 2)}</div>
             <div><span style={{ color: C.inkMuted }}>turn </span>{fmt(hoverRow.turnDeg, 1)}° · twist {fmt(hoverRow.twistDeg, 1)}°</div>
-            <div><span style={{ color: C.inkMuted }}>straight run </span>{fmt(hoverRow.straightAvail, 1)} / {hoverRow.runNeeded ? fmt(hoverRow.runNeeded, 1) : "—"} mm</div>
             {profileT != null && hoverRow.profFc != null && <>
               <div><span style={{ color: C.inkMuted }}>f_c </span>{fmt(hoverRow.profFc, 0)} Hz
                 <span style={{ color: C.inkMuted }}> · m </span>{hoverRow.profM.toExponential(3)}/mm</div>
@@ -1726,10 +1719,6 @@ export default function GinkgoHorn() {
               <input type="range" min={0} max={60} step={0.5} value={arriveLen} onChange={(e) => setArriveLen(parseFloat(e.target.value))}
                 style={{ width: 110, accentColor: C.series7 }} />
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(arriveLen, 1)} mm</span>
-              <span style={{ fontSize: 10, color: C.inkMuted }}>divider end</span>
-              <input type="range" min={0.05} max={1} step={0.01} value={dividerEndFrac} onChange={(e) => setDividerEndFrac(parseFloat(e.target.value))}
-                style={{ width: 110, accentColor: C.series6 }} />
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{(dividerEndFrac * 100).toFixed(0)}% of the run</span>
             </div>
           </div>
           <div style={{ opacity: stale ? 0.35 : 1 }}>{pathSVG()}</div>
@@ -2036,7 +2025,7 @@ export default function GinkgoHorn() {
         <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(), "text/csv")}>CSV · per cell</button>
         <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(), "text/csv")}>ΣA(x) CSV</button>
         <button style={expBtn} disabled={!map} onClick={() => {
-          const solids = G.ductSolids(throat, map, { t: thickness, dividerEndFrac });
+          const solids = G.ductSolids(throat, map, { t: thickness });
           if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
         }}>STL · cell ducts</button>
         <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center", marginLeft: 8 }}>
@@ -2145,10 +2134,13 @@ export default function GinkgoHorn() {
         j′(1,1)·c/πD, and a circular sector at min(j′(π/β,1), j′(0,1))·c/2πa. The sector case is why a pure-sector layout saturates at the disc's own radial
         mode for N ≥ 6 — a radial cut lies along a nodal line of that mode and cannot remove it, no matter how many more you add.
         <br />
-        <strong style={{ color: C.inkDim }}>Subdivision defers, it does not delete</strong> · Dividers raise the cutoff only over the length they exist. Where
-        they end, the cells recombine and the array of cell mouths becomes a discrete source distribution. Below cut-on the field decays as exp(−αx) with
-        α = (2π/c)·√(f₁²−f²), so the tool asks for three decay lengths of straight run before the trailing edge, computed from each cell's own f₁ at the
-        station where the dividers stop — about 16 mm for a 22.5 kHz cell working at 20 kHz. A bend inside that distance re-excites what the duct just suppressed.
+        <strong style={{ color: C.inkDim }}>Where the dividers end, and why the tool no longer asks</strong> · Dividers raise the cutoff only over the length
+        they exist, so where they stop the cells recombine and the array of cell mouths becomes a discrete source distribution. The tool used to evaluate that
+        at an adjustable divider-end station and ask for three evanescent decay lengths of straight run beyond it. That station was removed, because this
+        geometry does not have one: the cells tile at the throat and tile again at the mouth, but the expansion profile pulls the ducts <em>apart</em> in
+        between — around 11 mm at mid-path — so there is no shared wall to end. The inset now tapers linearly from a full half-thickness at the throat to
+        nothing at the mouth, which is the only place both tiling conditions are actually true. The recombination analysis is worth restoring the moment ducts
+        are made to <em>meet</em>, because then there is a real wall and a real station at which it stops.
         <br />
         <strong style={{ color: C.inkDim }}>Assumptions carried in this build</strong> · Open-area correction is first order (t/2 per shared edge; corner
         overlaps ≈ t²/4 ignored, which makes the open area very slightly pessimistic). Areas are throat-plane, not spherical-wavefront — the correction factor

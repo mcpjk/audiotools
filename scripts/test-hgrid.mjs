@@ -461,7 +461,7 @@ head("Throat divergence");
   for (const dl of [0, 15, 30]) {
     const map = M.mapThroatToMouth(L.throat, {
       c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
-      flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000, dividerEndFrac: 0.35,
+      flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
       stations: ST, keepGeometry: true, wallWidthAt: 200 / 6, divergeLen: dl,
     });
     let worst = 0;
@@ -526,7 +526,7 @@ head("Hypex expansion profile");
   const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const mopt = {
     c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
-    flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000, dividerEndFrac: 0.35,
+    flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
     stations: ST, keepGeometry: true, wallWidthAt: 200 / 6,
   };
   const off = M.mapThroatToMouth(L.throat, { ...mopt, profileT: null });
@@ -701,12 +701,12 @@ head("Hypex expansion profile");
 // which is exactly how this path went untested when it was first written.
 head("Expansion law on the open passage");
 {
-  const ST = 16, DEF = 0.35;
+  const ST = 16;
   for (const t of [0.4, 0.8]) {
     const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
     const base = {
       c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
-      tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+      tight: 0.55, fTarget: 20000, stations: ST, keepGeometry: true,
       wallWidthAt: 200 / 6, t, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
     };
     const gross = M.mapThroatToMouth(Lay.throat, { ...base, profileArea: "gross" });
@@ -718,7 +718,7 @@ head("Expansion law on the open passage");
     for (const r of open.rows) {
       const cell = Lay.throat.cells.find((x) => x.id === r.id);
       const rim = cell.rimSide || [false, false, false, false];
-      const dAt = (u) => rim.map((isRim) => (isRim ? 0 : (t / 2) * Math.max(0, 1 - u / DEF)));
+      const dAt = (u) => rim.map((isRim) => (isRim ? 0 : (t / 2) * (1 - u)));
       const openAt = (pts, d) => (d.some((v) => v > 0) ? M.polyArea3(M.insetSection3(pts, d)) : M.polyArea3(pts));
       const A0 = openAt(r.sched[0].pts, dAt(0));
       for (let q = 0; q <= ST; q++) {
@@ -761,7 +761,7 @@ head("Expansion law on the open passage");
   const bare = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0, c });
   const opts = {
     c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
-    tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    tight: 0.55, fTarget: 20000, stations: ST, keepGeometry: true,
     wallWidthAt: 200 / 6, t: 0, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
   };
   const g0 = M.mapThroatToMouth(bare.throat, { ...opts, profileArea: "gross" });
@@ -778,7 +778,7 @@ head("Expansion law on the open passage");
 // which it is not once each cell's path is independently aimed.
 head("Biradial mouth (apex-free)");
 {
-  const ST = 16, t = 0.4, DEF = 0.35, depth = 200;
+  const ST = 16, t = 0.4, depth = 200;
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
   const rad = Math.PI / 180;
 
@@ -788,7 +788,7 @@ head("Biradial mouth (apex-free)");
   const rSph = 305.6, TH = 90, TV = 40;
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
-    dividerEndFrac: DEF, stations: ST, keepGeometry: true, wallWidthAt: 80, t, profileT: 0.3,
+    stations: ST, keepGeometry: true, wallWidthAt: 80, t, profileT: 0.3,
   };
   const asArc = M.mapThroatToMouth(Lay.throat, {
     ...common, mouthMode: "arc", apex: rSph - depth, depth, thetaH: TH, thetaV: TV });
@@ -914,7 +914,7 @@ head("Path family");
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
-    flatten: 1, exitHalfAngle: 8, fTarget: 20000, dividerEndFrac: 0.35, stations: 16,
+    flatten: 1, exitHalfAngle: 8, fTarget: 20000, stations: 16,
     keepGeometry: true, wallWidthAt: 200 / 6,
   };
   const bend = (o) => {
@@ -951,7 +951,7 @@ head("Mouth by arc angles");
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0, c });
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, apex, depth, exitHalfAngle: 8, tight: 0.55,
-    fTarget: 20000, dividerEndFrac: 0.35, stations: ST, keepGeometry: true, wallWidthAt: 200 / 6,
+    fTarget: 20000, stations: ST, keepGeometry: true, wallWidthAt: 200 / 6,
   };
   const rect = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1, profileT: 1 });
   const arc = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "arc", thetaH: TH, thetaV: TV, profileT: 1 });
@@ -1068,7 +1068,7 @@ head("fc as an input (depth solved)");
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const arcOpts = {
     c, nc: 6, nr: 3, R, rectangular: true, apex: 120, flatten: 1, exitHalfAngle: 8,
-    fTarget: 20000, dividerEndFrac: 0.35, stations: 16, wallWidthAt: 200 / 6, tight: 0.55,
+    fTarget: 20000, stations: 16, wallWidthAt: 200 / 6, tight: 0.55,
     mouthMode: "arc", thetaH: 90, thetaV: 60,
   };
   // THE ROUND TRIP, and it is closed against the forward model rather than
@@ -1166,7 +1166,7 @@ head("Depth for minimum dL");
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const biOpts = {
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
-    fTarget: 20000, dividerEndFrac: 0.35, stations: 16, wallWidthAt: 100, tight: 0.55,
+    fTarget: 20000, stations: 16, wallWidthAt: 100, tight: 0.55,
     t: 0.4, profileArea: "open", sectionMode: "swept",
     mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 600, arcV: (600 * 40) / 90,
   };
@@ -1224,7 +1224,7 @@ head("Per-cell path lengthening");
   const oneOpts = {
     c, nc: 1, nr: 1, R, rectangular: true, exitHalfAngle: 8, depth: 300,
     mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
-    t: 0, fTarget: 20000, dividerEndFrac: 0.35, stations: 16, profileT: null,
+    t: 0, fTarget: 20000, stations: 16, profileT: null,
     sectionMode: "swept", wallWidthAt: 80, keepGeometry: false, computeClearance: false,
   };
   const oneBase = M.mapThroatToMouth(one.throat, oneOpts);
@@ -1253,7 +1253,7 @@ head("Per-cell path lengthening");
   const flatOpts = {
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8, depth: 200,
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 480, arcV: 213,
-    t: 0.4, profileArea: "open", fTarget: 20000, dividerEndFrac: 0.35,
+    t: 0.4, profileArea: "open", fTarget: 20000,
     stations: 16, profileT: 0.7, sectionMode: "swept", wallWidthAt: 80,
     keepGeometry: true, computeClearance: false,
   };
@@ -1469,7 +1469,7 @@ head("Per-cell path lengthening");
 // coarse station count hides it completely.
 head("Volume identity and its convergence");
 {
-  const t = 0.4, DEF = 0.35;
+  const t = 0.4;
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
   const vecArea = (r) => {
     let ax = 0, ay = 0, az = 0;
@@ -1490,9 +1490,9 @@ head("Volume identity and its convergence");
   const err = (mo, ST, form) => {
     const map = M.mapThroatToMouth(Lay.throat, {
       c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
-      tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, keepGeometry: true,
+      tight: 0.55, fTarget: 20000, keepGeometry: true,
       wallWidthAt: 200 / 6, t, stations: ST, profileT: 0.3, ...mo });
-    const solids = M.ductSolids(Lay.throat, map, { t, dividerEndFrac: DEF });
+    const solids = M.ductSolids(Lay.throat, map, { t });
     let worst = 0;
     for (const cell of Lay.throat.cells) {
       const row = map.rows.find((r) => r.id === cell.id);
@@ -1547,11 +1547,11 @@ head("Volume identity and its convergence");
 // clearance rather than asserted to be zero.
 head("Swept sections (Phase D)");
 {
-  const ST = 16, t = 0.4, DEF = 0.35;
+  const ST = 16, t = 0.4;
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
-    tight: 0.55, fTarget: 20000, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    tight: 0.55, fTarget: 20000, stations: ST, keepGeometry: true,
     wallWidthAt: 200 / 6,
   };
   const modes = [["rect", { mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1 }],
@@ -1634,7 +1634,7 @@ head("Swept sections (Phase D)");
   // ── EXPORTS MUST STILL WORK, or none of this reaches a printer ───────────
   const sw = M.mapThroatToMouth(Lay.throat, {
     ...common, mouthMode: "arc", thetaH: 90, thetaV: 60, profileT: 0.3, sectionMode: "swept" });
-  const solids = M.ductSolids(Lay.throat, sw, { t, dividerEndFrac: DEF });
+  const solids = M.ductSolids(Lay.throat, sw, { t });
   checkTrue("swept ducts are closed, consistently wound solids",
     solids.length === Lay.throat.cells.length && solids.every((s) => s.manifold.ok),
     `${solids.length} ducts, ${solids[0].manifold.edges} edges each, 0 unpaired`);
@@ -1718,12 +1718,12 @@ head("Loft parameterisation");
 // ── 10c. duct solids ───────────────────────────────────────────────────────
 head("Duct solids");
 {
-  const t = 0.4, ST = 16, DEF = 0.35;
+  const t = 0.4, ST = 16;
   const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
   const th = L.throat;
   const map = M.mapThroatToMouth(th, {
     c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120,
-    depth: 150, flatten: 1, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    depth: 150, flatten: 1, stations: ST, keepGeometry: true,
   });
 
   // An interior cell is inset on all four sides, a rim cell only on its
@@ -1761,7 +1761,7 @@ head("Duct solids");
       `${excess.toFixed(4)} against ${(nCorner * (t / 2) ** 2).toFixed(4)} mm2`);
   }
 
-  const solids = M.ductSolids(th, map, { t, dividerEndFrac: DEF });
+  const solids = M.ductSolids(th, map, { t });
   checkTrue("one solid per cell", solids.length === th.cells.length, `${solids.length} ducts`);
 
   // the throat face must be FLAT, or there is nothing to seat on the driver
@@ -1791,15 +1791,25 @@ head("Duct solids");
   check("throat wall between neighbours is exactly t", wMin, t, 1e-9, "mm");
   check("...and no thicker anywhere either", wMax, t, 1e-9, "mm");
 
-  // the inset must be gone by the station where the dividers stop, or the duct
-  // is being shrunk for a wall that is not there
+  // The inset tapers linearly from a full half-thickness at the throat, where
+  // the cells genuinely tile, to nothing at the mouth, where they tile again
+  // and must NOT be inset or the mouth stops tiling. There is no adjustable
+  // divider-end station any more: the ducts are pulled apart in between by
+  // the profile, so there was no shared wall there for one to describe.
   const r0 = map.rows[0];
-  const sec0 = M.ductSections(th.cells[0], r0, { t, dividerEndFrac: DEF });
-  const endIdx = Math.ceil(DEF * ST);
-  check("inset has tapered out where the dividers end",
-    sec0[endIdx].area - r0.sched[endIdx].area, 0, 1e-9, "mm2");
-  checkTrue("...and is still biting at the throat",
+  const sec0 = M.ductSections(th.cells[0], r0, { t });
+  check("the inset is gone at the mouth, so the mouth still tiles",
+    sec0[ST].area - r0.sched[ST].area, 0, 1e-9, "mm2");
+  checkTrue("...and is biting at full depth at the throat",
     r0.sched[0].area - sec0[0].area > 0.5 * t, `${(r0.sched[0].area - sec0[0].area).toFixed(3)} mm2`);
+  // The inset DEPTH falls linearly, but the area it removes does NOT fall
+  // monotonically — the section is expanding, so a shallower inset on a
+  // longer perimeter can take more area. What must hold is that the inset
+  // bites at every station except the last, and vanishes exactly there.
+  checkTrue("...and bites at every station up to the mouth, vanishing only there",
+    sec0.slice(0, ST).every((sc, q) => r0.sched[q].area - sc.area > 1e-9) &&
+      Math.abs(sec0[ST].area - r0.sched[ST].area) < 1e-9,
+    `${(r0.sched[0].area - sec0[0].area).toFixed(3)} mm2 at the throat, 0 at the mouth`);
 
   // a mesh a slicer or a kernel will accept: closed, orientable, positive
   const bad = solids.filter((s) => !s.manifold.ok);
@@ -1847,19 +1857,19 @@ head("Duct solids");
 // so the geometry is legal and any failure would be the profile's doing.
 head("Duct solids under the profile");
 {
-  const t = 0.4, ST = 16, DEF = 0.35, PT = 0;
+  const t = 0.4, ST = 16, PT = 0;
   const L = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
   const th = L.throat;
   const mopt = {
     c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120,
-    depth: 150, flatten: 1, dividerEndFrac: DEF, stations: ST, keepGeometry: true,
+    depth: 150, flatten: 1, stations: ST, keepGeometry: true,
   };
   const plain = M.mapThroatToMouth(th, { ...mopt, profileT: null });
   const map = M.mapThroatToMouth(th, { ...mopt, profileT: PT });
   checkTrue("the profile stays inside the tiling configuration at this T",
     map.profScaleMax <= 1 + 1e-9, `kMax = ${map.profScaleMax.toFixed(6)}`);
 
-  const solids = M.ductSolids(th, map, { t, dividerEndFrac: DEF });
+  const solids = M.ductSolids(th, map, { t });
   checkTrue("one solid per cell, with the profile on", solids.length === th.cells.length,
     `${solids.length} ducts`);
 
@@ -1924,7 +1934,7 @@ head("Duct solids under the profile");
   // the gaps are real material, so the ducts must together hold LESS than they
   // did tiling — that volume is exactly what opened the space between them
   const vProf = solids.reduce((a, sd) => a + sd.volume, 0);
-  const vPlain = M.ductSolids(th, plain, { t, dividerEndFrac: DEF })
+  const vPlain = M.ductSolids(th, plain, { t })
     .reduce((a, sd) => a + sd.volume, 0);
   checkTrue("the profile removes duct volume — that is the gap it opened",
     vProf < vPlain && vProf > 0.5 * vPlain,

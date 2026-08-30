@@ -7,7 +7,7 @@ under "Known findings worth not re-deriving".
 
 ## Where the tool stands
 
-Built and tested (336 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (337 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
 - Equal-area throat partition — H-grid, plus the O-grid as the equal-N
@@ -77,9 +77,12 @@ direction and they will drive it in a new session.
 Read the `dividerEndFrac` finding in CLAUDE.md first: it is the same
 subject. Today the ducts do not share a wall anywhere except at the two
 ends, because the expansion profile pulls them apart through the middle.
-That is exactly what this task changes — and it is why the divider
-parameter currently has almost no geometric effect (0.2 mm), which will
-stop being true once ducts genuinely meet.
+That is exactly what this task changes. The divider-end parameter was
+REMOVED for precisely this reason, and with it the evanescent-run analysis
+(`f1End`, `decayLen`, `runNeeded`, `straightAvail`), whose premise was a
+station where the dividers stop. **Restore that analysis as part of this
+task** — once ducts meet there is a real wall, a real station at which it
+ends, and the recombination question becomes answerable again.
 
 What to settle before touching geometry, because it breaks the invariant
 everything downstream rests on: convex mouth cells NO LONGER TILE. The
@@ -184,6 +187,12 @@ thing being controlled.
   measured optimum is 0.45-0.55 everywhere well-posed; the old minimum of
   0.25 would have cost 8.50 mm of wall spread against 5.63 and 12.7 mm of
   dL against 2.4.
+- **`dividerEndFrac` removed** (owner) along with the evanescent-run
+  analysis that depended on it. The inset now tapers linearly to zero at
+  the mouth; both end conditions stay exact.
+- **The open-area scale solve is now closed form** — open(k) is exactly
+  quadratic in k, so two evaluations and a quadratic formula replace a
+  24-step secant.
 - **Defaults at the owner's call**: stations 16 -> 64 (bend structure was
   visibly faceted at 16; costs ~101 ms in the render pass and ~496 ms for
   the deferred clearance at 6x3), lobes 1 or 2 with 1 the default, bow
@@ -192,8 +201,9 @@ thing being controlled.
 
 ## Known cost worth watching
 
-At stations 64 the render-pass mapping is ~101 ms at 6x3 (it was ~19 ms at
-16 with no bows). That is ~10 fps on a slider drag. If it starts to grate,
+At stations 64 the render-pass mapping is ~142 ms at 6x3 (it was ~19 ms at
+16 with no bows, and ~101 ms before the divider taper ran the full path).
+That is ~7 fps on a slider drag. If it starts to grate,
 the fix is to decouple PREVIEW resolution from EXPORT resolution — build the
 live map at 16-24 stations and re-run at the export setting only when the
 STL/DXF/STEP button is pressed. Not done yet because the deferred clearance
@@ -232,7 +242,7 @@ already keeps the worst cost off the interactive path.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 336 closed-form checks; a physics change without a
+npm run test:hgrid     # 337 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors
