@@ -209,6 +209,7 @@ export default function GingkoHorn() {
   const [arcH, setArcH] = useState(480);
   const [arcV, setArcV] = useState(213);
   const [fcSolve, setFcSolve] = useState(null);
+  const [dlSolve, setDlSolve] = useState(null);
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
@@ -340,6 +341,10 @@ export default function GingkoHorn() {
     thetaH, thetaV, arcH, arcV, depth, nc: shown.nc || 6, nr: shown.nr || 3,
   }), [thetaH, thetaV, arcH, arcV, depth, shown]);
   const mouthW = mouthGeo.width, mouthH = mouthGeo.height;
+  // a solver readout describes the geometry it was run against — clear it the
+  // moment that geometry moves, or a stale "depth X → Y Hz" sits beside inputs
+  // it no longer belongs to
+  useEffect(() => { setFcSolve(null); setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT, fcWanted]);
   // THE DEPTH THAT EQUALISES PATH LENGTH. When the mouth's curvature centre
   // lands on the throat the mouth IS a sphere about the throat, so every cell
   // is equidistant and dL collapses. That happens at depth ~ the mouth radius;
@@ -352,21 +357,44 @@ export default function GingkoHorn() {
     if (!fin.length) return null;
     return 1.09 * (fin.reduce((a, b) => a + b, 0) / fin.length);
   }, [mouthGeo]);
-  const flatten = 1; // biradial carries curvature in its two radii, not here
 
-  const map = useMemo(() => G.mapThroatToMouth(throat, {
+  // ONE options object for the mapping and BOTH depth solvers. The fc solver
+  // used to assemble its own copy and left arcH/arcV out of it, so it silently
+  // solved the default 480x213 mouth whatever the sliders said — right at the
+  // defaults, 17 Hz off at a 600 mm arc, worse further out. Shared, the two
+  // solvers cannot drift from the mapping again.
+  const mapOpts = useMemo(() => ({
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
-    depth, exitHalfAngle: exitAngle,
-    divergeLen, arriveLen, tight, fTarget, dividerEndFrac, stations, keepGeometry: true, profileT,
+    exitHalfAngle: exitAngle,
+    divergeLen, arriveLen, tight, fTarget, dividerEndFrac, stations,
     // the profile is written on the OPEN passage, so it needs the divider
     // thickness — without this it silently falls back to the gross outline
     t: thickness, profileArea,
     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
     wallWidthAt: arcH / shown.nc,
-  }), [layout, throat, shown, depth, exitAngle, divergeLen, arriveLen,
-    tight, tightSplit, tightThroat, tightMouth, thetaH, thetaV, arcH, arcV, sectionMode,
-    fTarget, dividerEndFrac, stations, profileT, thickness, profileArea]);
+  }), [layout, shown, exitAngle, divergeLen, arriveLen,
+    tight, tightSplit, tightThroat, tightMouth, thetaH, thetaV, arcH, arcV,
+    fTarget, dividerEndFrac, stations, thickness, profileArea]);
+
+  // The clearance is skipped HERE and measured in the deferred effect below:
+  // it costs ~5x the rest of the mapping (measured ~100 ms against ~20), and
+  // inside this memo every tick of the depth or T slider paid for it.
+  const map = useMemo(() => G.mapThroatToMouth(throat, {
+    ...mapOpts, depth, profileT, keepGeometry: true, computeClearance: false,
+  }), [throat, mapOpts, depth, profileT]);
+
+  // Same treatment as the equal-area solve: the mapping's own numbers track
+  // the sliders live, the clearance follows a beat later, and everything that
+  // reads it shows a solving mark meanwhile. The timeout also coalesces a
+  // drag, so only the last mapping in a burst is ever measured.
+  const [clr, setClr] = useState(null);
+  useEffect(() => {
+    if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setClr(null); return; }
+    const id = setTimeout(() => setClr({ of: map, value: G.ductClearance(map.rows) }), 30);
+    return () => clearTimeout(id);
+  }, [map]);
+  const clearance = clr && clr.of === map ? clr.value : null;
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -407,7 +435,6 @@ export default function GingkoHorn() {
   );
 
   // ── optimiser ──────────────────────────────────────────────────────────────
-  // ── optimiser ─────────────────────────────────────────────────────────────
   // The search space is now the 7-13 line parameters, alpha among them, so
   // Nelder-Mead on the whole vector is enough — no outer scan is needed, and
   // every candidate goes through the equal-area solve before f1 is looked at.
@@ -473,12 +500,16 @@ export default function GingkoHorn() {
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
     if (map && map.turnMax > map.turnLimitDeg)
       w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(arcH / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
-    if (map && map.clearance && map.clearance.overlap > 1e-3)
-      w.push(`Swept sections interpenetrate ${fmt(map.clearance.overlap, 3)} mm at station ${map.clearance.overlapAt}, over ${map.clearance.overlapStations} station(s). This is the trade the mode makes on purpose — the ends stay shared, the interior does not — but it is not yet resolved: lower T pulls the sections further inward, and centreline manipulation is the stronger lever that is not built. Note the section scale reads k = ${fmt(map.profScaleMax, 4)} ≤ 1, which proves non-overlap ONLY for flowed sections; here it says nothing.`);
+    if (map && clearance && clearance.overlap > 1e-3)
+      w.push(`Swept sections interpenetrate ${fmt(clearance.overlap, 3)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s). This is the trade the mode makes on purpose — the ends stay shared, the interior does not — but it is not yet resolved: lower T pulls the sections further inward, and centreline manipulation is the stronger lever that is not built. Note the section scale reads k = ${fmt(map.profScaleMax, 4)} ≤ 1, which proves non-overlap ONLY for flowed sections; here it says nothing.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
-      w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${map.clearance && map.clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(map.clearance.overlap, 4)} mm at station ${map.clearance.overlapAt}, over ${map.clearance.overlapStations} station(s).` : ""}`);
-    if (map && map.clearance && profileT != null && map.clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
-      w.push(`The narrowest duct-to-duct gap is ${fmt(map.clearance.minMid, 4)} mm at station ${map.clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(map.clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
+      w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${clearance && clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(clearance.overlap, 4)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s).` : ""}`);
+    if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
+      w.push(`The narrowest duct-to-duct gap is ${fmt(clearance.minMid, 4)} mm at station ${clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
+    // Only one fc when dL is small — past a few percent the horn does not have
+    // one cutoff, and the honest report is the range plus the lever.
+    if (map && profileT != null && map.fcDecomp && map.fcDecomp.full > 3)
+      w.push(`f_c spans ${fmt(map.fcDecomp.lo, 0)}–${fmt(map.fcDecomp.hi, 0)} Hz across cells — a ${fmt(map.fcDecomp.full, 1)}% spread, so the horn does not have one cutoff. Path length dominates it (${fmt(map.fcDecomp.fromLength, 1)}% alone), so the lever is ΔL: move depth toward the equalising optimum, and the equal-area horn becomes the equal-f_c horn (measured 0.5% spread at the dL optimum).`);
     if (map && map.aimMax > map.aimLimitDeg)
       w.push(`Aim error reaches ${fmt(map.aimMax, 1)}° against a ${fmt(map.aimLimitDeg, 1)}° tangency tolerance. Shape the aperture surface from the directivity requirement first — a surface chosen for routing radiates its own curvature error phase-coherently and no EQ removes it.`);
     if (shown.family === "hgrid" && solve.converged && solve.monotone && solve.monotone.gap < 0.02)
@@ -490,7 +521,7 @@ export default function GingkoHorn() {
     if (shown.family !== "hgrid")
       w.push(`${shown.family === "ogrid" ? "An O-grid" : "A butterfly"} throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
     return w;
-  }, [solve, throat, shown, alphaEff, thickness, fab, map, fTarget, mouthW]);
+  }, [solve, throat, shown, thickness, fab, map, clearance, profileT, fTarget]);
 
   // ── exports ────────────────────────────────────────────────────────────────
   const stem = `gingko_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
@@ -582,6 +613,10 @@ export default function GingkoHorn() {
   }, null, 1);
 
   const buildCSV = () => {
+    // an export must not wait on the deferred measurement — compute it on the
+    // spot if the click beat the timeout
+    const clrNow = clearance || (map && map.rows.length && map.rows[0].sched[0].pts
+      ? G.ductClearance(map.rows) : null);
     const head = [
       "cell", "i", "j", "kind", "area_mm2", "open_area_mm2", "L_long_mm", "L_short_mm",
       "aspect", "diameter_mm", "convex", "pw_floor_Hz", "min_curv_radius_mm", "curvature_flag",
@@ -610,8 +645,8 @@ export default function GingkoHorn() {
         r && r.profRatio != null ? r.profRatio.toFixed(6) : "",
         r && r.profM != null ? r.profScaleMin.toFixed(6) : "",
         r && r.profM != null ? r.profScaleMax.toFixed(6) : "",
-        map && map.clearance && map.clearance.perCell.has(cc.id) && profileT != null
-          ? map.clearance.perCell.get(cc.id).toFixed(4) : "",
+        clrNow && clrNow.perCell.has(cc.id) && profileT != null
+          ? clrNow.perCell.get(cc.id).toFixed(4) : "",
       ].join(",");
     });
     return [head, ...rows].join("\n");
@@ -1116,10 +1151,19 @@ export default function GingkoHorn() {
               {depthEqualising && (
                 <span><span style={{ color: C.inkMuted }}>equalising depth ≈ </span>
                   <span style={{ color: C.series4 }}>{fmt(depthEqualising, 0)} mm</span>
-                  {Math.abs(depth - depthEqualising) > 4 && (
-                    <button onClick={() => setDepth(Math.round(depthEqualising))}
-                      style={{ ...btn(false, C.series4), marginLeft: 6 }}>go there</button>
-                  )}</span>
+                  {/* the seed is the closed-form argument; the button runs the
+                      golden section on the REAL dL through the forward model
+                      and lands on the measured optimum, not the estimate */}
+                  <button onClick={() => {
+                    const r = G.solveDepthForMinDL(throat, mapOpts);
+                    setDlSolve(r);
+                    if (r.ok) setDepth(Math.round(r.depth));
+                  }} style={{ ...btn(false, C.series4), marginLeft: 6 }}>solve min ΔL</button>
+                  {dlSolve && (dlSolve.ok
+                    ? <span style={{ marginLeft: 6 }}><span style={{ color: C.inkMuted }}>→ depth </span>
+                        <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
+                        <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></span>
+                    : <span style={{ marginLeft: 6, color: C.series5 }}>{dlSolve.reason}</span>)}</span>
               )}
             </span>
           </div>
@@ -1139,6 +1183,9 @@ export default function GingkoHorn() {
             {" "}It needs <em>both</em> mouth radii to land together, so the aspect ratio is not free: ΔL is lowest near
             arc<sub>h</sub>/arc<sub>v</sub> ≈ Θh/Θv, and rises steeply away from it (2.4 mm at matched radii, 9.2 mm at aspect 1.4 for
             90°×40°). The minimum is broad, so near enough is enough.
+            {" "}Note the over-determination: the dL rule ties depth to the mouth radius while the expansion law ties mouth area to path
+            length, so of <strong style={{ color: C.inkDim }}>{"{f_c, mouth size, dL-optimal depth}"}</strong> you may pick any two — the
+            third follows. This button spends depth on ΔL; the f_c solve below spends it on the cutoff. They fight over the same knob.
           </div>
         </div>
       )}
@@ -1255,7 +1302,6 @@ export default function GingkoHorn() {
             Choose the aperture from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement — the two coverage angles and the
             arc length each needs — then equalise the paths <em>to</em> it. A surface shaped for routing convenience radiates its own curvature
             error phase-coherently, and no EQ removes that, which is why the mouth is a constraint here and the connection to it is what gets solved.
-            {" "}Flatten = 1 is a spherical cap about the apex, where the surface normal <em>is</em> the wavefront normal and the aim error is zero by construction.
           </div>
         </div>
       </div>
@@ -1289,11 +1335,11 @@ export default function GingkoHorn() {
                 <span style={{ color: hoverRow.profScaleMax > 1 + 1e-6 ? C.series5 : C.ink }}>
                   {fmt(hoverRow.profScaleMin, 3)}–{fmt(hoverRow.profScaleMax, 3)}</span>
                 {hoverRow.profScaleMax > 1 + 1e-6 && <span style={{ color: C.inkMuted }}> · over at station {hoverRow.profKMaxAt}</span>}</div>
-              {map.clearance && map.clearance.perCell.has(hoverRow.id) && (
+              {clearance && clearance.perCell.has(hoverRow.id) && (
                 <div><span style={{ color: C.inkMuted }}>
-                  {map.clearance.perCell.get(hoverRow.id) < 0 ? "overlap with neighbour " : "gap to nearest neighbour "}</span>
-                  <span style={{ color: map.clearance.perCell.get(hoverRow.id) < 1e-3 ? C.series5 : C.series4 }}>
-                    {fmt(Math.abs(map.clearance.perCell.get(hoverRow.id)), 3)} mm</span></div>
+                  {clearance.perCell.get(hoverRow.id) < 0 ? "overlap with neighbour " : "gap to nearest neighbour "}</span>
+                  <span style={{ color: clearance.perCell.get(hoverRow.id) < 1e-3 ? C.series5 : C.series4 }}>
+                    {fmt(Math.abs(clearance.perCell.get(hoverRow.id)), 3)} mm</span></div>
               )}
             </>}
           </>}
@@ -1391,23 +1437,24 @@ export default function GingkoHorn() {
                 )}
               </>}
             </div>
-            {profileT != null && map.clearance && (
+            {profileT != null && !clearance && <div style={{ marginTop: 6 }}><Solving label="measuring clearance" /></div>}
+            {profileT != null && clearance && (
               <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
                 {/* The NARROWEST gap is the one that says whether you have separate
                     ducts at all. The widest is next to it because it is the one the
                     eye reads off the section plot, and on its own it is reassuring
                     while the ducts are touching somewhere else entirely. */}
-                {map.clearance.overlap > 0
+                {clearance.overlap > 0
                   ? <span><span style={{ color: C.inkMuted }}>ducts INTERPENETRATE </span>
-                      <span style={{ color: C.series5 }}>{fmt(map.clearance.overlap, 3)} mm deep</span>
-                      <span style={{ color: C.inkMuted }}> at station {map.clearance.overlapAt}, {map.clearance.overlapStations} station(s)</span></span>
+                      <span style={{ color: C.series5 }}>{fmt(clearance.overlap, 3)} mm deep</span>
+                      <span style={{ color: C.inkMuted }}> at station {clearance.overlapAt}, {clearance.overlapStations} station(s)</span></span>
                   : <span><span style={{ color: C.inkMuted }}>narrowest duct gap </span>
-                      <span style={{ color: map.clearance.minMid < 1e-3 ? C.series5 : C.series4 }}>
-                        {fmt(map.clearance.minMid, 3)} mm</span>
-                      <span style={{ color: C.inkMuted }}> at station {map.clearance.minMidAt}</span></span>}
+                      <span style={{ color: clearance.minMid < 1e-3 ? C.series5 : C.series4 }}>
+                        {fmt(clearance.minMid, 3)} mm</span>
+                      <span style={{ color: C.inkMuted }}> at station {clearance.minMidAt}</span></span>}
                 <span><span style={{ color: C.inkMuted }}>widest </span>
-                  <span style={{ color: C.ink }}>{fmt(map.clearance.max, 2)} mm</span>
-                  <span style={{ color: C.inkMuted }}> at {map.clearance.maxAt}</span></span>
+                  <span style={{ color: C.ink }}>{fmt(clearance.max, 2)} mm</span>
+                  <span style={{ color: C.inkMuted }}> at {clearance.maxAt}</span></span>
                 <span><span style={{ color: C.inkMuted }}>section scale k </span>
                   <span style={{ color: map.profScaleMax > 1 + 1e-6 ? C.series5 : C.ink }}>
                     {fmt(map.profScaleMin, 3)} – {fmt(map.profScaleMax, 3)}</span></span>
@@ -1462,13 +1509,10 @@ export default function GingkoHorn() {
                     an input: fc and T give m, m gives the length each cell needs,
                     and depth is solved to deliver it. */}
                 <button style={btn(false, C.series3)} onClick={() => {
-                  const r = G.solveDepthForFc(throat, {
-                    c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
-                    mouthW, mouthH, apex, flatten, exitHalfAngle: exitAngle,
-                    divergeLen, arriveLen, tight, dividerEndFrac, stations, t: thickness, profileArea,
-                    tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
-                    mouthMode, thetaH, thetaV, fTarget, wallWidthAt: arcH / shown.nc,
-                  }, { fcTarget: fcWanted, T: profileT });
+                  // the SAME options the live mapping uses — this once carried
+                  // its own copy with arcH/arcV missing, and solved the default
+                  // mouth whatever the sliders said
+                  const r = G.solveDepthForFc(throat, mapOpts, { fcTarget: fcWanted, T: profileT });
                   setFcSolve(r);
                   if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
                 }}>solve depth for it</button>
@@ -1607,9 +1651,9 @@ export default function GingkoHorn() {
                       {td(r && r.profFc != null ? fmt(r.profFc, 0) : "—", C.series4)}
                       {td(r && r.profScaleMax != null ? fmt(r.profScaleMax, 3) : "—",
                         r && r.profScaleMax > 1 + 1e-6 ? C.series5 : C.inkDim)}
-                      {td(map && map.clearance && map.clearance.perCell.has(cc.id)
-                        ? fmt(map.clearance.perCell.get(cc.id), 3) : "—",
-                        map && map.clearance && map.clearance.perCell.get(cc.id) < 1e-3 ? C.series5 : C.inkDim)}
+                      {td(clearance && clearance.perCell.has(cc.id)
+                        ? fmt(clearance.perCell.get(cc.id), 3) : "—",
+                        clearance && clearance.perCell.get(cc.id) < 1e-3 ? C.series5 : C.inkDim)}
                     </>}
                   </tr>
                 );

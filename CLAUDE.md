@@ -235,6 +235,10 @@ Where the tool stands now. The Hypex profile is imposed (`profileT`), the
 mouth can be stated as coverage angles instead of millimetres (`mouthMode:
 "arc"`), the path has independent tangents and a straight run at each end, and
 `fc` can be SOLVED FOR rather than read off, by leaving the axial depth free.
+Depth can likewise be solved for the dL MINIMUM (`solveDepthForMinDL`) — the
+other leg of the pick-two-of-three — and the signed clearance is separable
+(`ductClearance`, `computeClearance: false`) so the UI measures it off the
+render pass.
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the

@@ -1154,6 +1154,58 @@ head("fc as an input (depth solved)");
     `mouth fixed at ${r4.mouthAreaSpread.toFixed(4)}% while ratio goes ${r0.ratioSpread.toFixed(3)} -> ${r4.ratioSpread.toFixed(2)} -> ${r8.ratioSpread.toFixed(2)}%`);
 }
 
+// ── 10a6c. depth for the dL minimum, and the separable clearance ───────────
+// The dL optimum is geometric: when the mouth's curvature centre lands on the
+// throat the mouth is a sphere about it and every cell is equidistant. The
+// solver is checked against the recorded measurement (90x40, 600 mm arc,
+// matched radii: optimum near 425 mm), against the FORWARD model for local
+// minimality, and for T-independence — the profile scales sections about
+// their own centroids and never moves a centreline, so dL cannot see T.
+head("Depth for minimum dL");
+{
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const biOpts = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    fTarget: 20000, dividerEndFrac: 0.35, stations: 16, wallWidthAt: 100, tight: 0.55,
+    t: 0.4, profileArea: "open", sectionMode: "swept",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 600, arcV: (600 * 40) / 90,
+  };
+  const r = M.solveDepthForMinDL(Lay.throat, biOpts);
+  checkTrue("the solve lands near the recorded 425 mm optimum for 90x40 at 600 mm arc",
+    r.ok && Math.abs(r.depth - 425) < 20 && !r.atBound,
+    `depth ${r.depth.toFixed(1)} mm, dL ${r.dL.toFixed(2)} mm, ${r.evals} evals`);
+  checkTrue("dL at the optimum is within the half-wave a single snake could cover",
+    r.dL < 6, `${r.dL.toFixed(2)} mm`);
+  // local minimality through the forward model, never the solver's bookkeeping
+  const dLAt = (depth, T) => M.mapThroatToMouth(Lay.throat, {
+    ...biOpts, depth, profileT: T, keepGeometry: false, computeClearance: false,
+  }).dL;
+  checkTrue("the forward model confirms an interior minimum",
+    dLAt(r.depth * 0.85, null) > r.dL && dLAt(r.depth * 1.15, null) > r.dL,
+    `${dLAt(r.depth * 0.85, null).toFixed(1)} > ${r.dL.toFixed(2)} < ${dLAt(r.depth * 1.15, null).toFixed(1)} mm`);
+  // the seed is the closed-form argument; the search only refines it
+  checkTrue("the closed-form seed 1.09 x mean radius is already close",
+    Math.abs(r.seed - r.depth) / r.depth < 0.15,
+    `seed ${r.seed.toFixed(1)} against solved ${r.depth.toFixed(1)} mm`);
+  check("dL is independent of T — the profile never moves a centreline",
+    dLAt(r.depth, 0.7), dLAt(r.depth, null), 1e-9, "mm");
+  const flat = M.solveDepthForMinDL(Lay.throat, { ...biOpts, thetaH: 0, thetaV: 0 });
+  checkTrue("a doubly flat mouth is refused, not given a fictitious optimum",
+    !flat.ok && flat.reason === "flat mouth", flat.reason);
+
+  // ── the clearance metric is separable, and separating it changes nothing ──
+  const withC = M.mapThroatToMouth(Lay.throat, { ...biOpts, depth: 200, profileT: 0.7, keepGeometry: true });
+  const without = M.mapThroatToMouth(Lay.throat, { ...biOpts, depth: 200, profileT: 0.7, keepGeometry: true, computeClearance: false });
+  const sep = M.ductClearance(without.rows);
+  checkTrue("computeClearance: false skips the measurement and says so",
+    without.clearance === null, "clearance is null");
+  checkTrue("ductClearance run standalone reproduces the inline result exactly",
+    sep.minMid === withC.clearance.minMid && sep.overlap === withC.clearance.overlap &&
+    sep.max === withC.clearance.max && sep.pairs === withC.clearance.pairs &&
+    sep.perStation.every((v, i) => v === withC.clearance.perStation[i]),
+    `minMid ${sep.minMid.toFixed(6)} mm, ${sep.pairs} pairs, ${sep.perStation.length} stations`);
+}
+
 // ── 10a6b. the volume identity, done properly ──────────────────────────────
 // The swept volume of a tube is exactly INT A_vec . dr, so the identity has
 // three parts that all have to be right: the VECTOR area (not its magnitude
