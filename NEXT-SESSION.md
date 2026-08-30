@@ -10,7 +10,8 @@ under "Known findings worth not re-deriving".
 Built and tested (329 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
-- Equal-area throat partition — H-grid, O-grid, butterfly.
+- Equal-area throat partition — H-grid, plus the O-grid as the equal-N
+  comparison at the throat.
 - **Biradial mouth**, apex-free. Stated as two independent arcs: a coverage
   angle and an arc length per axis. `Th_v = 0` gives a vertically flat mouth.
 - **Hypex expansion imposed** (`profileT`), written on the OPEN passage, with
