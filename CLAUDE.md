@@ -8,14 +8,24 @@ Five loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
-A sixth, CD Exit Cell Division, was deleted once the Multicell Horn tool
-(then called H-Grid Throat Partition) superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
+The multicell tool has been renamed twice: H-Grid Throat Partition, then
+Multicell Horn, now **Gingko Multicell Horn** — for the leaf, a round stem
+fanning into a broad folded blade. Note the owner's spelling, "Gingko", is the
+common variant of the tree's name (Ginkgo biloba); it is what appears in the
+URL and the UI and is not to be silently corrected.
+
+A sixth tool, CD Exit Cell Division, was deleted once the multicell tool
+superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
 defaults `not_found_handling` to none — but `npm run preview` falls back to the
 landing page instead, so a 200 there is not the deployed behaviour. If that
 link ever needs to live again, the tool is in the history.
 
 Tools are usually iterated **one at a time in separate sessions**. Assume you
 are touching one tool and that the others must come out byte-identical.
+
+`NEXT-SESSION.md` carries the current task queue for the Gingko tool — what to
+build next and the measurement each task rests on. Keep it current; it is the
+handover between sessions.
 
 ## Layout
 
@@ -25,7 +35,7 @@ horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
-multicell-horn.html       → src/multicell-main.jsx   → MulticellHorn
+gingko-horn.html          → src/gingko-main.jsx      → GingkoHorn
 src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -151,7 +161,7 @@ Match what is already there rather than modernising it:
 - Inline style objects, no CSS modules, no styling library.
 - Hand-rolled SVG for all plots — no charting library.
 - Physics helpers as plain top-level functions above the component.
-- **One exception, deliberate**: `MulticellHorn.jsx` keeps its physics in
+- **One exception, deliberate**: `GingkoHorn.jsx` keeps its physics in
   `src/hgrid-model.js` — a plain module with no React and no colour — so that
   `scripts/test-hgrid.mjs` can import it under node and check it against closed
   forms. Split a tool this way only when it has enough physics AND enough
@@ -309,8 +319,103 @@ exists.
   reads.
   What is NOT done is resolving the overlap. The profile is the only lever on
   it today; centreline manipulation is the stronger one and is the next build.
-- **Path length: the centre cell is ALWAYS the shortest, and no geometry knob
-  changes that.** It was worth checking whether depth could flip the ordering
+- **AXIAL DEPTH IS THE DOMINANT dL LEVER, and the optimum is closed form.**
+  This supersedes the note below, which was measured on the old apex-sphere
+  mouth. On the BIRADIAL mouth the path-length ordering DOES flip with depth —
+  centre shortest when shallow, rim shortest when deep — so there is a depth in
+  between where every cell is equidistant. Measured at 90x40 deg, 600 mm
+  horizontal arc: dL falls 118 -> 81 -> 31 -> **2.04 mm at depth 425**, i.e.
+  from 54x the lambda/8 budget to 0.95x, with NO path manipulation at all.
+  The mechanism is simple: when the mouth's curvature centre lands on the
+  throat, the mouth IS a sphere about the throat and every point on it is the
+  same distance away. So the seed is **depth ~ 1.09 x mean(rH, rV)**, the 1.09
+  because paths curve and so run slightly longer than the chord (measured
+  factor 1.00-1.14 across geometries). A short 1-D search refines it.
+  It generalises: dL at the optimum measured 1.3-3.2 mm across 90x40, 90x25,
+  120x40, 60x40 and arcs from 480 to 700 mm, against 38-121 mm at depth 200.
+  **It is completely independent of T** — best depth 425 and dL 2.04 at
+  T = 0, 0.35, 0.7 and 1.0 alike — so it is purely geometric and can be solved
+  once, before any loading decision.
+  **The aspect ratio is NOT free under it.** Both radii have to land together,
+  so dL is lowest near arcH/arcV ~ Th_h/Th_v and rises steeply away: at 90x40,
+  2.4 mm at matched radii, 9.2 mm at aspect 1.4; worst cases 16-18 mm. The
+  minimum is broad, so near enough is enough, but it is a real constraint on
+  any scheme that wants aspect ratio as a free input.
+  Room to snake SURVIVES the optimum (widest half-gap 9.2-12.1 mm at depth
+  425), and dL there is small enough that a single half-wave would cover it.
+  Swept-mode interpenetration is NOT fixed by this and stays independent:
+  0 mm at T=0, 0.98 at T=0.35, 1.97 at T=0.7.
+- **Enforcing the law by making mouth area an OUTPUT over-determines the
+  geometry — pick two of three.** The proposal was: coverage angles stay
+  inputs, mouth AREA comes from the Hypex law, only aspect ratio is user-set.
+  It cannot also have depth free for dL, because the dL optimum ties depth to
+  the mouth radius while the law ties mouth area to path length (hence depth).
+  Together they pin everything and fc falls out. So the choosable set is any
+  TWO of {fc, mouth size, dL-optimal depth}.
+  The clean formulation that results: inputs are Th_h, Th_v, aspect ratio and
+  ONE of {mouth size, fc}; depth is derived from the dL optimum; the other of
+  {size, fc} is derived from the law. Measured design curve at 90x40, T 0.7,
+  MATCHED radii (arcV = arcH x Th_v/Th_h, the dL-optimal aspect), depth found
+  by golden section on dL — mouth size alone sets the cutoff:
+    arcH  200 300 400 500 600 700 900 1100 mm
+    fc    818 604 487 412 360 320 265  227 Hz
+    dL    1.7 1.9 2.1 2.2 2.4 2.6 2.9  3.3 mm
+  (An earlier table here read 665..239 Hz at aspect 2.14 with a coarser depth
+  search. Same curve, different aspect rule; these are the matched-radii
+  numbers and they supersede it.)
+  fc has a CEILING under this rule, and it is a real turning point rather than
+  an asymptote. Shrinking the mouth shortens the horn, which raises fc — but
+  the dL rule ties depth to the mouth radius, so the throat-to-mouth area
+  RATIO shrinks with it, and below a certain size the collapsing ratio takes
+  more flare rate away than the shortening puts back. Measured at 90x40,
+  matched radii, T 0.7:
+    arcH   60   65   70   75   80   85   90   95  100  120 mm
+    ratio 1.32 1.43 1.54 1.65 1.76 1.87 1.98 2.09 2.20 2.64
+    fc     309 1218 1321 1390 1434 1462 1429 1378 1329 1202 Hz
+  so the peak is ~1462 Hz near arcH 85, where the ratio is ~1.87. Below about
+  arcH 45 the ratio passes 1 and there is no expansion left at all. The peak's
+  LOCATION moves with coverage and with the aspect rule, so treat ~1.5 kHz as
+  the order of the ceiling at 90x40, not a constant.
+  One tension dissolves at the optimum and is worth knowing: with a shared fc
+  the law wants cells with LONGER paths to have LARGER mouth areas, which
+  fights the equal-area subdivision. When path lengths are equalised the two
+  agree exactly, so equalising dL is also what makes equal-area cells and
+  equal-fc cells the same design.
+- **The fc SPREAD is what equal-area subdivision costs, and depth pays it
+  off.** The mouth is cut into 18 EQUAL-AREA cells, so each cell solves its
+  own m to land on that area over its own path length, and cells with
+  different path lengths end up with different cutoffs. The alternative rule —
+  one shared m for the whole horn, mouth areas left to differ — buys a single
+  cutoff at the price of unequal output per cell. The two rules are not a
+  standing choice, because the spread closes with dL: measured at 90x40,
+  matched radii, T 0.7,
+    depth 200:  dL 81.3 mm   fc 539-753 Hz   spread 39.8%
+    depth 300:  dL 31.4 mm   fc 462-510 Hz   spread 10.4%
+    depth 425:  dL  2.0 mm   fc 361-363 Hz   spread  0.5%
+  At the dL optimum the equal-area horn IS the equal-fc horn to within half a
+  percent, so there is nothing left to trade and no reason to build the
+  law-determined subdivision as a second mode. Away from the optimum it is
+  worth reporting the spread rather than quoting one fc.
+- **A vertically flat mouth puts the whole deficit in ONE ROW, which is what
+  makes snaking tractable.** With Th_v = 0 the mouth is a horizontal-only arc,
+  so the middle row sits closest to the throat and needs the length back.
+  Measured at 6x3, 90 deg horizontal, per-cell shortfall against the longest
+  cell, in mm:
+    Th_v 40 (curved)  dL 2.0 mm    row 0:  1.6 1.6 2.0 2.0 1.6 1.6
+                                   row 1:  1.5 0.0 0.0 0.0 0.0 1.5
+                                   row 2:  1.6 1.6 2.0 2.0 1.6 1.6
+    Th_v  0 (FLAT)    dL 13.0 mm   row 0:  0.0 0.3 1.0 1.0 0.3 0.0
+                                   row 1: 13.0 11.5 11.5 11.5 11.5 13.0
+                                   row 2:  0.0 0.3 1.0 1.0 0.3 0.0
+  The flat case costs 6.5x the dL, but it asks for it as a nearly CONSTANT
+  11.5 mm along the middle row — 4 of the 6 identical, the two rim cells 1.5 mm
+  more. A single snake profile tessellated across the row would cover it,
+  which is a far smaller build than a general per-cell equaliser. The curved
+  case, by contrast, spreads its (much smaller) deficit over the outer ring.
+- **Path length on the APEX-SPHERE mouth: the centre cell is always shortest.**
+  SUPERSEDED for the biradial mouth by the note above — on that surface the
+  ordering does flip with depth. Kept because it is still true of the legacy
+  apex-based modes. It was worth checking whether depth could flip the ordering
   so rim cells became the ones needing correction — it cannot. On a cap centred
   at the apex every mouth point is at radius r from it, so the distance from
   the throat to a point at angle th, sqrt(apex^2 + r^2 - 2 apex r cos th), is
