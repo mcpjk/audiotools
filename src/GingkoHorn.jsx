@@ -3,13 +3,13 @@ import { C, SERIES } from "./palette.js";
 import * as G from "./hgrid-model.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// H-GRID THROAT PARTITION
+// GINGKO MULTICELL HORN
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Companion to the CD exit cell divider. That tool partitions a round exit
-// into concentric rings; this one partitions it into a structured ROW-AND-
-// COLUMN grid of exactly equal open area, so the throat cells can be lofted
-// one-for-one to the cells of a rectangular mouth grid.
+// Named for the leaf: a round stem that fans out into a broad, gently folded
+// blade. The tool partitions a compression driver's round exit into a
+// structured ROW-AND-COLUMN grid of exactly equal open area, then routes each
+// throat cell as its own duct to the matching cell of a biradial mouth.
 //
 // All of the geometry, the equal-area solve and the acoustic model live in
 // src/hgrid-model.js, which carries the long note on what is exact and what is
@@ -165,7 +165,7 @@ function Solving({ label = "solving" }) {
   );
 }
 
-export default function MulticellHorn() {
+export default function GingkoHorn() {
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
   const [exitAngle, setExitAngle] = useState(8);
@@ -493,7 +493,7 @@ export default function MulticellHorn() {
   }, [solve, throat, shown, alphaEff, thickness, fab, map, fTarget, mouthW]);
 
   // ── exports ────────────────────────────────────────────────────────────────
-  const stem = `multicell_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
+  const stem = `gingko_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
 
   const buildDXF = () => {
     const L = [];
@@ -524,7 +524,7 @@ export default function MulticellHorn() {
   };
 
   const buildJSON = () => JSON.stringify({
-    tool: "h-grid throat partition",
+    tool: "gingko multicell horn",
     units: "mm, Hz, degrees",
     driver: { exitDiameter: exitDia, exitHalfAngle: exitAngle, temperature, speedOfSound: c },
     topology: {
@@ -860,10 +860,10 @@ export default function MulticellHorn() {
       <style>{SPIN_CSS}</style>
       <div style={{ marginBottom: 14 }}>
         <h1 style={{ fontFamily: C.mono, fontSize: 16, fontWeight: 600, color: C.accent, margin: 0, letterSpacing: "0.05em" }}>
-          H-GRID THROAT PARTITION
+          GINGKO MULTICELL HORN
         </h1>
         <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>
-          Equal-area row-and-column partition of a compression driver exit · independent grid-line curvature · lofted cell-for-cell to a rectangular mouth
+          Equal-area row-and-column partition of a compression driver exit · independent grid-line curvature · per-cell ducts under an imposed Hypex expansion, routed to a biradial coverage mouth
         </div>
       </div>
 
