@@ -7,7 +7,7 @@ under "Known findings worth not re-deriving".
 
 ## Where the tool stands
 
-Built and tested (317 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (323 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
 - Equal-area throat partition — H-grid, O-grid, butterfly.
@@ -69,14 +69,14 @@ cell short of the longest is bowed with a sin^2(n pi u) window, amplitude
 bisected on the measured length, the deficit map deciding who moves. What is
 NOT built is any automatic handling of the clearance it spends:
 
-1. The bow direction is one global world axis (+-x, +-y) with all bows on the
-   same side. Nested same-side bows keep near-parallel neighbours apart, but
-   cells with very different deficits still converge — measured 2.05 mm of
-   overlap at 11.4 mm of bow (2 lobes, 90x40 @ 425). Candidates, in order of
-   likely value: per-cell sign (checkerboard) so neighbours part instead of
-   chase; direction chosen per cell from where its clearance is largest; the
-   bow direction taken in the cell's own section frame rather than world
-   axes.
+1. The direction is CHOSEN, not solved. Four world axes plus `radial` /
+   `-radial` (the symmetric field — see CLAUDE.md; it is the one that keeps
+   both mirrors, and on a curved mouth it also halves the overlap, but on a
+   flat mouth it doubles it). The obvious next step is to pick the direction
+   PER CELL from where that cell actually has room — its largest local
+   clearance — while keeping mirror pairs mirrored so the symmetry survives
+   the choice. A per-cell direction in the duct's own section frame rather
+   than a world axis is the more general version of the same idea.
 2. The amplitude solve never consults clearance. A clearance-aware version
    should use a cheap per-pair estimate in the loop (the bowing cell against
    its own neighbours only) and the full `ductClearance` once at the end —
@@ -97,7 +97,14 @@ thing being controlled.
 - **Per-cell path lengthening** (`lengthen`): sin^2(n pi u) bows, amplitude
   bisected on measured length, longest cell untouched, end rings frozen to
   3e-14 mm, fc spread collapses with dL. UI block in the path card; bow
-  amplitudes in the table and CSV. 317 checks.
+  amplitudes in the table and CSV.
+- **Symmetric bow direction** (`dir: "radial"` / `"-radial"`): each duct bows
+  along its own outward ray from the axis, so both mirrors survive at
+  5.6e-11 mm where a world axis breaks one at 20.5 mm. On-axis ducts are
+  reported (`lengthen.onAxis`), never skewed.
+- **UI layout**: the horizontal section and the 3-D duct preview sit side by
+  side directly under the throat and mouth plans, and BOTH depth solves are
+  one control group in the section card — they spend the same knob.
 - **3-D duct preview**: the exported solids (inset and all) on a hand-rolled
   canvas — orthographic, painter's sort, two-sided lambert, palette-derived
   shading. Deferred off the render pass like the clearance. No three.js;
@@ -132,7 +139,7 @@ thing being controlled.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 317 closed-form checks; a physics change without a
+npm run test:hgrid     # 323 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors

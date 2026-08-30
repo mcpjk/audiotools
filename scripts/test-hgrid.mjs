@@ -1303,6 +1303,54 @@ head("Per-cell path lengthening");
   checkTrue("flow mode ignores lengthening — a shared point cannot follow two paths",
     fl.lengthen === null && Math.abs(fl.dL - off.dL) < off.dL * 0.2,
     `lengthen null, dL ${fl.dL.toFixed(1)} mm`);
+
+  // ── THE SYMMETRIC BOW DIRECTION ─────────────────────────────────────────
+  // One world axis bows every duct the same way, which breaks the mirror the
+  // layout has on that axis. "radial" gives each duct the outward ray from
+  // the horn axis, so mirrored cells get mirrored bows and BOTH mirrors
+  // survive. Measured on the centrelines, which is where a bow shows.
+  const mirrorErr = (m) => {
+    const byIdx = new Map(m.rows.map((r) => [`${r.i},${r.j}`, r]));
+    let mx = 0, my = 0;
+    m.rows.forEach((r) => {
+      const rx = byIdx.get(`${5 - r.i},${r.j}`), ry = byIdx.get(`${r.i},${2 - r.j}`);
+      r.sched.forEach((st, q) => {
+        const p = st.origin, a = rx.sched[q].origin, b = ry.sched[q].origin;
+        mx = Math.max(mx, Math.hypot(p[0] + a[0], p[1] - a[1], p[2] - a[2]));
+        my = Math.max(my, Math.hypot(p[0] - b[0], p[1] + b[1], p[2] - b[2]));
+      });
+    });
+    return { mx, my };
+  };
+  const curBow = (dir) => M.mapThroatToMouth(Lay.throat, {
+    ...curOpts, keepGeometry: true, lengthen: { lobes: 2, dir },
+  });
+  const bowY = curBow("y"), bowR = curBow("radial");
+  const eY = mirrorErr(bowY), eR = mirrorErr(bowR);
+  checkTrue("a single-axis bow keeps the mirror it lies across and breaks the other",
+    eY.mx < 1e-6 && eY.my > 1,
+    `x-mirror ${eY.mx.toExponential(1)} mm, y-mirror ${eY.my.toFixed(1)} mm`);
+  check("radial bows keep the x mirror", eR.mx, 0, 1e-6, "mm");
+  check("radial bows keep the y mirror too — both, which is the point", eR.my, 0, 1e-6, "mm");
+  checkTrue("and it still closes dL",
+    bowR.dL < 0.02, `${bowR.dL.toFixed(4)} mm`);
+  // on this geometry the symmetric field also happens to cost LESS clearance,
+  // because neighbours fan apart instead of all leaning the same way
+  const cY = M.ductClearance(bowY.rows), cR = M.ductClearance(bowR.rows);
+  checkTrue("on a curved mouth the radial field costs less overlap than one axis",
+    cR.overlap < cY.overlap,
+    `radial ${cR.overlap.toFixed(2)} mm against +y ${cY.overlap.toFixed(2)} mm`);
+
+  // a duct ON the axis has no radial direction, and no lateral bow can be
+  // symmetric for it: left unbowed and REPORTED, never quietly skewed
+  const odd = M.buildLayout({ family: "hgrid", R, nc: 5, nr: 3, m: 2, t: 0.4, c });
+  const oddMap = M.mapThroatToMouth(odd.throat, {
+    ...curOpts, nc: 5, nr: 3, arcH: 480, arcV: (480 * 40) / 90, depth: 300,
+    lengthen: { lobes: 2, dir: "radial" },
+  });
+  checkTrue("a duct on the axis is reported, not bowed in an arbitrary direction",
+    oddMap.lengthen.onAxis === 1 && oddMap.lengthen.shortfall > 1,
+    `${oddMap.lengthen.onAxis} on-axis duct, ${oddMap.lengthen.shortfall.toFixed(1)} mm left short`);
 }
 
 // ── 10a6b. the volume identity, done properly ──────────────────────────────

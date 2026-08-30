@@ -1698,11 +1698,35 @@ export function mapThroatToMouth(throat, opts) {
   // (same closed form as the plain half-sine, and what the tests check), so
   // more lobes buy the same length at 1/n the amplitude — which is the whole
   // game, because amplitude is what eats the clearance between ducts.
+  //
+  // ── WHY THE DIRECTION HAS A SYMMETRIC OPTION ────────────────────────────
+  // A single world axis bows every cell the same way, which breaks the mirror
+  // symmetry the layout has: bow everything +y and the top row is no longer
+  // the mirror of the bottom. "radial" instead gives each cell its OWN
+  // direction — the outward ray from the horn axis through that duct — so a
+  // cell and its mirror image get mirrored bows and the whole assembly stays
+  // symmetric about BOTH planes, which is what a symmetric mouth and a
+  // symmetric deficit map deserve. "-radial" is the same field pointing
+  // inward. A duct sitting exactly ON the axis has no radial direction and
+  // no lateral bow can be symmetric for it, so it is left unbowed and its
+  // shortfall reported rather than silently breaking the symmetry the mode
+  // exists to keep.
   const snake = (() => {
     if (!lengthen || sectionMode !== "swept") return null;
     const { lobes = 2, dir = "y", tol = 0.02, ampCap = 150, targetLen = null } = lengthen;
-    const D = dir === "x" ? v3(1, 0, 0) : dir === "-x" ? v3(-1, 0, 0)
-      : dir === "-y" ? v3(0, -1, 0) : v3(0, 1, 0);
+    const AXES = { x: v3(1, 0, 0), "-x": v3(-1, 0, 0), y: v3(0, 1, 0), "-y": v3(0, -1, 0) };
+    // the bow direction for one cell, from its own base centreline
+    const dirFor = (pts) => {
+      if (dir !== "radial" && dir !== "-radial") return AXES[dir] || AXES.y;
+      // taken at mid-path, where the duct's position off the axis is
+      // representative of the whole run; mirrored cells have mirrored
+      // mid-points, so they get exactly mirrored directions
+      const mid = pts[Math.round((pts.length - 1) / 2)];
+      const r = Math.hypot(mid[0], mid[1]);
+      if (!(r > 1e-6)) return null; // on the axis: no symmetric bow exists
+      const sg = dir === "radial" ? 1 : -1;
+      return v3((sg * mid[0]) / r, (sg * mid[1]) / r, 0);
+    };
     // targetLen overrides the longest-cell rule — a margin above the longest,
     // or a synthetic deficit for the straight-path closed-form test. Note the
     // closed form n^2 pi^2 a^2 / (4L) holds on a STRAIGHT base path only: on
@@ -1718,7 +1742,7 @@ export function mapThroatToMouth(throat, opts) {
         for (let q = 0; q <= samples; q++) P.push(tr(q / samples));
         target = Math.max(target, arcLenOf(P));
       }
-    return { target, lobes, dir, D, tol, ampCap };
+    return { target, lobes, dir, dirFor, tol, ampCap };
   })();
 
   for (const cellRec of throat.cells) {
@@ -1750,15 +1774,20 @@ export function mapThroatToMouth(throat, opts) {
     for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr.push(L); }
 
     // bow this cell out to the target length, if it is short and snaking is on
-    let snakeAmp = 0, snakeShort = 0;
+    let snakeAmp = 0, snakeShort = 0, snakeOnAxis = false;
     if (snake && snake.target - L > snake.tol) {
       const L0 = L;
       const deficit = snake.target - L0;
+      const D = snake.dirFor(pts);
+      // a duct on the axis has no radial direction — reported, never bowed
+      // in some arbitrary direction that would break the symmetry
+      if (!D) { snakeOnAxis = true; snakeShort = deficit; }
+      else {
       // lateral direction field: the requested direction with the tangent
       // component removed, so the bow is always square to the path
       const dHat = pts.map((_, k) => {
         const t = tans[k];
-        const d = s3(snake.D, m3(t, dot3(snake.D, t)));
+        const d = s3(D, m3(t, dot3(D, t)));
         return nrm3(d) > 1e-6 ? un3(d) : v3(0, 0, 0);
       });
       const win = sArr.map((s) => Math.sin(snake.lobes * Math.PI * (s / L0)) ** 2);
@@ -1788,6 +1817,7 @@ export function mapThroatToMouth(throat, opts) {
       for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr[q + 1] = L; }
       // capped short of the target: reported, never silently absorbed
       snakeShort = Math.max(0, snake.target - L);
+      }
     }
 
     // total turning angle, and where the trailing run stops being straight
@@ -2192,7 +2222,7 @@ export function mapThroatToMouth(throat, opts) {
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
       sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll,
-      snakeAmp, snakeShort,
+      snakeAmp, snakeShort, snakeOnAxis,
       profRatioGross,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
@@ -2291,6 +2321,8 @@ export function mapThroatToMouth(throat, opts) {
       ampMax: Math.max(...rows.map((r) => r.snakeAmp)),
       cells: rows.reduce((n, r) => n + (r.snakeAmp > 1e-9 ? 1 : 0), 0),
       shortfall: Math.max(...rows.map((r) => r.snakeShort)),
+      // ducts sitting on the axis, which a radial bow cannot move symmetrically
+      onAxis: rows.reduce((n, r) => n + (r.snakeOnAxis ? 1 : 0), 0),
     } : null,
     ratioSpreadGross: spreadOf(rows.map((r) => r.profRatioGross || 1)),
     profFcMin: profileT != null ? Math.min(...rows.map((r) => r.profFc)) : null,
