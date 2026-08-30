@@ -327,8 +327,6 @@ export default function GinkgoHorn() {
   const [nc, setNc] = useState(6);
   const [nr, setNr] = useState(3);
   const [ringSpec, setRingSpec] = useState("1,6,12");
-  const [bm, setBm] = useState(2);
-  const [bp, setBp] = useState(2);
   const [seed, setSeed] = useState("elliptical");
 
   // ── line shapes ──
@@ -364,8 +362,17 @@ export default function GinkgoHorn() {
   // can, and the depth solves always run on the bare geometry. The deficit
   // map decides which cells bow — nothing assumes rows, centres or rims.
   const [lengthenOn, setLengthenOn] = useState(false);
-  const [lengthLobes, setLengthLobes] = useState(2);
-  const [lengthDir, setLengthDir] = useState("y");
+  const [lengthDir, setLengthDir] = useState("radial");
+  // WHERE the bow sits, as a fraction of each cell's own path. The straight
+  // runs are excised from this on top, per cell, inside the model — a run
+  // asked to be straight is not a place to put a bow.
+  const [bowFrom, setBowFrom] = useState(0);
+  const [bowTo, setBowTo] = useState(1);
+  // ONE lobe. Fewer lobes means less total turning for the same added
+  // length, and turning is what costs phase error — measured bendWiden
+  // 37.1 mm at 1 lobe against 48.3 mm at 3. The price is amplitude, which
+  // goes as 1/n, so a single lobe is the biggest bow; read the clearance.
+  const lengthLobes = 1;
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
@@ -440,9 +447,9 @@ export default function GinkgoHorn() {
   const layoutInput = useMemo(() => ({
     family, R, nc, nr, m: shapeOrder, symmetric,
     params: pReq, seed, seedObj,
-    rings: rings.length ? rings : [1, 6, 12], bm, bp,
+    rings: rings.length ? rings : [1, 6, 12],
     t: thickness, c, nParams: cfg.nParams, alphaAt: cfg.alphaAt,
-  }), [family, R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, ringSpec, bm, bp, thickness, c, cfg]);
+  }), [family, R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, ringSpec, thickness, c, cfg]);
 
   const buildFrom = (inp) => {
     const L = G.buildLayout({
@@ -542,12 +549,12 @@ export default function GinkgoHorn() {
     t: thickness, profileArea,
     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
-    lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir } : null,
+    lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo } : null,
     wallWidthAt: arcH / shown.nc,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     tight, tightSplit, tightThroat, tightMouth, thetaH, thetaV, arcH, arcV,
     fTarget, dividerEndFrac, stations, thickness, profileArea,
-    lengthenOn, lengthLobes, lengthDir]);
+    lengthenOn, lengthDir, bowFrom, bowTo]);
 
   // The clearance is skipped HERE and measured in the deferred effect below:
   // it costs ~5x the rest of the mapping (measured ~100 ms against ~20), and
@@ -693,7 +700,7 @@ export default function GinkgoHorn() {
     if (map && map.rows.some((r) => r.runNeeded && r.straightAvail < r.runNeeded))
       w.push(`Some cells have less straight run before the trailing edge than the three evanescent decay lengths they need. Below cut-on the field decays as exp(−α x) with α = (2π/c)·√(f1²−f²); a bend inside that distance re-excites what the duct just suppressed.`);
     if (shown.family !== "hgrid")
-      w.push(`${shown.family === "ogrid" ? "An O-grid" : "A butterfly"} throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
+      w.push(`An O-grid throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
     return w;
   }, [solve, throat, shown, thickness, fab, map, clearance, profileT, fTarget]);
 
@@ -735,7 +742,6 @@ export default function GinkgoHorn() {
     topology: {
       family: shown.family, nCols: shown.nc, nRows: shown.nr,
       rings: shown.family === "ogrid" ? shown.rings : undefined,
-      core: shown.family === "butterfly" ? { m: shown.bm, p: shown.bp } : undefined,
       cornerAlphaDeg: alphaEff, equalArcAlphaDeg: G.equalArcAlphaDeg(shown.nc, shown.nr),
       seed, singularVertices: singular.length,
       lineShapes: shown.family === "hgrid" ? {
@@ -1144,8 +1150,7 @@ export default function GinkgoHorn() {
         <div style={secTitle}>Topology</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
           {[["hgrid", "H-grid — one (i,j) index, 4 rim singularities"],
-            ["ogrid", "O-grid — concentric rings, no singularities"],
-            ["butterfly", "Butterfly — square core + 4 fans, 4 core singularities"]].map(([v, l]) => (
+            ["ogrid", "O-grid — concentric rings, no singularities"]].map(([v, l]) => (
             <button key={v} onClick={() => setFamily(v)} style={{ ...btn(family === v, C.series4), fontSize: 11, padding: "5px 10px" }}>{l}</button>
           ))}
         </div>
@@ -1159,10 +1164,6 @@ export default function GinkgoHorn() {
             <input value={ringSpec} onChange={(e) => setRingSpec(e.target.value)} placeholder="1,6,12" style={{ ...sInput, fontSize: 12 }} />
             <div style={{ fontSize: 10, color: C.series3, fontFamily: C.mono, marginTop: 4 }}>{rings.join(" + ")} = {rings.reduce((a, b) => a + b, 0)}</div>
           </div>}
-          {family === "butterfly" && <>
-            <NumInput label="Core subdivision m" value={bm} onChange={(v) => setBm(Math.round(v))} min={1} max={8} step={1} accent={C.series4} />
-            <NumInput label="Fan rings p" value={bp} onChange={(v) => setBp(Math.round(v))} min={1} max={8} step={1} accent={C.series4} />
-          </>}
           <div>
             <label style={sLabel}>Seed map</label>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -1214,8 +1215,8 @@ export default function GinkgoHorn() {
         {family !== "hgrid" ? (
           <div style={{ fontSize: 11, color: C.inkMuted, lineHeight: 1.5 }}>
             The line parameterisation belongs to the H-grid: it needs one continuous latitude and longitude line across the whole disc.
-            An O-grid has rings and radials, a butterfly has a core and four fans — neither carries a single (i,j) index, so neither has
-            grid lines to shape. Both are here as equal-N comparisons at the throat and are solved on their own node positions.
+            An O-grid has rings and radials, not a single (i,j) index, so it has no grid lines to shape. It is here as the equal-N
+            comparison at the throat and is solved on its own node positions.
           </div>
         ) : (
           <>
@@ -1507,7 +1508,34 @@ export default function GinkgoHorn() {
                         <span style={{ color: C.inkMuted }}> → {fmt(fcSolve.fcLo, 0)}–{fmt(fcSolve.fcHi, 0)} Hz across cells</span></>
                     : <span style={{ color: C.series5 }}>f_c out of reach — {fcSolve.reason === "too low"
                         ? `${fmt(fcSolve.bound, 0)} Hz is the floor at ${fcSolve.at} mm depth`
-                        : `${fmt(fcSolve.bound, 0)} Hz is the ceiling at ${fcSolve.at} mm depth`}</span>}</div>}
+                        : `${fmt(fcSolve.bound, 0)} Hz is the ceiling at ${fcSolve.at} mm depth — the cutoff has a real peak, see the notes`}</span>}</div>}
+                  {/* WHAT THE SOLVE ACTUALLY BUILT. The cutoff solve often
+                      answers with a horn nobody would make, and the reason is
+                      structural: on the biradial mouth the aperture is fixed
+                      by the coverage arcs, so depth cannot move the mouth area
+                      or the expansion ratio — it moves only the path length.
+                      Asking for a cutoff is therefore only asking how LONG the
+                      horn must be, and a high cutoff answers with a very short
+                      body carrying a full-size mouth. Shown so it is visible
+                      here rather than discovered in CAD. */}
+                  {fcSolve && fcSolve.ok && (
+                    <div style={{ marginTop: 3, paddingLeft: 8, borderLeft: `2px solid ${C.border}` }}>
+                      <div><span style={{ color: C.inkMuted }}>mouth </span>{fmt(fcSolve.mouthArea / 100, 0)} cm²
+                        <span style={{ color: C.inkMuted }}> · expansion ratio </span>{fmt(fcSolve.ratio, 2)}×
+                        <span style={{ color: C.inkMuted }}> — neither moves with depth, both are set by the arcs</span></div>
+                      <div><span style={{ color: C.inkMuted }}>duct length </span>{fmt(fcSolve.Lmin, 0)}–{fmt(fcSolve.Lmax, 0)} mm
+                        <span style={{ color: C.inkMuted }}> · ΔL </span>
+                        <span style={{ color: fcSolve.dLfrac <= 0.125 ? C.series4 : fcSolve.dLfrac <= 0.25 ? C.series1 : C.series5 }}>
+                          {fmt(fcSolve.dL, 1)} mm</span>
+                        <span style={{ color: C.inkMuted }}> = {fmt(fcSolve.dLfrac * 8, 1)}× the λ/8 budget</span></div>
+                      {dlSolve && dlSolve.ok && Math.abs(fcSolve.depth - dlSolve.depth) > 20 && (
+                        <div style={{ color: C.series5 }}>
+                          {fmt(Math.abs(fcSolve.depth - dlSolve.depth), 0)} mm away from the ΔL optimum at {fmt(dlSolve.depth, 0)} mm —
+                          this is the pick-two-of-three: the mouth and the cutoff are both fixed, so depth has nothing left to spend on ΔL.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 5, lineHeight: 1.45 }}>
@@ -1650,47 +1678,68 @@ export default function GinkgoHorn() {
               <button onClick={() => setLengthenOn(!lengthenOn)} style={btn(lengthenOn, C.series1)}>
                 {lengthenOn ? "equalising to the longest cell" : "off — bare geometry"}
               </button>
-              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>lobes</span>
-              {[1, 2, 3, 4].map((n) => (
-                <button key={n} onClick={() => setLengthLobes(n)} disabled={!lengthenOn}
-                  style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
-              ))}
               <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>bow direction</span>
-              {[["radial", "radial out"], ["-radial", "radial in"], ["y", "+y"], ["-y", "−y"], ["x", "+x"], ["-x", "−x"]].map(([v, l]) => (
+              {[["radial", "radial out"], ["short", "short axis"]].map(([v, l]) => (
                 <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
                   style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
               ))}
               {lengthenOn && map && map.lengthen && map.lengthen.onAxis > 0 && (
                 <span style={{ fontFamily: C.mono, fontSize: 10, color: C.series5 }}>
-                  {map.lengthen.onAxis} duct(s) on the axis — no symmetric radial bow exists
-                </span>
-              )}
-              {lengthenOn && map && map.lengthen && (
-                <span style={{ fontFamily: C.mono, fontSize: 11, marginLeft: 8 }}>
-                  <span style={{ color: C.inkMuted }}>target </span>{fmt(map.lengthen.target, 1)} mm
-                  <span style={{ color: C.inkMuted }}> · {map.lengthen.cells} cells bowed · max amplitude </span>
-                  <span style={{ color: map.lengthen.ampMax > 15 ? C.series1 : C.series4 }}>{fmt(map.lengthen.ampMax, 1)} mm</span>
-                  <span style={{ color: C.inkMuted }}> · ΔL now </span>
-                  <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : C.series5 }}>{fmt(map.dL, 3)} mm</span>
+                  {map.lengthen.onAxis} duct(s) on the axis — no symmetric bow exists for them
                 </span>
               )}
             </div>
+
+            {/* WHERE THE BOW SITS */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: lengthenOn ? 1 : 0.4 }}>
+              <span style={{ fontSize: 10, color: C.inkMuted }}>bow region</span>
+              <input type="range" min={0} max={0.9} step={0.01} value={bowFrom} disabled={!lengthenOn}
+                onChange={(e) => setBowFrom(Math.min(parseFloat(e.target.value), bowTo - 0.1))}
+                style={{ width: 110, accentColor: C.series1 }} />
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowFrom.toFixed(2)}</span>
+              <span style={{ fontSize: 10, color: C.inkMuted }}>to</span>
+              <input type="range" min={0.1} max={1} step={0.01} value={bowTo} disabled={!lengthenOn}
+                onChange={(e) => setBowTo(Math.max(parseFloat(e.target.value), bowFrom + 0.1))}
+                style={{ width: 110, accentColor: C.series1 }} />
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowTo.toFixed(2)}</span>
+              {[["whole path", 0, 1], ["throat half", 0, 0.5], ["divider region", 0, 0.35], ["where the room is", 0.3, 0.95]].map(([l, a, b]) => (
+                <button key={l} onClick={() => { setBowFrom(a); setBowTo(b); }} disabled={!lengthenOn}
+                  style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
+              ))}
+            </div>
+
+            {lengthenOn && map && map.lengthen && (
+              <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+                <span><span style={{ color: C.inkMuted }}>target </span>{fmt(map.lengthen.target, 1)} mm
+                  <span style={{ color: C.inkMuted }}> · {map.lengthen.cells} bowed</span></span>
+                <span><span style={{ color: C.inkMuted }}>max amplitude </span>
+                  <span style={{ color: map.lengthen.ampMax > 25 ? C.series5 : map.lengthen.ampMax > 15 ? C.series1 : C.series4 }}>
+                    {fmt(map.lengthen.ampMax, 1)} mm</span></span>
+                <span><span style={{ color: C.inkMuted }}>ΔL now </span>
+                  <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : C.series5 }}>{fmt(map.dL, 3)} mm</span></span>
+                <span><span style={{ color: C.inkMuted }}>outer wall runs longer by </span>
+                  <span style={{ color: map.bendWidenMax > map.lambda / 8 ? C.series1 : C.series4 }}>
+                    {fmt(map.bendWidenMax, 1)} mm</span>
+                  <span style={{ color: C.inkMuted }}> vs λ/8 = {fmt(map.lambda / 8, 2)}</span></span>
+              </div>
+            )}
+
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
               Each cell shorter than the longest is <strong style={{ color: C.inkDim }}>bowed sideways</strong> until its centreline reaches the
               longest cell's length — the deficit map decides which cells move, and the longest cell is never touched, because a bow can only add.
-              The window is sin²(n·π·u): zero value <em>and</em> zero slope at both ends, so the throat mating face, the mouth tiling and the launch
-              and arrival directions all survive exactly (verified to 3×10⁻¹⁴ mm). More lobes buy the same length at 1/n the amplitude — and amplitude
-              is what eats the clearance between ducts, so raise the lobes before accepting a bigger bow. Equalising path length also equalises f_c:
-              the spread readout below collapses when this is on. Swept-mode only, and depth solves always run on the bare geometry: get depth close
-              first, then let the bows close what depth cannot.
+              The window is sin²(π·u) over the <strong style={{ color: C.inkDim }}>bow region</strong>: zero value <em>and</em> zero slope at both
+              ends of its support, so the throat mating face, the mouth tiling, the launch and arrival directions and everything outside the region
+              all survive exactly. The straight runs are cut out of the region automatically, per cell — a run you asked to be straight is not a
+              place to put a bow. Narrowing the region concentrates the turning where you put it: amplitude falls as √span and curvature rises as
+              span<sup>−1.5</sup>, so a tighter region is a <em>smaller</em> bow that turns harder. Note the geometry, though — the ducts tile at the
+              throat and the profile already has them touching through the first third, while 16 mm of gap sits unused around u ≈ 0.8.
               <br />
-              <strong style={{ color: C.inkDim }}>Radial</strong> is the symmetric field: each duct bows along its own outward ray from the horn axis,
-              so a cell and its mirror image get mirrored bows and the assembly stays symmetric about <em>both</em> planes (measured 6×10⁻¹¹ mm on each
-              mirror). A single world axis keeps the mirror it lies across and breaks the other — +y bows the top and bottom rows the same way, putting
-              20 mm between what should be mirror images. Which one costs less clearance is geometry-dependent and must be read, not assumed: on a
-              curved mouth radial-out measured 1.09 mm of overlap against +y's 2.05 mm, but on a <em>vertically flat</em> mouth the deficit sits in the
-              middle row whose outward ray points <em>along</em> the row, and radial cost 8.9 mm against +y's 4.1 mm. Radial-in is almost always worse —
-              it walks every duct toward the axis, where they are already closest.
+              <strong style={{ color: C.inkDim }}>Radial out</strong> bows each duct along its own outward ray from the horn axis;
+              {" "}<strong style={{ color: C.inkDim }}>short axis</strong> bows it across the narrow dimension of its own section. Both are
+              mirror-covariant, so a cell and its mirror image get mirrored bows and the horn stays symmetric about both planes (6×10⁻¹¹ mm) — a fixed
+              world axis does not, and is not offered. Short axis is the cheaper turn acoustically: a duct of width w turning through θ puts w·θ more
+              length on its outer wall than its inner, so bending across the short dimension of a 2:1 cell nearly halves that — measured 29.1 mm
+              against radial's 37.1 mm. It buys that with clearance, which is why both are here and why the readout above shows them together.
             </div>
           </div>
 
@@ -1836,7 +1885,7 @@ export default function GinkgoHorn() {
 
       {/* METRICS */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(158px, 1fr))", gap: 8, marginBottom: 14 }}>
-        <Metric label="Cells N" value={`${throat.N}`} sub={shown.family === "hgrid" ? `${shown.nc} × ${shown.nr}` : shown.family === "ogrid" ? shown.rings.join(" + ") : `${shown.bm}² + 4·${shown.bm}·${shown.bp}`} />
+        <Metric label="Cells N" value={`${throat.N}`} sub={shown.family === "hgrid" ? `${shown.nc} × ${shown.nr}` : shown.rings.join(" + ")} />
         <Metric label="Open area / cell" value={`${fmt(throat.openMean, 2)} mm²`} sub={`gross ${fmt(throat.areaMean, 2)} mm²`} />
         <Metric label="Open-area spread" value={throat.spread < 1e-6 ? `${throat.spread.toExponential(1)}%` : `${fmt(throat.spread, 3)}%`}
           sub={throat.spread < 1e-6 ? "achieved, not assumed" : "no equal-area solution"} color={throat.spread < 1e-6 ? C.series4 : C.series5} />
@@ -1964,8 +2013,7 @@ export default function GinkgoHorn() {
         <br />
         <strong style={{ color: C.inkDim }}>Singular vertices are not a layout failure</strong> · Mapping a rectangular index onto a disc must produce
         vertices where the number of cells meeting is not four. The H-grid puts its four on the rim, exactly where the cells are already most distorted;
-        the butterfly moves them to the core corners, into a region that is otherwise well behaved. That is the trade between the two, and it is why both
-        are here at equal N.
+        they are unavoidable for any rectangular index on a disc, so the question is only where they land, not whether they exist.
         <br />
         <strong style={{ color: C.inkDim }}>Rows, not columns</strong> · f₁_min is set by the row-direction edge length. Adding columns makes every cell
         narrower — raising its aspect ratio — while L_long barely moves, so a 6×3 and an 8×3 land within a few percent of each other despite a third more

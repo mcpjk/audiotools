@@ -286,7 +286,68 @@ exists.
   those ducts bow straight into their left and right neighbours while "+y"
   carries them clear of the row entirely. Radial-in is worse than both
   everywhere tried (5.6 mm on the curved case): it walks every duct toward
-  the axis, where they are already closest.
+  the axis, where they are already closest. Radial-in and the four world
+  axes were REMOVED from the tool at the owner's request; the axes survive in
+  the model because the straight-path closed-form test needs a direction that
+  works on a cell sitting ON the axis, where no outward ray exists.
+- **THE BOW REGION IS A SUPPORT, AND THE STRAIGHT RUNS ARE CUT OUT OF IT.**
+  The window spans [uStart, uEnd] of arc length rather than the whole path;
+  sin^2 has zero value AND zero slope at both ends of its support, so
+  everything outside is untouched to 1e-9 mm. divergeLen and arriveLen are
+  excised per cell, because a run the user asked to be STRAIGHT is not a
+  place to put a bow — before this the window ran the whole path and a 40 mm
+  arrival run measured 1.19-1.41 mm of bow through it.
+  **A NARROWER REGION IS A SMALLER BOW, not a bigger one**, which is the
+  opposite of the intuition: amplitude goes as sqrt(span) and curvature as
+  span^-1.5, so shrinking the window makes the same displacement steeper and
+  it buys length faster. Measured at 2 lobes, 90x40 depth 425: [0,1] needs
+  16.3 mm at R_min 91 mm, [0,0.35] needs 7.3 mm at R_min 37 mm.
+  **Where the room is, though, is NOT at the throat.** Signed duct gap by
+  station at 6x3, T 0.7, depth 425: -0.00 at u=0, -1.98 at u=0.13 (the
+  profile's own interpenetration), crossing to positive only past u~0.31,
+  peaking at 16.6 mm at u~0.78, back to 0 at the mouth. So the acoustically
+  attractive place to bend (narrow duct, dividers still present) is exactly
+  where the clearance budget is already negative.
+- **BENDING ACROSS THE SECTION'S SHORT AXIS IS THE CHEAPER TURN, and
+  `bendWiden` is what measures it.** A duct of width w turning through angle
+  th puts w*th more length on its outer wall than its inner one, and that is
+  phase error straight across the passage. w is the extent along the BEND
+  NORMAL, so the direction of the bow decides which dimension pays.
+  `dir: "short"` takes the throat section's short axis as a LINE and orients
+  it outward, keeping mirror-covariance. Measured at 6x3, 1 lobe, 90x40 depth
+  425: bendWiden 29.1 mm against radial's 37.1 mm, for the same dL. It buys
+  that with clearance — 16.6 mm of overlap against radial's 1.27 mm on that
+  case — so the two are offered together and both numbers are shown.
+  `bendWiden` supersedes `turnLimitDeg` as the number to read: the latter
+  estimates from one nominal width and reads ~100x over budget with or
+  without bows, which makes it useless as a threshold.
+- **FEWER LOBES IS ACOUSTICALLY BETTER AND GEOMETRICALLY WORSE.** Measured at
+  6x3, radial, 90x40 depth 425: 1 lobe bendWiden 37.1 mm at 82.5 mm
+  amplitude, 2 lobes 40.2 mm at 16.3 mm, 3 lobes 48.3 mm at 9.6 mm. More
+  lobes means more total turning for the same added length, so phase error
+  rises, while amplitude falls as 1/n and clearance improves. The tool is
+  fixed at ONE lobe at the owner's request; `lobes` remains a model
+  parameter and the tests still exercise n = 1, 2, 3.
+- **COLUMN PARITY decides where the dividers sit, not how well the horn
+  works.** Even n_cols forces a longitude line to u = 0, so a divider runs
+  down the vertical centreline of the throat — through the exit's
+  highest-intensity region — and no cell centroid is at the origin. Odd
+  n_cols has no line there and a cell straddles the centreline instead.
+  f1_min barely notices: 14.56 / 14.73 / 14.69 / 14.80 kHz at 5 / 6 / 7 / 8
+  columns, consistent with the rows-not-columns finding. Worst ASPECT does
+  notice, and it favours FEWER columns: 2.16 / 2.51 / 2.96 / 3.32 over the
+  same series.
+  The bow ambiguity the parity is meant to solve needs odd n_cols AND odd
+  n_rows — that is the only combination putting a cell centroid exactly on
+  the axis. An even ROW count removes it just as well: 5x4 has no on-axis
+  cell and the best worst-aspect of any grid tried (1.75).
+- **THE CONFORMAL SEED DOES NOT RELIABLY BEAT THE ELLIPTICAL ONE, and it is
+  ~11x slower.** It improves the MEAN aspect (1.723 against 1.830 at 6x3) but
+  f1_min is set by the WORST cell, and there it can lose: measured f1_min
+  elliptical vs conformal, 6x3 14.73 vs 13.93, 8x3 14.80 vs 12.99, but 6x4
+  19.01 vs 19.28 and 4x3 14.62 vs 14.92. So it wins on squarer grids and
+  loses on the wide ones, and 119 ms against 1372 ms for the solve. Try both;
+  do not assume conformal is the better seed.
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now
