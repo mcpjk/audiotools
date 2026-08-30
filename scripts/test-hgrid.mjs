@@ -1154,6 +1154,157 @@ head("fc as an input (depth solved)");
     `mouth fixed at ${r4.mouthAreaSpread.toFixed(4)}% while ratio goes ${r0.ratioSpread.toFixed(3)} -> ${r4.ratioSpread.toFixed(2)} -> ${r8.ratioSpread.toFixed(2)}%`);
 }
 
+// ── 10a6c. depth for the dL minimum, and the separable clearance ───────────
+// The dL optimum is geometric: when the mouth's curvature centre lands on the
+// throat the mouth is a sphere about it and every cell is equidistant. The
+// solver is checked against the recorded measurement (90x40, 600 mm arc,
+// matched radii: optimum near 425 mm), against the FORWARD model for local
+// minimality, and for T-independence — the profile scales sections about
+// their own centroids and never moves a centreline, so dL cannot see T.
+head("Depth for minimum dL");
+{
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const biOpts = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    fTarget: 20000, dividerEndFrac: 0.35, stations: 16, wallWidthAt: 100, tight: 0.55,
+    t: 0.4, profileArea: "open", sectionMode: "swept",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 600, arcV: (600 * 40) / 90,
+  };
+  const r = M.solveDepthForMinDL(Lay.throat, biOpts);
+  checkTrue("the solve lands near the recorded 425 mm optimum for 90x40 at 600 mm arc",
+    r.ok && Math.abs(r.depth - 425) < 20 && !r.atBound,
+    `depth ${r.depth.toFixed(1)} mm, dL ${r.dL.toFixed(2)} mm, ${r.evals} evals`);
+  checkTrue("dL at the optimum is within the half-wave a single snake could cover",
+    r.dL < 6, `${r.dL.toFixed(2)} mm`);
+  // local minimality through the forward model, never the solver's bookkeeping
+  const dLAt = (depth, T) => M.mapThroatToMouth(Lay.throat, {
+    ...biOpts, depth, profileT: T, keepGeometry: false, computeClearance: false,
+  }).dL;
+  checkTrue("the forward model confirms an interior minimum",
+    dLAt(r.depth * 0.85, null) > r.dL && dLAt(r.depth * 1.15, null) > r.dL,
+    `${dLAt(r.depth * 0.85, null).toFixed(1)} > ${r.dL.toFixed(2)} < ${dLAt(r.depth * 1.15, null).toFixed(1)} mm`);
+  // the seed is the closed-form argument; the search only refines it
+  checkTrue("the closed-form seed 1.09 x mean radius is already close",
+    Math.abs(r.seed - r.depth) / r.depth < 0.15,
+    `seed ${r.seed.toFixed(1)} against solved ${r.depth.toFixed(1)} mm`);
+  check("dL is independent of T — the profile never moves a centreline",
+    dLAt(r.depth, 0.7), dLAt(r.depth, null), 1e-9, "mm");
+  const flat = M.solveDepthForMinDL(Lay.throat, { ...biOpts, thetaH: 0, thetaV: 0 });
+  checkTrue("a doubly flat mouth is refused, not given a fictitious optimum",
+    !flat.ok && flat.reason === "flat mouth", flat.reason);
+
+  // ── the clearance metric is separable, and separating it changes nothing ──
+  const withC = M.mapThroatToMouth(Lay.throat, { ...biOpts, depth: 200, profileT: 0.7, keepGeometry: true });
+  const without = M.mapThroatToMouth(Lay.throat, { ...biOpts, depth: 200, profileT: 0.7, keepGeometry: true, computeClearance: false });
+  const sep = M.ductClearance(without.rows);
+  checkTrue("computeClearance: false skips the measurement and says so",
+    without.clearance === null, "clearance is null");
+  checkTrue("ductClearance run standalone reproduces the inline result exactly",
+    sep.minMid === withC.clearance.minMid && sep.overlap === withC.clearance.overlap &&
+    sep.max === withC.clearance.max && sep.pairs === withC.clearance.pairs &&
+    sep.perStation.every((v, i) => v === withC.clearance.perStation[i]),
+    `minMid ${sep.minMid.toFixed(6)} mm, ${sep.pairs} pairs, ${sep.perStation.length} stations`);
+}
+
+// ── 10a6d. per-cell path lengthening ────────────────────────────────────────
+// A short cell is bowed laterally — window sin^2(n pi u), zero value AND zero
+// slope at both ends — until its centreline reaches the longest cell's
+// length. The amplitude is bisected on the MEASURED length; the closed form
+// dL = n^2 pi^2 a^2 / (4L) is its seed and holds on a STRAIGHT path only (a
+// curved path picks up a FIRST-order kappa.delta term), so the closed form is
+// checked on a genuinely straight cell and the curved cases are checked
+// against the achieved target through the forward model.
+head("Per-cell path lengthening");
+{
+  // a 1x1 grid is one cell dead on axis: base turn measures 0.0000 deg, so
+  // the straight-path closed form applies. This case also used to CRASH in
+  // solveEqualArea (zero constraints hit a temporal dead zone), so building
+  // it at all is itself a regression check.
+  const one = M.buildLayout({ family: "hgrid", R, nc: 1, nr: 1, m: 2, t: 0, c });
+  const oneOpts = {
+    c, nc: 1, nr: 1, R, rectangular: true, exitHalfAngle: 8, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    t: 0, fTarget: 20000, dividerEndFrac: 0.35, stations: 16, profileT: null,
+    sectionMode: "swept", wallWidthAt: 80, keepGeometry: false, computeClearance: false,
+  };
+  const oneBase = M.mapThroatToMouth(one.throat, oneOpts);
+  const L0 = oneBase.rows[0].Lpath;
+  checkTrue("the 1x1 straight cell builds and is straight",
+    Math.abs(oneBase.rows[0].turnDeg) < 1e-3, `turn ${oneBase.rows[0].turnDeg.toExponential(1)} deg`);
+  let worstCf = 0, worstHit = 0;
+  const amps = {};
+  for (const lobes of [1, 2, 3]) for (const dfc of [2, 5]) {
+    const on = M.mapThroatToMouth(one.throat, {
+      ...oneOpts, lengthen: { lobes, dir: "y", targetLen: L0 + dfc },
+    });
+    const a = on.rows[0].snakeAmp;
+    if (dfc === 5) amps[lobes] = a;
+    worstCf = Math.max(worstCf, Math.abs((lobes * lobes * Math.PI ** 2 * a * a) / (4 * L0) - dfc) / dfc);
+    worstHit = Math.max(worstHit, Math.abs(on.rows[0].Lpath - (L0 + dfc)));
+  }
+  check("straight path: the closed form n^2 pi^2 a^2 / 4L matches the solved amplitude",
+    worstCf, 0, 0.03);
+  check("the solver lands on the target length through the forward model", worstHit, 0, 1e-3, "mm");
+  check("amplitude scales as 1/lobes — n lobes buy the same length at a/n",
+    amps[1] / amps[2], 2, 0.05);
+
+  // the motivating case: a vertically flat mouth, where depth cannot close dL
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
+  const flatOpts = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8, depth: 200,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 480, arcV: 213,
+    t: 0.4, profileArea: "open", fTarget: 20000, dividerEndFrac: 0.35,
+    stations: 16, profileT: 0.7, sectionMode: "swept", wallWidthAt: 80,
+    keepGeometry: true, computeClearance: false,
+  };
+  const off = M.mapThroatToMouth(Lay.throat, flatOpts);
+  const on = M.mapThroatToMouth(Lay.throat, { ...flatOpts, lengthen: { lobes: 2, dir: "y" } });
+  checkTrue("flat mouth: a real dL to close, and lengthening closes it",
+    off.dL > 10 && on.dL < 0.05,
+    `${off.dL.toFixed(1)} -> ${on.dL.toFixed(4)} mm`);
+  // the longest cell is found on the BASE map — after lengthening every cell
+  // is the same length by construction, so "longest" is a tie there
+  const longestBase = off.rows.reduce((a, r) => (r.Lpath > a.Lpath ? r : a));
+  const longestOn = on.rows.find((r) => r.id === longestBase.id);
+  checkTrue("the longest cell is left alone — lengthening only ever adds",
+    longestOn.snakeAmp === 0, `amp ${longestOn.snakeAmp} on cell ${longestOn.i},${longestOn.j}`);
+  const midMax = Math.max(...on.rows.filter((r) => r.j === 1).map((r) => r.snakeAmp));
+  const rimMax = Math.max(...on.rows.filter((r) => r.j !== 1).map((r) => r.snakeAmp));
+  checkTrue("the deficit map decides who bows: the flat mouth's middle row bows deepest",
+    midMax > rimMax && on.lengthen.cells >= 12,
+    `middle ${midMax.toFixed(1)} vs rim ${rimMax.toFixed(1)} mm over ${on.lengthen.cells} cells`);
+  // the two END rings must not move: the throat mating face and the mouth
+  // tiling are exactly what the sin^2 window's zero ends exist to protect
+  let mouthMove = 0, throatZ = 0;
+  on.rows.forEach((r, k) => {
+    const a = r.sched[r.sched.length - 1].pts, b = off.rows[k].sched[off.rows[k].sched.length - 1].pts;
+    for (let q = 0; q < a.length; q++)
+      mouthMove = Math.max(mouthMove, Math.hypot(a[q][0] - b[q][0], a[q][1] - b[q][1], a[q][2] - b[q][2]));
+    for (const p of r.sched[0].pts) throatZ = Math.max(throatZ, Math.abs(p[2]));
+  });
+  check("the mouth rings do not move under lengthening", mouthMove, 0, 1e-9, "mm");
+  check("station 0 stays in the throat plane", throatZ, 0, 1e-9, "mm");
+
+  // equalising dL equalises fc — the whole point of the mechanism
+  const curOpts = {
+    ...flatOpts, thetaV: 40, arcH: 600, arcV: (600 * 40) / 90, depth: 425,
+    keepGeometry: false,
+  };
+  const cOff = M.mapThroatToMouth(Lay.throat, curOpts);
+  const cOn = M.mapThroatToMouth(Lay.throat, { ...curOpts, lengthen: { lobes: 2, dir: "y" } });
+  checkTrue("equalising dL collapses the fc spread",
+    cOn.dL < 0.02 && cOn.fcDecomp.full < cOff.fcDecomp.full / 5,
+    `dL ${cOff.dL.toFixed(2)} -> ${cOn.dL.toFixed(3)} mm, fc spread ${cOff.fcDecomp.full.toFixed(3)} -> ${cOn.fcDecomp.full.toFixed(3)}%`);
+
+  // structurally unavailable in flow mode, so it must be refused there
+  const fl = M.mapThroatToMouth(Lay.throat, {
+    ...flatOpts, sectionMode: "flow", lengthen: { lobes: 2, dir: "y" },
+  });
+  checkTrue("flow mode ignores lengthening — a shared point cannot follow two paths",
+    fl.lengthen === null && Math.abs(fl.dL - off.dL) < off.dL * 0.2,
+    `lengthen null, dL ${fl.dL.toFixed(1)} mm`);
+}
+
 // ── 10a6b. the volume identity, done properly ──────────────────────────────
 // The swept volume of a tube is exactly INT A_vec . dr, so the identity has
 // three parts that all have to be right: the VECTOR area (not its magnitude

@@ -8,11 +8,12 @@ Five loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
-The multicell tool has been renamed twice: H-Grid Throat Partition, then
-Multicell Horn, now **Gingko Multicell Horn** — for the leaf, a round stem
-fanning into a broad folded blade. Note the owner's spelling, "Gingko", is the
-common variant of the tree's name (Ginkgo biloba); it is what appears in the
-URL and the UI and is not to be silently corrected.
+The multicell tool has been renamed three times: H-Grid Throat Partition,
+then Multicell Horn, then Gingko, now **Ginkgo Multicell Horn** — for the
+leaf, a round stem fanning into a broad folded blade. The spelling was
+corrected to the botanical "Ginkgo" (Ginkgo biloba) at the owner's request;
+the old `gingko-horn.html` URL now 404s in production, the same accepted
+fate as `cd-exit-divider.html` below.
 
 A sixth tool, CD Exit Cell Division, was deleted once the multicell tool
 superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
@@ -23,7 +24,7 @@ link ever needs to live again, the tool is in the history.
 Tools are usually iterated **one at a time in separate sessions**. Assume you
 are touching one tool and that the others must come out byte-identical.
 
-`NEXT-SESSION.md` carries the current task queue for the Gingko tool — what to
+`NEXT-SESSION.md` carries the current task queue for the Ginkgo tool — what to
 build next and the measurement each task rests on. Keep it current; it is the
 handover between sessions.
 
@@ -35,7 +36,7 @@ horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
-gingko-horn.html          → src/gingko-main.jsx      → GingkoHorn
+ginkgo-horn.html          → src/ginkgo-main.jsx      → GinkgoHorn
 src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -161,7 +162,7 @@ Match what is already there rather than modernising it:
 - Inline style objects, no CSS modules, no styling library.
 - Hand-rolled SVG for all plots — no charting library.
 - Physics helpers as plain top-level functions above the component.
-- **One exception, deliberate**: `GingkoHorn.jsx` keeps its physics in
+- **One exception, deliberate**: `GinkgoHorn.jsx` keeps its physics in
   `src/hgrid-model.js` — a plain module with no React and no colour — so that
   `scripts/test-hgrid.mjs` can import it under node and check it against closed
   forms. Split a tool this way only when it has enough physics AND enough
@@ -235,6 +236,13 @@ Where the tool stands now. The Hypex profile is imposed (`profileT`), the
 mouth can be stated as coverage angles instead of millimetres (`mouthMode:
 "arc"`), the path has independent tangents and a straight run at each end, and
 `fc` can be SOLVED FOR rather than read off, by leaving the axial depth free.
+Depth can likewise be solved for the dL MINIMUM (`solveDepthForMinDL`) — the
+other leg of the pick-two-of-three — and the signed clearance is separable
+(`ductClearance`, `computeClearance: false`) so the UI measures it off the
+render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
+the longest cell's length in swept mode, and the tool previews the exported
+duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
+rule stands).
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -244,6 +252,26 @@ poorly-loaded case. That is the thing to move off, and the reason the profile
 exists.
 
 ## Known findings worth not re-deriving
+
+- **PER-CELL LENGTHENING IS BUILT (`lengthen`), and its closed form is
+  straight-path only.** Each cell shorter than the longest is bowed laterally
+  with a sin^2(n pi u) window — zero value AND zero slope at both ends, so the
+  mouth rings move 3e-14 mm and station 0 stays in the throat plane. The
+  leading-order added length is n^2 pi^2 a^2 / (4L) and it MISLEADS on a
+  curved centreline: a lateral offset there changes length at FIRST order
+  through the kappa.delta term (measured 18-45% off), so the solver bisects on
+  the MEASURED length and the formula is only its seed; the closed-form test
+  runs on a 1x1 grid whose single cell is straight to 2e-15 deg. Equalising dL
+  this way equalised fc 0.594% -> 0.044% at 90x40, depth 425 — the mechanism
+  does what the theory said. Amplitude scales as 1/n lobes for the same
+  length, and amplitude is what eats clearance (11.4 mm of bow at 2 lobes
+  measured 2.05 mm of overlap on that case): raise lobes before accepting a
+  bigger bow, and read the clearance after every change. Flow mode refuses
+  the feature — a shared boundary point cannot follow two paths.
+- **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
+  the trivial-return path through `finish()` before `let it` was initialised
+  — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now
+  itself a regression test and the closed-form testbed above.
 
 - **H-grid f₁ is set by rows, not columns.** The binding cell's long dimension
   runs in the row direction, so adding columns only narrows every cell — raising

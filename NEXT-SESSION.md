@@ -1,13 +1,13 @@
-# Gingko Multicell Horn — immediate tasks
+# Ginkgo Multicell Horn — immediate tasks
 
-Written at the end of the session that renamed the tool. Read `CLAUDE.md`
-first; this file only says **what to do next and why**, not how the thing
-works. Every number quoted here is measured, and the measurement is recorded
-in `CLAUDE.md` under "Known findings worth not re-deriving".
+Updated by the review-and-consolidation session. Read `CLAUDE.md` first; this
+file only says **what to do next and why**, not how the thing works. Every
+number quoted here is measured, and the measurement is recorded in `CLAUDE.md`
+under "Known findings worth not re-deriving".
 
 ## Where the tool stands
 
-Built and tested (298 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (317 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
 - Equal-area throat partition — H-grid, O-grid, butterfly.
@@ -16,11 +16,24 @@ forms):
 - **Hypex expansion imposed** (`profileT`), written on the OPEN passage, with
   `m` solved per cell so `k = 1` at both ends. `fc` is a readout, or an input
   via `solveDepthForFc`.
+- **Depth solvable for the dL minimum** (`solveDepthForMinDL`): golden section
+  on the real dL through the forward model, seeded at 1.09 x mean radius.
+  Verified against the recorded 425 mm optimum at 90x40, 600 mm arc. The UI
+  states the pick-two-of-three: {fc, mouth size, dL-optimal depth}.
 - **Swept sections** (`sectionMode: "swept"`) — each cell's sections built
   around its own centreline, which is what makes per-cell path manipulation
-  structurally possible. Flow mode is still the default.
-- Signed clearance (`clearance.overlap`), volume identity with a tested
-  convergence rate, solid/STL/DXF/CSV export.
+  structurally possible. The UI offers swept only; flow remains the model
+  default so the 6.6e-10 mm tiling tests keep measuring it.
+- Signed clearance (`clearance.overlap`), now SEPARABLE as `ductClearance` —
+  it costs ~5x the rest of the mapping (~80 against ~19 ms at 6x3), so the UI
+  computes the mapping live and defers the clearance a beat, same pattern as
+  the equal-area solve. `computeClearance: false` skips it in the model;
+  defaults stay ON.
+- Volume identity with a tested convergence rate, solid/STL/DXF/CSV export.
+- One mapping options object (`mapOpts`) feeds the live map and BOTH depth
+  solvers. The fc solver used to assemble its own copy with `arcH`/`arcV`
+  missing and silently solved the default 480x213 mouth — measured 17 Hz off
+  at a 600 mm arc. Fixed; do not let a solver build its own opts again.
 
 Decisions the owner has made and that should not be relitigated:
 
@@ -31,92 +44,85 @@ Decisions the owner has made and that should not be relitigated:
 - Interpenetration in swept mode is **knowingly deferred** — it has not come
   up in a real design yet.
 - `arcV` and `arcH` stay under the user's control even when that costs dL.
+- **Path lengthening must be a flexible per-cell mechanism**, not a
+  centre-row special case (owner, review session). See Task 1.
+- **BOTH depth solvers stay** — fc and min-dL are the two legs of the
+  pick-two-of-three and each solve is a useful reference point.
+- **The omega readouts are DELETED, completely** (owner). Per-cell solid
+  angle at a reference point describes the construction up to the aperture;
+  past it the mouth radiates as one coupled surface (mutual coupling, edge
+  diffraction, mouth size against wavelength), so the number stops
+  predicting the horn + free-air system exactly where the pattern starts to
+  exist. If a coverage-share diagnostic is ever wanted, measure it in
+  DIRECTION space (area swept on the unit sphere by the cell's surface
+  normals) — no reference point needed. Do not resurrect apex-referenced
+  solid angle.
+- **Every depth solve resets `divergeLen`/`arriveLen` to the 0/0 reference
+  state** and the sliders stay adjustable afterwards — a solve is a
+  repeatable reference point, the runs are the experiment on top of it. The
+  owner's working direction is arrival run long, divergence run short.
 
-## Task 1 — centre-row lengthening by snaking (the main build)
+## Task 1 — iterate lengthening against clearance (the next build)
 
-**Why now.** Path-length spread dL is the dominant term in the fc spread, and
-it is the one thing the geometry cannot fix once the mouth shape is chosen by
-coverage. Axial depth removes it when the mouth is curved on both axes
-(dL 2.0 mm at the optimum) but *not* when the user wants a vertically flat
-mouth, which is a legitimate CD geometry the owner wants available.
+Per-cell lengthening is BUILT (`lengthen`, see CLAUDE.md's finding): every
+cell short of the longest is bowed with a sin^2(n pi u) window, amplitude
+bisected on the measured length, the deficit map deciding who moves. What is
+NOT built is any automatic handling of the clearance it spends:
 
-**What makes it tractable.** With `Th_v = 0` the deficit is not scattered —
-it lands almost entirely on the middle row and is nearly constant along it:
+1. The bow direction is one global world axis (+-x, +-y) with all bows on the
+   same side. Nested same-side bows keep near-parallel neighbours apart, but
+   cells with very different deficits still converge — measured 2.05 mm of
+   overlap at 11.4 mm of bow (2 lobes, 90x40 @ 425). Candidates, in order of
+   likely value: per-cell sign (checkerboard) so neighbours part instead of
+   chase; direction chosen per cell from where its clearance is largest; the
+   bow direction taken in the cell's own section frame rather than world
+   axes.
+2. The amplitude solve never consults clearance. A clearance-aware version
+   should use a cheap per-pair estimate in the loop (the bowing cell against
+   its own neighbours only) and the full `ductClearance` once at the end —
+   the full metric is ~80 ms and a bisection would otherwise pay it per step.
+3. The same lever — moving centrelines — is also the stated fix for the
+   swept-mode interpenetration the PROFILE causes (independent of bows).
+   Spreading centrelines apart where k approaches 1 is the build that would
+   retire that standing warning.
 
-```
-Th_v 0 (FLAT)   dL 13.0 mm
-  row 0:  0.0 0.3 1.0 1.0 0.3 0.0
-  row 1: 13.0 11.5 11.5 11.5 11.5 13.0     <- four identical, two rim +1.5
-  row 2:  0.0 0.3 1.0 1.0 0.3 0.0
-```
+**The trap to avoid** stands: no general 3-D spline. Higher order buys shape
+freedom and curvature oscillation in the same purchase, and curvature is the
+thing being controlled.
 
-So one snake profile, tessellated across the row, covers four of the six cells
-exactly and the rim pair with a scaled version. That is a much smaller build
-than a general per-cell equaliser.
+## Done since the last handover
 
-**Where it goes.** Swept mode only — this is exactly what swept sections
-unlocked. In flow mode a boundary point is shared by two neighbours, so it
-cannot follow one cell's lengthened path and the other's unlengthened one; the
-feature is not merely unimplemented there, it is unavailable.
+- Renamed to **Ginkgo** (the botanical spelling), URL and all. The old
+  `gingko-horn.html` 404s in production, accepted like `cd-exit-divider`.
+- **Per-cell path lengthening** (`lengthen`): sin^2(n pi u) bows, amplitude
+  bisected on measured length, longest cell untouched, end rings frozen to
+  3e-14 mm, fc spread collapses with dL. UI block in the path card; bow
+  amplitudes in the table and CSV. 317 checks.
+- **3-D duct preview**: the exported solids (inset and all) on a hand-rolled
+  canvas — orthographic, painter's sort, two-sided lambert, palette-derived
+  shading. Deferred off the render pass like the clearance. No three.js;
+  the no-external-libraries rule stands.
+- Fixed a 1x1-grid crash in `solveEqualArea` (temporal dead zone on the
+  zero-constraint path).
+- Task 2 (surface the fc spread): the UI shows the fc range, the
+  length/ratio decomposition, and now warns past a 3% spread. Done.
+- Task 3 (dL depth solver): `solveDepthForMinDL` + "solve min ΔL" button.
+  Done.
+- Task 4 (retire flow mode from the UI): was already true — the component
+  hardcodes `sectionMode: "swept"`; the model keeps flow as the tested
+  baseline. Nothing left to do.
+- Housekeeping: clearance extracted and deferred; shared `mapOpts`; dead 2-D
+  helpers removed; duplicated scaling inline replaced with `scaleRing`;
+  stale solver readouts cleared on input changes. NOTE: `solveHypexM` runs
+  its full 200 bisections ON PURPOSE — an early exit at ~1e-15 relative
+  leaves m a couple of ulps off and breaks the exact k = 1 landing the tests
+  assert. It is commented in place; do not "optimise" it again.
 
-**Suggested shape of the work.**
-
-1. Add a per-cell centreline offset: a lateral displacement applied along the
-   centreline, zero at both ends, with amplitude and one or two lobes. A
-   half-cosine in the arc-length parameter is enough to start with — the
-   deficit is 11.5 mm over a ~420 mm path, well under one lobe's capacity.
-2. Solve the amplitude per cell so its path length hits the target (the
-   longest cell's length, or the row mean). One scalar per cell, monotone in
-   amplitude, so bisection is sufficient.
-3. Measure, do not assert: report achieved dL after snaking, and report the
-   clearance (`clearance.overlap` and `clearance.minMid`) alongside it. Room
-   exists at the dL-optimal depth — widest half-gap measured 9.2–12.1 mm — but
-   the flat-mouth case has not been measured for room and must be.
-4. Test against a closed form: a sinusoidal perturbation of amplitude `a` and
-   half-wavelength `L` lengthens a straight path by `(pi^2 a^2)/(4 L)` to
-   leading order. Check the solver's achieved length against that, not against
-   the tool's own previous output.
-
-**The trap to avoid.** Do not reach for a general 3-D spline. Higher order
-buys shape freedom and curvature oscillation in the same purchase, and
-curvature is the thing being controlled.
-
-## Task 2 — surface the fc spread in the UI
-
-The tool currently reports one `fc`. It is only one number when dL is small.
-Measured at 90x40, matched radii, T 0.7:
-
-```
-depth 200:  dL 81.3 mm   fc 539-753 Hz   spread 39.8%
-depth 425:  dL  2.0 mm   fc 361-363 Hz   spread  0.5%
-```
-
-Report the range and the `fcDecomp` split (path length vs area ratio) rather
-than a single figure, and warn when the spread exceeds some fraction — a few
-percent is the natural line, since that is where the horn stops having one
-cutoff.
-
-## Task 3 — a depth solver for the dL optimum
-
-`solveDepthForFc` exists; the dL optimum does not have a solver, only the seed
-`depth ~ 1.09 x mean(rH, rV)` and a hand-run golden section. Wire the search
-in as a button ("depth for minimum dL") next to the fc solve, and state the
-over-determination plainly in the UI: **you may pick any two of {fc, mouth
-size, dL-optimal depth}**, never all three.
-
-## Task 4 — retire flow mode (owner asked, deferred as non-blocking)
-
-The owner asked to remove flow mode in favour of swept. It is still the
-default because the shared-boundary invariant is what the tiling tests measure
-and swept mode gives that up on purpose. Do this only after Task 1, and keep
-flow mode reachable from the model (not the UI) so the tests that measure
-6.6e-10 mm tiling keep running.
-
-## Task 5 — housekeeping
+## Task 5 — housekeeping that remains
 
 - `src/hgrid-model.js` keeps its name deliberately: it is the *grid* model,
-  not the tool. Do not rename it to match the Gingko name.
-- The long comment block at the top of `src/GingkoHorn.jsx` and the model
+  not the tool. Do not rename it to match the Ginkgo name.
+- The long comment block at the top of `src/GinkgoHorn.jsx` and the model
   notes in `src/hgrid-model.js` are part of the deliverable. If the physics
   changes, they change in the same edit.
 
@@ -126,7 +132,7 @@ flow mode reachable from the model (not the UI) so the tests that measure
 perfectly.
 
 ```bash
-npm run test:hgrid     # 298 closed-form checks; a physics change without a
+npm run test:hgrid     # 317 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors
@@ -134,4 +140,4 @@ npm run preview        # then load every page and confirm no console errors
 
 Chromium for headless checks:
 `/opt/pw-browsers/chromium-1194/chrome-linux/chrome --headless --no-sandbox
---virtual-time-budget=6000 --dump-dom http://localhost:4173/gingko-horn.html`
+--virtual-time-budget=6000 --dump-dom http://localhost:4173/ginkgo-horn.html`

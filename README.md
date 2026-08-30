@@ -10,7 +10,7 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Annular FLH Calculator | `annular-flh.html` | Wall-primitive sectional area tool for square annular folded horns |
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
-| Gingko Multicell Horn | `gingko-horn.html` | Equal-area cell partition of a CD exit under an imposed Hypex expansion, per-cell ducts routed to a coverage-defined mouth, exported as solids |
+| Ginkgo Multicell Horn | `ginkgo-horn.html` | Equal-area cell partition of a CD exit under an imposed Hypex expansion, per-cell ducts routed to a coverage-defined mouth, exported as solids |
 
 Everything computes client-side. No backend, no network calls, no analytics,
 no external libraries beyond React itself.
@@ -28,13 +28,13 @@ horn-calculator.html      entry → src/horn-main.jsx       → HornCalculator
 annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalculator
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   entry → src/aperture-main.jsx    → ApertureWavefield
-gingko-horn.html          entry → src/gingko-main.jsx      → GingkoHorn
+ginkgo-horn.html          entry → src/ginkgo-main.jsx      → GinkgoHorn
 src/
   HornCalculator.jsx        the component — self-contained, imports react + palette
   AnnularFLHCalculator.jsx
   DirectivityMatch.jsx
   ApertureWavefield.jsx
-  GingkoHorn.jsx            the one tool split in two — see below
+  GinkgoHorn.jsx            the one tool split in two — see below
   hgrid-model.js            its geometry, solver and acoustics; no React, no colour
   palette.js                shared theme tokens, imported by every tool
   horn-main.jsx             three-line mount script
