@@ -2159,6 +2159,30 @@ export function mapThroatToMouth(throat, opts) {
       bendWiden += (hi - lo) * dth;
     }
 
+    // ── THE MEASURED INNER-VS-OUTER WALL DIFFERENCE ────────────────────────
+    // bendWiden above INTEGRATES w * dtheta and so counts every turn as a
+    // cost. That overstates a reversing bend: a wall fibre that runs short
+    // through a left turn runs long through the following right turn, and
+    // the two cancel. The honest number is therefore measured, not
+    // integrated — walk each boundary index from throat to mouth and take
+    // its actual length. In swept mode index k is the SAME material line all
+    // the way down the duct, so max minus min over k is exactly how much
+    // longer the longest wall fibre is than the shortest. That is the phase
+    // error across the passage, and it is what the bow direction is chosen
+    // to minimise.
+    let wallSpread = 0;
+    if (rings.length > 1) {
+      const nB = rings[0].length;
+      let wLo = Infinity, wHi = -Infinity;
+      for (let k = 0; k < nB; k++) {
+        let Lk = 0;
+        for (let q = 0; q < rings.length - 1; q++) Lk += nrm3(s3(rings[q + 1][k], rings[q][k]));
+        if (Lk < wLo) wLo = Lk;
+        if (Lk > wHi) wHi = Lk;
+      }
+      wallSpread = wHi - wLo;
+    }
+
     const sched = [];
     let scDev = 0; // developed length along the SECTION CENTROIDS, not the centreline
     for (let q = 0; q <= stations; q++) {
@@ -2228,7 +2252,7 @@ export function mapThroatToMouth(throat, opts) {
       mouthCentroid: mc, mouthCorners: corners, mouthNormal: nSurf,
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
-      sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll, bendWiden,
+      sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll, bendWiden, wallSpread,
       snakeAmp, snakeShort, snakeOnAxis, snakeSpan,
       profRatioGross,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
@@ -2351,8 +2375,11 @@ export function mapThroatToMouth(throat, opts) {
     band: dL <= lam / 8 ? "ok" : dL <= lam / 4 ? "warn" : "bad",
     twistMax: Math.max(...rows.map((r) => Math.abs(r.twistDeg))),
     turnMax: Math.max(...rows.map((r) => r.turnDeg)),
-    // the real inner-vs-outer wall difference, measured on the geometry
+    // the turning cost, integrated: every turn counts, reversals do not cancel
     bendWidenMax: Math.max(...rows.map((r) => r.bendWiden)),
+    // the same thing MEASURED on the wall fibres, so reversals do cancel —
+    // this is the phase error across the passage and the one to read
+    wallSpreadMax: Math.max(...rows.map((r) => r.wallSpread)),
     aimMax: Math.max(...rows.map((r) => r.aimErrDeg)),
     turnLimitDeg,
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
@@ -2526,6 +2553,81 @@ export function ductClearance(rows) {
     overlapStations: interior.reduce((n, d) => n + (d < -1e-9 ? 1 : 0), 0),
     max: Math.max(...perStation), maxAt: perStation.indexOf(Math.max(...perStation)),
     perCell, pairs: pairs.length,
+  };
+}
+
+// ── CHOOSING THE BOW, RATHER THAN DIALLING IT ───────────────────────────────
+// The bow has three discrete-ish knobs — direction, lobe count and region —
+// and they trade the same two quantities against each other:
+//
+//   wallSpread   how much longer the longest wall fibre runs than the
+//                shortest, measured on the built geometry. This is phase
+//                error straight across the passage, and it is the thing to
+//                minimise. NOT bendWiden, which integrates |w dtheta| and so
+//                counts a reversing bend twice when the two halves actually
+//                cancel: measured at 6x3, 90x40 depth 425, bendWiden ranks
+//                1 lobe (37.1) ahead of 2 (40.2) while the real wall spread
+//                says the opposite and by a wide margin, 23.2 against 8.7.
+//   overlap      how deep neighbouring ducts interpenetrate, which is what
+//                amplitude buys, and amplitude falls as 1/lobes.
+//
+// So the search is: minimise wallSpread subject to overlap staying under a
+// floor. It is a small enumeration rather than a continuous optimisation
+// because the options genuinely are few, and because every candidate must be
+// built and MEASURED — there is no cheap surrogate for either quantity.
+//
+// Clearance is the expensive half (~5x the rest of the mapping), so it is
+// measured only on the candidates that survive the wallSpread ranking.
+//
+// The choice is made once for the whole horn, not per cell. A per-cell
+// direction would have to keep mirror pairs mirrored or it breaks the
+// symmetry the directions exist to preserve, and that is a larger build.
+export function solveBow(throat, opts, cfg = {}) {
+  const {
+    dirs = ["radial", "short"],
+    lobeSet = [1, 2, 3],
+    regions = [[0, 1], [0, 0.7], [0.3, 0.95]],
+    overlapMax = 2.0,
+    measure = 4,
+  } = cfg;
+  const cands = [];
+  for (const dir of dirs)
+    for (const lobes of lobeSet)
+      for (const [uStart, uEnd] of regions) {
+        const lengthen = { dir, lobes, uStart, uEnd };
+        const m = mapThroatToMouth(throat, {
+          ...opts, lengthen, keepGeometry: true, computeClearance: false,
+        });
+        if (!m || !m.lengthen) continue;
+        cands.push({
+          dir, lobes, uStart, uEnd,
+          wallSpread: m.wallSpreadMax, amp: m.lengthen.ampMax,
+          dL: m.dL, shortfall: m.lengthen.shortfall, rows: m.rows,
+          overlap: null,
+        });
+      }
+  if (!cands.length) return { ok: false, reason: "no candidates" };
+  // rank on the objective, then pay for the clearance measurement only on
+  // the ones that could win
+  cands.sort((a, b) => a.wallSpread - b.wallSpread);
+  for (const cd of cands.slice(0, measure)) {
+    const cl = ductClearance(cd.rows);
+    cd.overlap = cl ? cl.overlap : null;
+    cd.minMid = cl ? cl.minMid : null;
+  }
+  const measured = cands.slice(0, measure);
+  // a candidate that cannot reach the target length is not a solution
+  const feasible = measured.filter((cd) => cd.overlap != null && cd.overlap <= overlapMax && cd.shortfall < 0.1);
+  const best = feasible[0] || null;
+  return {
+    ok: !!best, best,
+    // every candidate that was measured, so the trade is visible rather than
+    // hidden behind one answer
+    measured: measured.map(({ rows, ...rest }) => rest),
+    considered: cands.length,
+    reason: best ? null
+      : measured.every((cd) => cd.shortfall >= 0.1) ? "no candidate reached the target length"
+      : `every candidate measured overlaps more than the ${overlapMax} mm floor`,
   };
 }
 

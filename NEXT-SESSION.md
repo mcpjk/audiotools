@@ -7,7 +7,7 @@ under "Known findings worth not re-deriving".
 
 ## Where the tool stands
 
-Built and tested (329 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (336 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
 - Equal-area throat partition — H-grid, plus the O-grid as the equal-N
@@ -63,33 +63,27 @@ Decisions the owner has made and that should not be relitigated:
   repeatable reference point, the runs are the experiment on top of it. The
   owner's working direction is arrival run long, divergence run short.
 
-## Task 1 — make the bow direction and region SOLVED, not chosen
+## Task 1 — per-cell bow choice (the remaining step)
 
-Lengthening is built and now has three knobs the designer sets by hand: the
-bow REGION [uStart, uEnd], the DIRECTION (radial out / short axis), and
-implicitly the lobe count (fixed at 1 in the UI, still a model parameter).
-All three trade the same two quantities against each other, and the tool
-measures both:
+`solveBow` now enumerates direction x lobes x region for the WHOLE horn,
+builds and measures every candidate, ranks on `wallSpread` and applies the
+overlap floor as a constraint. What it does not do is choose PER CELL.
 
-  `bendWiden`  the outer wall's excess length over the inner, in mm, against
-               the lambda/8 budget — the acoustic cost of turning
-  `clearance`  overlap / narrowest gap — the geometric cost of amplitude
+That is the next increment, and the reason it was not done here is that a
+per-cell direction has to keep mirror pairs mirrored or it destroys the
+symmetry the directions exist to preserve. Shape of the work: pick the
+direction and region per SYMMETRY CLASS rather than per cell (the classes
+are already computed — `classIndex` in the equal-area solve), so mirrored
+cells move together by construction. Objective and constraint are unchanged.
 
-What is missing is anything that CHOOSES. The measured trade at 6x3, 90x40,
-depth 425 (see CLAUDE.md for the full tables): short axis buys 29.1 mm of
-bendWiden against radial's 37.1 but pays 16.6 mm of overlap against 1.27; one
-lobe is acoustically best and geometrically worst; the throat is where the
-bend is cheapest acoustically and where there is no room at all (gap is
-NEGATIVE through the first third).
+Worth knowing before starting: the winning region on the curved mouth is
+[0.3, 0.95] — "where the room is" — and the gap profile predicts it, so a
+per-cell version should probably derive each cell's region from its OWN gap
+profile rather than searching a fixed preset list.
 
-So the build is a search, per cell, over (direction, region, amplitude) that
-minimises bendWiden subject to a clearance floor, keeping mirror pairs
-mirrored so the symmetry survives the choice. Use a cheap per-pair clearance
-estimate inside the loop and the full `ductClearance` once at the end — the
-full metric is ~80 ms.
-
-The same lever fixes the standing swept-mode interpenetration the PROFILE
-causes, independent of bows: spreading centrelines apart where k approaches 1.
+The same lever still fixes the standing swept-mode interpenetration the
+PROFILE causes, independent of bows: spreading centrelines apart where k
+approaches 1.
 
 **The trap to avoid** stands: no general 3-D spline. Higher order buys shape
 freedom and curvature oscillation in the same purchase, and curvature is the
@@ -122,8 +116,20 @@ thing being controlled.
   short body under a full-size mouth (fc 900 Hz -> 85 mm depth, 1560 cm2
   mouth, dL 177 mm, per-cell fc 551-1534 Hz). Kept, with the consequence
   visible.
-- **Removed at the owner's request**: the lobe selector (fixed at 1), the
-  radial-in and four world-axis bow directions, and the butterfly family.
+- **Removed at the owner's request**: radial-in, the four world-axis bow
+  directions, and the butterfly family. The lobe selector came BACK at 1/2/3
+  (default 2) once the measured metric showed more lobes is better — see the
+  correction in CLAUDE.md.
+- **`wallSpread`**, the measured inner-vs-outer wall difference, replaces
+  `bendWiden` as the number to judge a bow by. It overturned the lobe
+  finding: bendWiden ranks 1 lobe best, the fibres say 2-3 by a factor of
+  nearly 3.
+- **`solveBow`**: enumerate direction x lobes x region, measure each, take
+  the lowest wall spread inside an overlap floor. Winner on the curved
+  mouth: short axis / 3 lobes / [0.3, 0.95].
+- **The three frequencies are printed together** — flare cutoff, loading
+  limit, pattern limit — because f_c alone reads as contradicting the
+  "mouth area needed" figure and does not.
 - **3-D duct preview**: the exported solids (inset and all) on a hand-rolled
   canvas — orthographic, painter's sort, two-sided lambert, palette-derived
   shading. Deferred off the render pass like the clearance. No three.js;
@@ -158,7 +164,7 @@ thing being controlled.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 329 closed-form checks; a physics change without a
+npm run test:hgrid     # 336 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors

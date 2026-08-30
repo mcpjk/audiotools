@@ -1409,6 +1409,43 @@ head("Per-cell path lengthening");
     eS.mx < 1e-6 && eS.my < 1e-6,
     `x ${eS.mx.toExponential(1)} mm, y ${eS.my.toExponential(1)} mm`);
 
+  // ── THE MEASURED WALL SPREAD, AND WHY IT OVERRULES THE INTEGRAL ─────────
+  // bendWiden integrates |w dtheta| and so charges for every turn. A
+  // reversing bend does not cost that: a wall fibre short through the first
+  // half runs long through the second and the error cancels. wallSpread
+  // measures the fibres instead, and the two RANK THE LOBE COUNT OPPOSITE
+  // WAYS — which is the whole reason the measured one is the objective.
+  const lobeCase = (n) => M.mapThroatToMouth(Lay.throat, {
+    ...curOpts, keepGeometry: true, lengthen: { lobes: n, dir: "radial" },
+  });
+  const l1 = lobeCase(1), l2 = lobeCase(2), l3 = lobeCase(3);
+  checkTrue("more lobes REDUCE the measured wall spread — reversals cancel",
+    l2.wallSpreadMax < l1.wallSpreadMax / 2 && l3.wallSpreadMax < l2.wallSpreadMax,
+    `${l1.wallSpreadMax.toFixed(1)} -> ${l2.wallSpreadMax.toFixed(1)} -> ${l3.wallSpreadMax.toFixed(1)} mm at 1/2/3 lobes`);
+  checkTrue("...while the integrated estimate ranks them the other way, and is wrong to",
+    l1.bendWidenMax < l2.bendWidenMax,
+    `bendWiden ${l1.bendWidenMax.toFixed(1)} at 1 lobe against ${l2.bendWidenMax.toFixed(1)} at 2`);
+  checkTrue("amplitude still falls as 1/lobes, so clearance improves in the same move",
+    l2.lengthen.ampMax < l1.lengthen.ampMax / 2,
+    `${l1.lengthen.ampMax.toFixed(1)} -> ${l2.lengthen.ampMax.toFixed(1)} mm`);
+  // the window never changes sign, so a bow is one-sided: n lobes is n humps
+  // on the SAME side, not a sine wave
+  checkTrue("the sin^2 window is one-sided — n lobes is n humps, not an S",
+    Array.from({ length: 401 }, (_, i) => Math.sin(2 * Math.PI * (i / 400)) ** 2).every((w) => w >= 0),
+    "min window value is 0");
+
+  // ── THE BOW SOLVER ──────────────────────────────────────────────────────
+  const bowSolved = M.solveBow(Lay.throat, { ...curOpts, keepGeometry: true }, { overlapMax: 2.0 });
+  checkTrue("solveBow enumerates the trade and returns a candidate inside the overlap floor",
+    bowSolved.ok && bowSolved.best.overlap <= 2.0 && bowSolved.considered >= 12,
+    `${bowSolved.considered} considered, best ${bowSolved.best.dir}/${bowSolved.best.lobes} lobe/[${bowSolved.best.uStart},${bowSolved.best.uEnd}] at wall spread ${bowSolved.best.wallSpread.toFixed(2)} mm, overlap ${bowSolved.best.overlap.toFixed(2)} mm`);
+  checkTrue("...and its winner is no worse than hand-dialling the default",
+    bowSolved.best.wallSpread <= l2.wallSpreadMax + 1e-9,
+    `solved ${bowSolved.best.wallSpread.toFixed(2)} mm against the 2-lobe radial default's ${l2.wallSpreadMax.toFixed(2)} mm`);
+  checkTrue("a floor no candidate can meet is reported, not quietly relaxed",
+    !M.solveBow(Lay.throat, { ...curOpts, keepGeometry: true }, { overlapMax: 1e-6 }).ok,
+    "an unreachable overlap floor returns ok: false with a reason");
+
   // a duct ON the axis has no radial direction, and no lateral bow can be
   // symmetric for it: left unbowed and REPORTED, never quietly skewed
   const odd = M.buildLayout({ family: "hgrid", R, nc: 5, nr: 3, m: 2, t: 0.4, c });
