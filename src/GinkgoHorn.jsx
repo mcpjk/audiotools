@@ -338,13 +338,19 @@ export default function GinkgoHorn() {
   const [depth, setDepth] = useState(150);
   const [divergeLen, setDivergeLen] = useState(0);
   const [arriveLen, setArriveLen] = useState(0);
-  const [tight, setTight] = useState(0.55);
-  // the two tangent magnitudes are the cubic's only free scalars; splitting
-  // them is what lets curvature be pushed toward the small end of the duct.
-  // null = locked together, which is the original single-knob behaviour.
-  const [tightSplit, setTightSplit] = useState(false);
-  const [tightThroat, setTightThroat] = useState(0.55);
-  const [tightMouth, setTightMouth] = useState(0.55);
+  // BEND TIGHTNESS IS FIXED, NOT DIALLED. The two Hermite tangent
+  // magnitudes are the cubic's only remaining freedom, and the measured
+  // optimum barely moves: wallSpread bottoms at 0.45-0.55 on every
+  // well-posed geometry tried (curved 5.63 mm at 0.55, narrow 3.46 at 0.45)
+  // and the curve is flat between them. Going to the slider MINIMUM is not
+  // the safe choice it looks like — 0.25 measures 8.50 mm of wall spread
+  // against 5.63, and 12.7 mm of dL against 2.4, because the tangents also
+  // set how each cell's path length lands. Above 0.8 it collapses: 1.0
+  // gives a 1 mm minimum radius and 17 mm of duct overlap. So it is pinned
+  // at 0.5, and the model keeps the parameter for the day it is worth
+  // SOLVING per geometry the way depth is.
+  const tight = 0.5;
+
   // "rect" = the original uniform x/y lattice; "arc" = coverage angles,
   // subdivided at equal solid angle
   // The mouth is stated by what it must deliver: two arcs, each with its own
@@ -555,12 +561,12 @@ export default function GinkgoHorn() {
     // the profile is written on the OPEN passage, so it needs the divider
     // thickness — without this it silently falls back to the gross outline
     t: thickness, profileArea,
-    tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
+    tightThroat: tight, tightMouth: tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
     lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo } : null,
     wallWidthAt: arcH / shown.nc,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
-    tight, tightSplit, tightThroat, tightMouth, thetaH, thetaV, arcH, arcV,
+    thetaH, thetaV, arcH, arcV,
     fTarget, dividerEndFrac, stations, thickness, profileArea,
     lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes]);
 
@@ -1720,22 +1726,6 @@ export default function GinkgoHorn() {
               <input type="range" min={0} max={60} step={0.5} value={arriveLen} onChange={(e) => setArriveLen(parseFloat(e.target.value))}
                 style={{ width: 110, accentColor: C.series7 }} />
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(arriveLen, 1)} mm</span>
-              <button onClick={() => { if (!tightSplit) { setTightThroat(tight); setTightMouth(tight); } setTightSplit(!tightSplit); }}
-                style={btn(tightSplit, C.series2)}>{tightSplit ? "split tangents" : "one tightness"}</button>
-              {!tightSplit ? <>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>bend tightness</span>
-                <input type="range" min={0.25} max={1.2} step={0.01} value={tight} onChange={(e) => setTight(parseFloat(e.target.value))}
-                  style={{ width: 110, accentColor: C.series2 }} />
-              </> : <>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>throat</span>
-                <input type="range" min={0.25} max={1.2} step={0.01} value={tightThroat} onChange={(e) => setTightThroat(parseFloat(e.target.value))}
-                  style={{ width: 84, accentColor: C.series2 }} />
-                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(tightThroat, 2)}</span>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>mouth</span>
-                <input type="range" min={0.25} max={1.2} step={0.01} value={tightMouth} onChange={(e) => setTightMouth(parseFloat(e.target.value))}
-                  style={{ width: 84, accentColor: C.series3 }} />
-                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(tightMouth, 2)}</span>
-              </>}
               <span style={{ fontSize: 10, color: C.inkMuted }}>divider end</span>
               <input type="range" min={0.05} max={1} step={0.01} value={dividerEndFrac} onChange={(e) => setDividerEndFrac(parseFloat(e.target.value))}
                 style={{ width: 110, accentColor: C.series6 }} />
@@ -1748,10 +1738,14 @@ export default function GinkgoHorn() {
             ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past λ/4 the cells are fighting each other.
             {" "}Divergence run is a straight launch of that exact length, along the local wavefront normal, before any bend starts — direction
             only, it does not hold the cross-section at its throat size; the profile expands from the very first station regardless.
-            {" "}The <strong style={{ color: C.inkDim }}>arrival run</strong> is its mirror at the mouth, and the two tangent magnitudes are the
-            cubic's only other freedom. Raising the <em>mouth</em> tangent, or lengthening the arrival run, holds the path straight off the
-            aperture and forces the turning back toward the throat — which is where you want it, because the section is small there and large
-            at the mouth. Past about 1.2 the tangent overshoots into a loop; the turning-angle warning catches it.
+            {" "}The <strong style={{ color: C.inkDim }}>arrival run</strong> is its mirror at the mouth. Lengthening it holds the path straight
+            off the aperture and forces the turning back toward the throat — which is where you want it, because the section is small there and
+            large at the mouth.
+            {" "}Bend tightness — the two Hermite tangent magnitudes — is <strong style={{ color: C.inkDim }}>fixed at 0.5</strong> and no longer a
+            control: the measured optimum sits at 0.45–0.55 on every well-posed geometry and the curve is flat between them. It is not safe at the
+            bottom of its old range, which is why it is pinned rather than minimised: 0.25 measures 8.50 mm of wall spread against 0.5's 5.63, and
+            12.7 mm of ΔL against 2.4, because the tangents also set where each cell's path length lands. Above 0.8 it collapses outright — 1.0
+            gives a 1 mm minimum bend radius and 17 mm of duct overlap.
             {" "}Both depth solves <strong style={{ color: C.inkDim }}>reset the two runs to 0</strong> as their reference state, so a solve is
             repeatable; adjust the runs afterwards to experiment from that point.
           </div>

@@ -46,7 +46,10 @@ Decisions the owner has made and that should not be relitigated:
   up in a real design yet.
 - `arcV` and `arcH` stay under the user's control even when that costs dL.
 - **Path lengthening must be a flexible per-cell mechanism**, not a
-  centre-row special case (owner, review session). See Task 1.
+  centre-row special case (owner). Built; see Task C for what remains.
+- **Bend tightness is FIXED at 0.5, not exposed and not minimised.** The
+  owner asked for the slider gone; the measurement says the minimum would
+  have been a bad place to pin it. See CLAUDE.md.
 - **BOTH depth solvers stay** — fc and min-dL are the two legs of the
   pick-two-of-three and each solve is a useful reference point.
 - **The omega readouts are DELETED, completely** (owner). Per-cell solid
@@ -63,59 +66,67 @@ Decisions the owner has made and that should not be relitigated:
   repeatable reference point, the runs are the experiment on top of it. The
   owner's working direction is arrival run long, divergence run short.
 
-## Task A — convex mouth-cell edges, to merge ducts early
+## Task A — convex mouth-cell edges, for coped knife-edge joints
 
-Owner's direction. The idea: bulge each mouth cell's edges outward so
-neighbouring ducts begin to overlap BEFORE the mouth, and the wall left
-between them terminates as a thin edge rather than a blunt land. (The
-owner's sentence describing the goal was cut off mid-way — confirm the
-intent before building.)
+**Owner's stated intent (confirmed):** bulge each mouth cell's edges
+outward so neighbouring ducts overlap before the mouth, and the ducts then
+meet at CURVED KNIFE EDGES — like coped or mitred pipe joints — rather than
+running separately to a blunt termination. This is the owner's next
+direction and they will drive it in a new session.
 
-What to think about first, because it touches the invariant everything
-downstream rests on: convex mouth cells NO LONGER TILE. Today the mouth
-grid is a partition — cells share edges exactly, areas sum to the aperture,
-and `mouthAreaTotal` and the per-cell expansion ratio both depend on that.
-Overlapping mouth cells double-count area, so before any geometry changes,
-decide what "mouth area" means: the union (what radiates) or the sum (what
-the profile targets). The expansion law reads the per-cell figure, so it
-needs the honest one.
+Read the `dividerEndFrac` finding in CLAUDE.md first: it is the same
+subject. Today the ducts do not share a wall anywhere except at the two
+ends, because the expansion profile pulls them apart through the middle.
+That is exactly what this task changes — and it is why the divider
+parameter currently has almost no geometric effect (0.2 mm), which will
+stop being true once ducts genuinely meet.
 
-The physical prize is real though — the blunt divider trailing edge is a
-diffracting discontinuity, and `dividerEndFrac` currently tapers the WALL
-to nothing while leaving the two ducts merely touching. Merging them
-earlier, with a knife edge, is a better termination.
+What to settle before touching geometry, because it breaks the invariant
+everything downstream rests on: convex mouth cells NO LONGER TILE. The
+mouth grid is currently a strict partition — cells share edges exactly,
+areas sum to the aperture, and both `mouthAreaTotal` and each cell's
+expansion ratio depend on that. Overlapping cells double-count, so decide
+first what "mouth area" means: the UNION (what radiates) or the SUM (what
+the expansion law targets per cell). The law reads the per-cell figure, so
+it needs the honest one. The owner has acknowledged this disrupts the
+expansion maths and wants to work through it deliberately.
 
 ## Task B — STEP export
 
-Owner's direction. See the session notes: the ducts are already a stack of
-section rings, which is exactly the input a lofted B-spline surface wants,
-so the data is the right shape. The work is a hand-written AP214 writer
-(no libraries) emitting B_SPLINE_SURFACE_WITH_KNOTS per duct wall plus
-capped, oriented CLOSED_SHELL topology. The real risk is that nothing in
-this environment can open a STEP file to check it, so plan the validation
-strategy — referential integrity of the entity graph, reuse of the existing
-manifold and volume checks — before writing the emitter.
+**Owner's stated purpose:** the STEP files are to be MANIPULATED downstream
+— adding features, and introducing joints so the horn can be 3D printed in
+parts and assembled. That purpose settles the fidelity question: faceted
+STEP is not good enough, because you cannot reliably fillet, offset or cut
+joints into a shell of 150k planar facets. The target is lofted B-spline
+surfaces with proper solid topology, which a CAD kernel can boolean and
+feature cleanly.
+
+The ducts are already a stack of section rings, which is exactly the input
+a skinned B-spline surface wants, so the data is the right shape. The work
+is a hand-written AP214 writer (no libraries) emitting
+B_SPLINE_SURFACE_WITH_KNOTS per duct wall plus capped, correctly oriented
+CLOSED_SHELL topology.
+
+**The owner will hand-validate the files**, which removes the main risk —
+nothing in this environment can open STEP. Still build the self-checks
+first: referential integrity of the entity graph (every referenced ID
+exists, every edge used exactly twice with opposite orientation) and reuse
+of the existing manifold and divergence-theorem volume checks on the
+topology being emitted. Expect one or two round trips on real CAD feedback.
 
 ## Task C — per-cell bow choice (deferred by the owner)
 
-Not needed yet; revisit when wavefront manipulation beyond dL equalisation
-is wanted.
+Not needed yet. Revisit when wavefront manipulation beyond dL equalisation
+is wanted — that is what it really buys: once each centreline is
+independently targetable you can specify a DELIBERATE per-cell path length
+and shape or steer the wavefront, rather than only flattening it.
 
-`solveBow` now enumerates direction x lobes x region for the WHOLE horn,
-builds and measures every candidate, ranks on `wallSpread` and applies the
-overlap floor as a constraint. What it does not do is choose PER CELL.
-
-That is the next increment, and the reason it was not done here is that a
-per-cell direction has to keep mirror pairs mirrored or it destroys the
-symmetry the directions exist to preserve. Shape of the work: pick the
-direction and region per SYMMETRY CLASS rather than per cell (the classes
-are already computed — `classIndex` in the equal-area solve), so mirrored
-cells move together by construction. Objective and constraint are unchanged.
-
-Worth knowing before starting: the winning region on the curved mouth is
-[0.3, 0.95] — "where the room is" — and the gap profile predicts it, so a
-per-cell version should probably derive each cell's region from its OWN gap
-profile rather than searching a fixed preset list.
+`solveBow` already enumerates direction x lobes x region for the whole horn.
+The per-cell version must choose per SYMMETRY CLASS (`classIndex` in the
+equal-area solve), not per cell, or it destroys the mirror symmetry the
+directions exist to preserve. Derive each class's region from its OWN gap
+profile rather than a preset list — on the curved mouth the winning region
+[0.3, 0.95] is exactly where the gap profile says the room is.
 
 The same lever still fixes the standing swept-mode interpenetration the
 PROFILE causes, independent of bows: spreading centrelines apart where k
@@ -169,6 +180,10 @@ thing being controlled.
   the Hypex card, pattern PER AXIS beside the arcs that set it. f_c is the
   flare constant and reads as contradicting the "mouth area needed" figure
   when it is not.
+- **Bend tightness pinned at 0.5** and its sliders removed (owner). The
+  measured optimum is 0.45-0.55 everywhere well-posed; the old minimum of
+  0.25 would have cost 8.50 mm of wall spread against 5.63 and 12.7 mm of
+  dL against 2.4.
 - **Defaults at the owner's call**: stations 16 -> 64 (bend structure was
   visibly faceted at 16; costs ~101 ms in the render pass and ~496 ms for
   the deferred clearance at 6x3), lobes 1 or 2 with 1 the default, bow
