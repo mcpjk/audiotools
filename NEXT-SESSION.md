@@ -1,4 +1,4 @@
-# Gingko Multicell Horn — immediate tasks
+# Ginkgo Multicell Horn — immediate tasks
 
 Updated by the review-and-consolidation session. Read `CLAUDE.md` first; this
 file only says **what to do next and why**, not how the thing works. Every
@@ -120,8 +120,8 @@ curvature is the thing being controlled.
 ## Task 5 — housekeeping that remains
 
 - `src/hgrid-model.js` keeps its name deliberately: it is the *grid* model,
-  not the tool. Do not rename it to match the Gingko name.
-- The long comment block at the top of `src/GingkoHorn.jsx` and the model
+  not the tool. Do not rename it to match the Ginkgo name.
+- The long comment block at the top of `src/GinkgoHorn.jsx` and the model
   notes in `src/hgrid-model.js` are part of the deliverable. If the physics
   changes, they change in the same edit.
 
@@ -139,4 +139,4 @@ npm run preview        # then load every page and confirm no console errors
 
 Chromium for headless checks:
 `/opt/pw-browsers/chromium-1194/chrome-linux/chrome --headless --no-sandbox
---virtual-time-budget=6000 --dump-dom http://localhost:4173/gingko-horn.html`
+--virtual-time-budget=6000 --dump-dom http://localhost:4173/ginkgo-horn.html`

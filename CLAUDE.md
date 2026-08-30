@@ -8,11 +8,12 @@ Five loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
-The multicell tool has been renamed twice: H-Grid Throat Partition, then
-Multicell Horn, now **Gingko Multicell Horn** — for the leaf, a round stem
-fanning into a broad folded blade. Note the owner's spelling, "Gingko", is the
-common variant of the tree's name (Ginkgo biloba); it is what appears in the
-URL and the UI and is not to be silently corrected.
+The multicell tool has been renamed three times: H-Grid Throat Partition,
+then Multicell Horn, then Gingko, now **Ginkgo Multicell Horn** — for the
+leaf, a round stem fanning into a broad folded blade. The spelling was
+corrected to the botanical "Ginkgo" (Ginkgo biloba) at the owner's request;
+the old `gingko-horn.html` URL now 404s in production, the same accepted
+fate as `cd-exit-divider.html` below.
 
 A sixth tool, CD Exit Cell Division, was deleted once the multicell tool
 superseded it. `cd-exit-divider.html` 404s in production — Workers Assets
@@ -23,7 +24,7 @@ link ever needs to live again, the tool is in the history.
 Tools are usually iterated **one at a time in separate sessions**. Assume you
 are touching one tool and that the others must come out byte-identical.
 
-`NEXT-SESSION.md` carries the current task queue for the Gingko tool — what to
+`NEXT-SESSION.md` carries the current task queue for the Ginkgo tool — what to
 build next and the measurement each task rests on. Keep it current; it is the
 handover between sessions.
 
@@ -35,7 +36,7 @@ horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
-gingko-horn.html          → src/gingko-main.jsx      → GingkoHorn
+ginkgo-horn.html          → src/ginkgo-main.jsx      → GinkgoHorn
 src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -161,7 +162,7 @@ Match what is already there rather than modernising it:
 - Inline style objects, no CSS modules, no styling library.
 - Hand-rolled SVG for all plots — no charting library.
 - Physics helpers as plain top-level functions above the component.
-- **One exception, deliberate**: `GingkoHorn.jsx` keeps its physics in
+- **One exception, deliberate**: `GinkgoHorn.jsx` keeps its physics in
   `src/hgrid-model.js` — a plain module with no React and no colour — so that
   `scripts/test-hgrid.mjs` can import it under node and check it against closed
   forms. Split a tool this way only when it has enough physics AND enough

@@ -3,7 +3,7 @@ import { C, SERIES } from "./palette.js";
 import * as G from "./hgrid-model.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GINGKO MULTICELL HORN
+// GINKGO MULTICELL HORN
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Named for the leaf: a round stem that fans out into a broad, gently folded
@@ -165,7 +165,7 @@ function Solving({ label = "solving" }) {
   );
 }
 
-export default function GingkoHorn() {
+export default function GinkgoHorn() {
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
   const [exitAngle, setExitAngle] = useState(8);
@@ -535,7 +535,7 @@ export default function GingkoHorn() {
   }, [solve, throat, shown, thickness, fab, map, clearance, profileT, fTarget]);
 
   // ── exports ────────────────────────────────────────────────────────────────
-  const stem = `gingko_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
+  const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
 
   const buildDXF = () => {
     const L = [];
@@ -566,7 +566,7 @@ export default function GingkoHorn() {
   };
 
   const buildJSON = () => JSON.stringify({
-    tool: "gingko multicell horn",
+    tool: "ginkgo multicell horn",
     units: "mm, Hz, degrees",
     driver: { exitDiameter: exitDia, exitHalfAngle: exitAngle, temperature, speedOfSound: c },
     topology: {
@@ -906,7 +906,7 @@ export default function GingkoHorn() {
       <style>{SPIN_CSS}</style>
       <div style={{ marginBottom: 14 }}>
         <h1 style={{ fontFamily: C.mono, fontSize: 16, fontWeight: 600, color: C.accent, margin: 0, letterSpacing: "0.05em" }}>
-          GINGKO MULTICELL HORN
+          GINKGO MULTICELL HORN
         </h1>
         <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>
           Equal-area row-and-column partition of a compression driver exit · independent grid-line curvature · per-cell ducts under an imposed Hypex expansion, routed to a biradial coverage mouth
