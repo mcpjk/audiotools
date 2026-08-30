@@ -63,7 +63,43 @@ Decisions the owner has made and that should not be relitigated:
   repeatable reference point, the runs are the experiment on top of it. The
   owner's working direction is arrival run long, divergence run short.
 
-## Task 1 — per-cell bow choice (the remaining step)
+## Task A — convex mouth-cell edges, to merge ducts early
+
+Owner's direction. The idea: bulge each mouth cell's edges outward so
+neighbouring ducts begin to overlap BEFORE the mouth, and the wall left
+between them terminates as a thin edge rather than a blunt land. (The
+owner's sentence describing the goal was cut off mid-way — confirm the
+intent before building.)
+
+What to think about first, because it touches the invariant everything
+downstream rests on: convex mouth cells NO LONGER TILE. Today the mouth
+grid is a partition — cells share edges exactly, areas sum to the aperture,
+and `mouthAreaTotal` and the per-cell expansion ratio both depend on that.
+Overlapping mouth cells double-count area, so before any geometry changes,
+decide what "mouth area" means: the union (what radiates) or the sum (what
+the profile targets). The expansion law reads the per-cell figure, so it
+needs the honest one.
+
+The physical prize is real though — the blunt divider trailing edge is a
+diffracting discontinuity, and `dividerEndFrac` currently tapers the WALL
+to nothing while leaving the two ducts merely touching. Merging them
+earlier, with a knife edge, is a better termination.
+
+## Task B — STEP export
+
+Owner's direction. See the session notes: the ducts are already a stack of
+section rings, which is exactly the input a lofted B-spline surface wants,
+so the data is the right shape. The work is a hand-written AP214 writer
+(no libraries) emitting B_SPLINE_SURFACE_WITH_KNOTS per duct wall plus
+capped, oriented CLOSED_SHELL topology. The real risk is that nothing in
+this environment can open a STEP file to check it, so plan the validation
+strategy — referential integrity of the entity graph, reuse of the existing
+manifold and volume checks — before writing the emitter.
+
+## Task C — per-cell bow choice (deferred by the owner)
+
+Not needed yet; revisit when wavefront manipulation beyond dL equalisation
+is wanted.
 
 `solveBow` now enumerates direction x lobes x region for the WHOLE horn,
 builds and measures every candidate, ranks on `wallSpread` and applies the
@@ -117,16 +153,18 @@ thing being controlled.
   mouth, dL 177 mm, per-cell fc 551-1534 Hz). Kept, with the consequence
   visible.
 - **Removed at the owner's request**: radial-in, the four world-axis bow
-  directions, and the butterfly family. The lobe selector came BACK at 1/2/3
-  (default 2) once the measured metric showed more lobes is better — see the
-  correction in CLAUDE.md.
+  directions, and the butterfly family. Lobes are offered as 1 or 2 with 1
+  the default — the measured metric prefers 2, but three-plus humps read as
+  a corrugation and are not commercially acceptable, so the default is a
+  deliberate trade. See the correction in CLAUDE.md.
 - **`wallSpread`**, the measured inner-vs-outer wall difference, replaces
   `bendWiden` as the number to judge a bow by. It overturned the lobe
   finding: bendWiden ranks 1 lobe best, the fibres say 2-3 by a factor of
   nearly 3.
 - **`solveBow`**: enumerate direction x lobes x region, measure each, take
   the lowest wall spread inside an overlap floor. Winner on the curved
-  mouth: short axis / 3 lobes / [0.3, 0.95].
+  mouth: short axis / 3 lobes / [0.3, 0.95] when 3 is allowed; the UI
+  searches only the offered 1 and 2.
 - **The three limits are printed SEPARATELY** — flare cutoff and loading in
   the Hypex card, pattern PER AXIS beside the arcs that set it. f_c is the
   flare constant and reads as contradicting the "mouth area needed" figure
