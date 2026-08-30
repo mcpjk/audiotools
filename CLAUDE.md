@@ -266,23 +266,41 @@ exists.
   badly-posed geometries (flat mouth, shallow depth) the whole curve is flat
   and something else dominates. If it is ever worth per-geometry accuracy,
   SOLVE it like depth; the model keeps the parameter.
-- **`dividerEndFrac` BARELY TOUCHES THE GEOMETRY, and the reason is that the
-  ducts are not sharing a wall in the first place.** The parameter tapers a
-  t/2 inset — 0.20 mm at t = 0.4 — from the throat to that station, so its
-  entire geometric scope is 0.2 mm. Measured at 6x3, 90x40, depth 425:
-  sweeping it 0.05 -> 1.0 moves the worst exported vertex by 0.213 mm and
-  changes total duct volume by 0.003% (11982.1 -> 11981.8 cm3). Nothing
-  visibly recombines because nothing is joined: the expansion profile pulls
-  the ducts apart within the first third and they stay apart until they tile
-  again at the mouth. Worse, the inset is applied where there IS no wall —
-  at dividerEndFrac 0.6 the signed duct gap at that station measures
-  10.98 mm, so a 0.4 mm divider is being modelled between ducts 11 mm apart.
-  What the parameter still does honestly is set the station at which f1End
-  and the evanescent-run check are evaluated. The geometric half wants
-  rethinking, and it is the same subject as the convex-mouth-edge work: if
-  ducts are made to MEET, there is a real wall to end and the parameter
-  becomes meaningful again.
-
+- **`dividerEndFrac` IS GONE, and the reason is that the geometry has no such
+  station.** The parameter tapered a t/2 inset from the throat to an
+  adjustable fraction of the path. It was removed because it described a
+  shared wall that does not exist: the cells tile at the throat and tile
+  again at the mouth, but the expansion profile pulls the ducts APART in
+  between, so there is nothing for a divider to end at. Measured before
+  removal at 6x3, 90x40, depth 425: sweeping it 0.05 -> 1.0 moved the worst
+  exported vertex 0.213 mm and changed duct volume by 0.003%, because its
+  whole geometric scope was the 0.2 mm inset — which is why moving the
+  slider appeared to do nothing. At dividerEndFrac 0.6 it was insetting a
+  0.4 mm divider between ducts measured 10.98 mm apart.
+  **The inset now tapers LINEARLY from full at the throat to zero at the
+  mouth**, which needs no station and keeps both ends exact: full wall where
+  the ducts genuinely tile, none where they tile again and must not be
+  inset or the mouth stops tiling. k = 1 at both ends measures 0 and 2e-16.
+  The evanescent-run analysis (`f1End`, `decayLen`, `runNeeded`,
+  `straightAvail`) went with it — its whole premise was a station where the
+  dividers stop, and with the taper running to the mouth the check could
+  never fire. **Restore it when ducts are made to MEET** (the convex-edge
+  work), because then there is a real wall and a real station.
+  **Cost**: the open-area solve now runs at every station rather than the
+  first third, so the render-pass mapping went 101 -> 142 ms at 6x3 with 64
+  stations. Two thirds of that was clawed back by making the solve closed
+  form — see the next finding.
+- **THE OPEN-AREA SCALE SOLVE IS CLOSED FORM, because open(k) is EXACTLY
+  quadratic in k.** Scaling a section about its centroid by k scales its
+  area as k^2 and every side length as k, while the inset depth is a FIXED
+  offset and the corner mitres depend only on angles, which scaling does not
+  change. So open(k) = A k^2 - L k + C exactly, and A is the gross vector
+  area — already known, since at large k the fixed inset is negligible. Two
+  evaluations therefore determine L and C, and the root is a quadratic
+  formula. Verified against direct evaluation over k = 0.85 to 1.5: worst
+  residual 2.4e-12 relative, most of it 3e-14. This replaced a seed plus up
+  to 24 secant steps per station, which cost 115 ms of a 184 ms mapping once
+  the taper ran the full path.
 - **f_c IS THE FLARE CONSTANT AND NOTHING ELSE, and this reads as a
   contradiction until it is spelled out.** The tool solves m from (area
   ratio, path length) and reports f_c = mc/2pi: how fast the passage
