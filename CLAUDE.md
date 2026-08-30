@@ -253,6 +253,36 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **BEND TIGHTNESS IS PINNED AT 0.5, and the minimum is NOT the safe end.**
+  The two Hermite tangent magnitudes are the cubic's only remaining freedom
+  and the measured optimum barely moves: wallSpread bottoms at 0.45-0.55 on
+  every well-posed geometry (curved 90x40 d425: 5.63 mm at 0.55; narrow
+  60x40 d500: 3.46 mm at 0.45) and is flat between them. The slider was
+  removed at the owner's request, but NOT set to its old minimum: 0.25
+  measures 8.50 mm of wall spread against 5.63 and 12.7 mm of dL against
+  2.4, because the tangents also decide where each cell's path length lands.
+  Above 0.8 it collapses — 1.0 gives a 1 mm minimum radius, 20 mm of wall
+  spread and 17 mm of duct overlap; 1.2 gives 517 deg of turning. On
+  badly-posed geometries (flat mouth, shallow depth) the whole curve is flat
+  and something else dominates. If it is ever worth per-geometry accuracy,
+  SOLVE it like depth; the model keeps the parameter.
+- **`dividerEndFrac` BARELY TOUCHES THE GEOMETRY, and the reason is that the
+  ducts are not sharing a wall in the first place.** The parameter tapers a
+  t/2 inset — 0.20 mm at t = 0.4 — from the throat to that station, so its
+  entire geometric scope is 0.2 mm. Measured at 6x3, 90x40, depth 425:
+  sweeping it 0.05 -> 1.0 moves the worst exported vertex by 0.213 mm and
+  changes total duct volume by 0.003% (11982.1 -> 11981.8 cm3). Nothing
+  visibly recombines because nothing is joined: the expansion profile pulls
+  the ducts apart within the first third and they stay apart until they tile
+  again at the mouth. Worse, the inset is applied where there IS no wall —
+  at dividerEndFrac 0.6 the signed duct gap at that station measures
+  10.98 mm, so a 0.4 mm divider is being modelled between ducts 11 mm apart.
+  What the parameter still does honestly is set the station at which f1End
+  and the evanescent-run check are evaluated. The geometric half wants
+  rethinking, and it is the same subject as the convex-mouth-edge work: if
+  ducts are made to MEET, there is a real wall to end and the parameter
+  becomes meaningful again.
+
 - **f_c IS THE FLARE CONSTANT AND NOTHING ELSE, and this reads as a
   contradiction until it is spelled out.** The tool solves m from (area
   ratio, path length) and reports f_c = mc/2pi: how fast the passage
