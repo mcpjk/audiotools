@@ -367,14 +367,14 @@ export default function GinkgoHorn() {
   // runs are excised from this on top, per cell, inside the model — a run
   // asked to be straight is not a place to put a bow.
   const [bowFrom, setBowFrom] = useState(0);
-  const [bowTo, setBowTo] = useState(1);
-  // TWO lobes by default. This is the opposite of what the integrated
-  // turning metric suggested, and the measured wall spread is why: a
-  // reversing bend cancels its own wall-length error, so more lobes is
-  // LESS phase error, not more — 23.2 mm at 1 lobe against 8.7 mm at 2 on
-  // the same geometry — and the amplitude falls as 1/n as well. Past 2 the
-  // gain flattens (7.0 mm at 3), so the choice is 1, 2 or 3.
-  const [lengthLobes, setLengthLobes] = useState(2);
+  const [bowTo, setBowTo] = useState(0.5);
+  // ONE lobe by default, at the owner's call: three humps read as a
+  // corrugation rather than a duct and are not commercially acceptable, and
+  // one is the shape a real part wants. Two is offered because the measured
+  // wall spread strongly prefers it — 23.2 mm at 1 lobe against 8.7 at 2 —
+  // so the choice is a deliberate trade of phase error against how the part
+  // looks and prints, not an oversight.
+  const [lengthLobes, setLengthLobes] = useState(1);
   const [bowSolve, setBowSolve] = useState(null);
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
@@ -396,7 +396,12 @@ export default function GinkgoHorn() {
   // solved from the geometry, so fc is a result and this is the readout that
   // says how far the geometry is from delivering the one you wanted
   const [fcWanted, setFcWanted] = useState(500);
-  const [stations, setStations] = useState(16);
+  // 64 stations by default. The bows and the profile both put structure
+  // BETWEEN stations, and at 16 the section plot and the exported solid were
+  // visibly faceted through a bend. The clearance measurement scales with
+  // this and is deferred off the render pass, so the cost lands where it is
+  // not felt.
+  const [stations, setStations] = useState(64);
 
   // ── optimiser ──
   const [wAspect, setWAspect] = useState(0.6);
@@ -602,6 +607,37 @@ export default function GinkgoHorn() {
     throatArea: throat.openTotal, fc: fcWanted, T: profileT, c,
     coverageDeg: mouthMode === "arc" ? thetaH : 90,
   }), [throat, fcWanted, profileT, c, mouthMode, thetaH]);
+
+  // ── THE THREE LIMITS, WHICH ARE THREE DIFFERENT QUESTIONS ─────────────────
+  // f_c is the FLARE constant, m·c/2π — how fast the passage expands, and
+  // nothing about the mouth. Whether the mouth is big enough to LOAD, and
+  // whether it is big enough to hold the PATTERN, are separate and are
+  // answered separately. They disagree by an order of magnitude at wide
+  // coverage, which is why they are never combined into one "cutoff".
+  const limits = useMemo(() => {
+    if (!map) return null;
+    // LOADING is an area question: the classic statement is a mouth
+    // circumference of about one wavelength, so it keys on the equivalent
+    // diameter of the total mouth area and has no per-axis form.
+    const dEq = 2 * Math.sqrt(map.mouthAreaTotal / Math.PI);
+    const loadHz = (c * 1000) / (Math.PI * dEq);
+    // PATTERN is a per-axis question: an axis holds its coverage angle only
+    // while the mouth measures about λ/sin(Θ/2) ACROSS THAT AXIS. Each axis
+    // therefore has its own limit, set by its own chord and its own angle.
+    const axis = (extent, thetaDeg) => {
+      const half = Math.sin((thetaDeg / 2) * D2R);
+      // Θ = 0 is a flat axis: it states no coverage angle, so this criterion
+      // has nothing to say about it rather than saying infinity
+      if (!(half > 1e-6) || !(extent > 1e-6)) return null;
+      return (c * 1000) / (extent * half);
+    };
+    return {
+      dEq, loadHz,
+      patH: axis(map.mouthWEff, thetaH),
+      patV: axis(map.mouthHEff, thetaV),
+      fcLo: map.profFcMin, fcHi: map.profFcMax,
+    };
+  }, [map, c, thetaH, thetaV]);
 
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
@@ -1376,42 +1412,29 @@ export default function GinkgoHorn() {
               color={map.Lmin >= href.minLength ? C.series4 : C.series5} />}
           </div>
         )}
-        {/* THREE DIFFERENT FREQUENCIES, AND THEY ARE ROUTINELY MISREAD AS ONE.
-            f_c is the FLARE constant, m·c/2π — it says how fast the passage
-            expands and nothing about the mouth. Whether the mouth is big
-            enough is two further, harder questions, and at wide coverage the
-            pattern one is by far the most demanding. Spelling all three out
-            here because "mouth area needed 7654 cm² but f_c already reads
-            500 Hz at 997 cm²" looks like a contradiction and is not. */}
-        {map && (
+        {/* FLARE and LOADING live here, with f_c. PATTERN is per axis and
+            lives beside the arcs that set it — see the mouth card. Keeping
+            them apart is the point: they are three different questions and
+            reading them as one "cutoff" is exactly the trap. */}
+        {limits && (
           <div style={{ marginTop: 8, padding: "7px 9px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4,
             fontFamily: C.mono, fontSize: 11, display: "flex", gap: 18, flexWrap: "wrap" }}>
-            <span style={{ color: C.inkDim }}>THE MOUTH YOU HAVE, {fmt(map.mouthAreaTotal / 100, 0)} cm², REACHES</span>
-            {(() => {
-              const dEq = 2 * Math.sqrt(map.mouthAreaTotal / Math.PI);
-              const loadHz = (c * 1000) / (Math.PI * dEq);
-              const patHz = (c * 1000) / (dEq * Math.max(1e-6, Math.sin((thetaH / 2) * D2R)));
-              const fcNow = map.profFcMin != null ? (map.profFcMin + map.profFcMax) / 2 : null;
-              return <>
-                <span><span style={{ color: C.inkMuted }}>flare cutoff </span>
-                  <span style={{ color: C.series3 }}>{fcNow ? fmt(fcNow, 0) : "—"} Hz</span></span>
-                <span><span style={{ color: C.inkMuted }}>loads to </span>
-                  <span style={{ color: loadHz <= (fcNow || Infinity) ? C.series4 : C.series1 }}>{fmt(loadHz, 0)} Hz</span>
-                  <span style={{ color: C.inkMuted }}> (circumference = λ)</span></span>
-                <span><span style={{ color: C.inkMuted }}>holds {fmt(thetaH, 0)}° to </span>
-                  <span style={{ color: patHz <= (fcNow || Infinity) * 1.2 ? C.series4 : C.series5 }}>{fmt(patHz, 0)} Hz</span>
-                  <span style={{ color: C.inkMuted }}> (λ/sin(Θ/2))</span></span>
-              </>;
-            })()}
+            <span><span style={{ color: C.inkDim }}>FLARE CUTOFF </span>
+              <span style={{ color: C.series3 }}>
+                {limits.fcLo != null ? `${fmt(limits.fcLo, 0)}–${fmt(limits.fcHi, 0)} Hz` : "—"}</span>
+              <span style={{ color: C.inkMuted }}> · m·c/2π, the expansion rate alone</span></span>
+            <span><span style={{ color: C.inkDim }}>LOADING LIMIT </span>
+              <span style={{ color: C.series4 }}>{fmt(limits.loadHz, 0)} Hz</span>
+              <span style={{ color: C.inkMuted }}> · ⌀{fmt(limits.dEq, 0)} mm equivalent, circumference = λ</span></span>
           </div>
         )}
         <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
-          <strong style={{ color: C.inkDim }}>Three different frequencies, and only the first is f_c.</strong> The cutoff this tool solves and
-          reports is the <em>flare</em> constant, f_c = m·c/2π: how fast the passage expands, and nothing more. Whether the mouth is large enough
-          to <em>load</em> at that frequency, and whether it is large enough to hold the <em>pattern</em> there, are two further questions with
-          their own answers — shown above. They routinely disagree by an order of magnitude at wide coverage, and a horn can perfectly well have a
-          500 Hz flare cutoff, load comfortably below it, and still lose 90° control above 1 kHz. That is not an inconsistency in the numbers; it is
-          the actual behaviour of a small-mouthed horn, and the reason all three are printed rather than one.
+          <strong style={{ color: C.inkDim }}>f_c is the flare constant, not "the cutoff".</strong> It is m·c/2π — how fast the passage expands,
+          and nothing more. Whether the mouth is large enough to <em>load</em> at that frequency is the second question, answered above; whether it
+          is large enough to hold the <em>pattern</em> is the third, answered per axis beside the arcs that set it, because each axis holds its own
+          angle over its own width. The three routinely disagree by an order of magnitude at wide coverage: a horn can have a 500 Hz flare cutoff,
+          load comfortably to 312 Hz, and still lose 90° horizontal control above 1.4 kHz. That is not an inconsistency — it is what a small-mouthed
+          horn does, and it is why the three are reported separately and never merged.
           <br />
           The same calculation the standalone horn tool does, run on this multicell's <strong style={{ color: C.inkDim }}>acoustic</strong> throat —
           the summed open area of the cells, not the driver's bore, because the dividers are in the way and the wave only sees what is left.
@@ -1472,6 +1495,29 @@ export default function GinkgoHorn() {
                 <span style={{ color: C.ink }}>{fmt(map.mouthAreaTotal / 100, 0)} cm²</span>
                 <span style={{ color: C.inkMuted }}> · per-cell spread </span>
                 <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 4)}%</span></span>
+            </div>
+          )}
+          {/* PATTERN CONTROL, PER AXIS, beside the arcs that set it. An axis
+              holds its coverage angle only while the mouth measures about
+              λ/sin(Θ/2) across that axis, so each axis has its own limit from
+              its own chord and its own angle — and the two are usually far
+              apart. This is the criterion that governs at wide coverage, and
+              it is nothing to do with the flare cutoff. */}
+          {limits && (
+            <div style={{ marginTop: 6, padding: "6px 8px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4,
+              fontFamily: C.mono, fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <span style={{ color: C.inkDim }}>PATTERN HOLDS DOWN TO</span>
+              <span><span style={{ color: C.inkMuted }}>{fmt(thetaH, 0)}° horizontal </span>
+                {limits.patH
+                  ? <span style={{ color: C.series1 }}>{fmt(limits.patH, 0)} Hz</span>
+                  : <span style={{ color: C.inkMuted }}>flat axis — no angle stated</span>}
+                <span style={{ color: C.inkMuted }}> over {fmt(map.mouthWEff, 0)} mm</span></span>
+              <span><span style={{ color: C.inkMuted }}>{fmt(thetaV, 0)}° vertical </span>
+                {limits.patV
+                  ? <span style={{ color: C.series2 }}>{fmt(limits.patV, 0)} Hz</span>
+                  : <span style={{ color: C.inkMuted }}>flat axis — no angle stated</span>}
+                <span style={{ color: C.inkMuted }}> over {fmt(map.mouthHEff, 0)} mm</span></span>
+              <span style={{ color: C.inkMuted }}>λ/sin(Θ/2) across each axis — widen the arc to lower it</span>
             </div>
           )}
           <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
@@ -1718,7 +1764,7 @@ export default function GinkgoHorn() {
                 {lengthenOn ? "equalising to the longest cell" : "off — bare geometry"}
               </button>
               <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>lobes</span>
-              {[1, 2, 3].map((n) => (
+              {[1, 2].map((n) => (
                 <button key={n} onClick={() => setLengthLobes(n)} disabled={!lengthenOn}
                   style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
               ))}
@@ -1730,7 +1776,7 @@ export default function GinkgoHorn() {
               {/* the whole trade is discrete and small, so it can simply be
                   enumerated and measured rather than dialled by hand */}
               <button disabled={!lengthenOn} onClick={() => {
-                const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, {});
+                const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, { lobeSet: [1, 2] });
                 setBowSolve(r);
                 if (r.ok) { setLengthDir(r.best.dir); setLengthLobes(r.best.lobes); setBowFrom(r.best.uStart); setBowTo(r.best.uEnd); }
               }} style={{ ...btn(false, C.series3), opacity: lengthenOn ? 1 : 0.4 }}>solve the bow</button>
@@ -1753,7 +1799,7 @@ export default function GinkgoHorn() {
                 onChange={(e) => setBowTo(Math.max(parseFloat(e.target.value), bowFrom + 0.1))}
                 style={{ width: 110, accentColor: C.series1 }} />
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowTo.toFixed(2)}</span>
-              {[["whole path", 0, 1], ["throat half", 0, 0.5], ["divider region", 0, 0.35], ["where the room is", 0.3, 0.95]].map(([l, a, b]) => (
+              {[["throat half", 0, 0.5], ["divider region", 0, 0.35]].map(([l, a, b]) => (
                 <button key={l} onClick={() => { setBowFrom(a); setBowTo(b); }} disabled={!lengthenOn}
                   style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
               ))}
