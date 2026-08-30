@@ -239,7 +239,10 @@ mouth can be stated as coverage angles instead of millimetres (`mouthMode:
 Depth can likewise be solved for the dL MINIMUM (`solveDepthForMinDL`) — the
 other leg of the pick-two-of-three — and the signed clearance is separable
 (`ductClearance`, `computeClearance: false`) so the UI measures it off the
-render pass.
+render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
+the longest cell's length in swept mode, and the tool previews the exported
+duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
+rule stands).
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -249,6 +252,26 @@ poorly-loaded case. That is the thing to move off, and the reason the profile
 exists.
 
 ## Known findings worth not re-deriving
+
+- **PER-CELL LENGTHENING IS BUILT (`lengthen`), and its closed form is
+  straight-path only.** Each cell shorter than the longest is bowed laterally
+  with a sin^2(n pi u) window — zero value AND zero slope at both ends, so the
+  mouth rings move 3e-14 mm and station 0 stays in the throat plane. The
+  leading-order added length is n^2 pi^2 a^2 / (4L) and it MISLEADS on a
+  curved centreline: a lateral offset there changes length at FIRST order
+  through the kappa.delta term (measured 18-45% off), so the solver bisects on
+  the MEASURED length and the formula is only its seed; the closed-form test
+  runs on a 1x1 grid whose single cell is straight to 2e-15 deg. Equalising dL
+  this way equalised fc 0.594% -> 0.044% at 90x40, depth 425 — the mechanism
+  does what the theory said. Amplitude scales as 1/n lobes for the same
+  length, and amplitude is what eats clearance (11.4 mm of bow at 2 lobes
+  measured 2.05 mm of overlap on that case): raise lobes before accepting a
+  bigger bow, and read the clearance after every change. Flow mode refuses
+  the feature — a shared boundary point cannot follow two paths.
+- **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
+  the trivial-return path through `finish()` before `let it` was initialised
+  — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now
+  itself a regression test and the closed-form testbed above.
 
 - **H-grid f₁ is set by rows, not columns.** The binding cell's long dimension
   runs in the row direction, so adding columns only narrows every cell — raising

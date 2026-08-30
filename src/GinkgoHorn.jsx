@@ -153,6 +153,155 @@ const SEED_NOTE = {
 // needed. Keyframes live in a <style> tag because the tools carry no CSS file.
 const SPIN_CSS = "@keyframes hgSpin{to{transform:rotate(360deg)}}";
 
+// ── 3-D DUCT PREVIEW ────────────────────────────────────────────────────────
+// The inset duct solids — exactly what the STL exports — drawn by hand on a
+// canvas: no three.js, because the repo carries no external libraries beyond
+// React, and it does not need one. At preview resolution the whole horn is
+// ~9k flat-shaded quads: orthographic projection, painter's sort, two-sided
+// lambert shading, which canvas 2D fills at interactive rates. Colours mix
+// each duct's palette colour toward C.page, so the shading follows the theme
+// with nothing hard-coded.
+function DuctPreview({ ducts, dim }) {
+  const canvasRef = useRef(null);
+  const view = useRef({ yaw: -2.45, pitch: 0.42, zoom: 1 });
+  const raf = useRef(false);
+
+  // one flat structure per geometry change: points, quads, per-duct shade
+  // tables (17 quantised lambert levels, so no colour strings are built
+  // inside the draw loop)
+  const geom = useMemo(() => {
+    if (!ducts || !ducts.length) return null;
+    const pts = [], quads = [], quadDuct = [], shades = [];
+    const pg = hex2rgb(C.page);
+    ducts.forEach((d, di) => {
+      const rgb = hex2rgb(d.color);
+      const tab = [];
+      for (let s = 0; s <= 16; s++) {
+        const b = 0.3 + 0.7 * (s / 16);
+        tab.push(`rgb(${Math.round(pg[0] + (rgb[0] - pg[0]) * b)},${Math.round(pg[1] + (rgb[1] - pg[1]) * b)},${Math.round(pg[2] + (rgb[2] - pg[2]) * b)})`);
+      }
+      shades.push(tab);
+      const base = pts.length;
+      d.rings.forEach((ring) => ring.forEach((p) => pts.push(p)));
+      const n = d.rings[0].length, S = d.rings.length;
+      for (let q = 0; q < S - 1; q++)
+        for (let k = 0; k < n; k++) {
+          quads.push([base + q * n + k, base + q * n + ((k + 1) % n),
+            base + (q + 1) * n + ((k + 1) % n), base + (q + 1) * n + k]);
+          quadDuct.push(di);
+        }
+    });
+    let cx = 0, cy = 0, cz = 0;
+    for (const p of pts) { cx += p[0] / pts.length; cy += p[1] / pts.length; cz += p[2] / pts.length; }
+    let rad = 1;
+    for (const p of pts) rad = Math.max(rad, Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz));
+    return { pts, quads, quadDuct, shades, ctr: [cx, cy, cz], rad };
+  }, [ducts]);
+
+  const draw = () => {
+    const cv = canvasRef.current;
+    if (!cv || !geom) return;
+    const w = Math.max(300, cv.clientWidth || 600), h = 420;
+    if (cv.width !== w) cv.width = w;
+    if (cv.height !== h) cv.height = h;
+    const g = cv.getContext("2d");
+    g.fillStyle = C.page;
+    g.fillRect(0, 0, w, h);
+    const { yaw, pitch, zoom } = view.current;
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const sc = (Math.min(w, h) / (2.3 * geom.rad)) * zoom;
+    const N = geom.pts.length;
+    const px = new Float64Array(N), py = new Float64Array(N), pz = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      const p = geom.pts[i];
+      const x = p[0] - geom.ctr[0], y = p[1] - geom.ctr[1], z = p[2] - geom.ctr[2];
+      const x1 = x * cyw + z * syw, z1 = -x * syw + z * cyw;
+      const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+      px[i] = w / 2 + x1 * sc;
+      py[i] = h / 2 - y2 * sc;
+      pz[i] = z2;
+    }
+    // painter's algorithm: far quads first. Orthographic, so mean depth is a
+    // sound sort key for quads this small relative to the ducts.
+    const Q = geom.quads.length;
+    const depth = new Float64Array(Q), order = new Array(Q);
+    for (let q = 0; q < Q; q++) {
+      const [a, b, c2, d] = geom.quads[q];
+      depth[q] = pz[a] + pz[b] + pz[c2] + pz[d];
+      order[q] = q;
+    }
+    order.sort((a, b) => depth[a] - depth[b]);
+    for (let oi = 0; oi < Q; oi++) {
+      const q = order[oi];
+      const [a, b, c2, d] = geom.quads[q];
+      // two-sided shading — the ducts are open tubes and their inner walls
+      // are visible through the mouths, so backfaces are drawn, not culled
+      const ux = px[b] - px[a], uy = py[b] - py[a], uz = pz[b] - pz[a];
+      const vx = px[d] - px[a], vy = py[d] - py[a], vz = pz[d] - pz[a];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const nl = Math.hypot(nx, ny, nz) || 1e-9;
+      const lamb = Math.abs((0.33 * nx + 0.24 * ny + 0.91 * nz) / nl);
+      const sIdx = Math.max(0, Math.min(16, Math.round(lamb * 16)));
+      g.fillStyle = geom.shades[geom.quadDuct[q]][sIdx];
+      g.beginPath();
+      g.moveTo(px[a], py[a]); g.lineTo(px[b], py[b]);
+      g.lineTo(px[c2], py[c2]); g.lineTo(px[d], py[d]);
+      g.closePath(); g.fill();
+    }
+  };
+
+  const requestDraw = () => {
+    if (raf.current) return;
+    raf.current = true;
+    requestAnimationFrame(() => { raf.current = false; draw(); });
+  };
+  useEffect(() => { requestDraw(); }, [geom]);
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    let dragging = null;
+    const down = (e) => { dragging = [e.clientX, e.clientY]; e.preventDefault(); };
+    const move = (e) => {
+      if (!dragging) return;
+      view.current.yaw += (e.clientX - dragging[0]) * 0.008;
+      view.current.pitch = Math.max(-1.55, Math.min(1.55, view.current.pitch + (e.clientY - dragging[1]) * 0.008));
+      dragging = [e.clientX, e.clientY];
+      requestDraw();
+    };
+    const up = () => { dragging = null; };
+    // wheel zoom needs a non-passive listener or preventDefault is ignored
+    const wheel = (e) => {
+      e.preventDefault();
+      view.current.zoom = Math.max(0.3, Math.min(6, view.current.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      requestDraw();
+    };
+    cv.addEventListener("mousedown", down);
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    cv.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      cv.removeEventListener("mousedown", down);
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      cv.removeEventListener("wheel", wheel);
+    };
+  }, []);
+
+  const setView = (yaw, pitch) => { view.current.yaw = yaw; view.current.pitch = pitch; requestDraw(); };
+  return (
+    <div style={{ opacity: dim ? 0.35 : 1 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+        {[["three-quarter", -2.45, 0.42], ["front", Math.PI, 0], ["side", Math.PI / 2, 0], ["top", Math.PI, 1.55]].map(([l, yw, pt]) => (
+          <button key={l} onClick={() => setView(yw, pt)} style={btn(false, C.series2)}>{l}</button>
+        ))}
+      </div>
+      <canvas ref={canvasRef}
+        style={{ width: "100%", height: 420, display: "block", borderRadius: 4, background: C.page, border: `1px solid ${C.border}`, cursor: "grab" }} />
+    </div>
+  );
+}
+
 function Solving({ label = "solving" }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: C.mono, fontSize: 10, color: C.accent, whiteSpace: "nowrap" }}>
@@ -210,6 +359,13 @@ export default function GinkgoHorn() {
   const [arcV, setArcV] = useState(213);
   const [fcSolve, setFcSolve] = useState(null);
   const [dlSolve, setDlSolve] = useState(null);
+  // ── per-cell path lengthening ──
+  // Off by default: it is a correction to apply after depth has done what it
+  // can, and the depth solves always run on the bare geometry. The deficit
+  // map decides which cells bow — nothing assumes rows, centres or rims.
+  const [lengthenOn, setLengthenOn] = useState(false);
+  const [lengthLobes, setLengthLobes] = useState(2);
+  const [lengthDir, setLengthDir] = useState("y");
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
@@ -350,11 +506,14 @@ export default function GinkgoHorn() {
   // lengthening the arrival run FROM the solved state is the experiment
   // (it holds the path straight off the aperture and pushes the turning back
   // toward the throat, where the section is small).
+  // The solves also run with lengthening OFF: they solve the bare geometry,
+  // and the bows are the correction applied on top of whatever depth they
+  // land on. The lengthening toggle itself is left alone.
   const RUN_DEFAULTS = { divergeLen: 0, arriveLen: 0 };
   const solveRefOpts = () => {
     setDivergeLen(RUN_DEFAULTS.divergeLen);
     setArriveLen(RUN_DEFAULTS.arriveLen);
-    return { ...mapOpts, ...RUN_DEFAULTS };
+    return { ...mapOpts, ...RUN_DEFAULTS, lengthen: null };
   };
   // THE DEPTH THAT EQUALISES PATH LENGTH. When the mouth's curvature centre
   // lands on the throat the mouth IS a sphere about the throat, so every cell
@@ -383,10 +542,12 @@ export default function GinkgoHorn() {
     t: thickness, profileArea,
     tightThroat: tightSplit ? tightThroat : tight, tightMouth: tightSplit ? tightMouth : tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
+    lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir } : null,
     wallWidthAt: arcH / shown.nc,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     tight, tightSplit, tightThroat, tightMouth, thetaH, thetaV, arcH, arcV,
-    fTarget, dividerEndFrac, stations, thickness, profileArea]);
+    fTarget, dividerEndFrac, stations, thickness, profileArea,
+    lengthenOn, lengthLobes, lengthDir]);
 
   // The clearance is skipped HERE and measured in the deferred effect below:
   // it costs ~5x the rest of the mapping (measured ~100 ms against ~20), and
@@ -517,6 +678,8 @@ export default function GinkgoHorn() {
       w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${clearance && clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(clearance.overlap, 4)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s).` : ""}`);
     if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
       w.push(`The narrowest duct-to-duct gap is ${fmt(clearance.minMid, 4)} mm at station ${clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
+    if (map && map.lengthen && map.lengthen.shortfall > 0.1)
+      w.push(`Path lengthening hit its amplitude cap: the worst cell is still ${fmt(map.lengthen.shortfall, 1)} mm short of the ${fmt(map.lengthen.target, 1)} mm target. More lobes reach the same length at 1/n the amplitude — raise the lobe count rather than accepting the shortfall.`);
     // Only one fc when dL is small — past a few percent the horn does not have
     // one cutoff, and the honest report is the range plus the lever.
     if (map && profileT != null && map.fcDecomp && map.fcDecomp.full > 3)
@@ -636,6 +799,8 @@ export default function GinkgoHorn() {
       "f1_at_divider_end_Hz", "decay_len_mm", "straight_run_needed_mm", "straight_run_avail_mm",
       // the expansion profile, per cell. Empty when no law is imposed.
       "profile_T", "hypex_m_per_mm", "fc_Hz", "expansion_ratio", "k_min", "k_max", "min_gap_mm",
+      // lateral bow amplitude from path lengthening; empty when it is off
+      "bow_amp_mm",
     ].join(",");
     const rows = throat.cells.map((cc) => {
       const r = map && map.rows.find((x) => x.id === cc.id);
@@ -658,6 +823,7 @@ export default function GinkgoHorn() {
         r && r.profM != null ? r.profScaleMax.toFixed(6) : "",
         clrNow && clrNow.perCell.has(cc.id) && profileT != null
           ? clrNow.perCell.get(cc.id).toFixed(4) : "",
+        map && map.lengthen && r ? r.snakeAmp.toFixed(3) : "",
       ].join(",");
     });
     return [head, ...rows].join("\n");
@@ -698,6 +864,31 @@ export default function GinkgoHorn() {
   const fHi = Math.max(...throat.cells.map((x) => x.f1));
   const cellFill = (cc) => rampAt(fHi > fLo ? (cc.f1 - fLo) / (fHi - fLo) : 0.5);
   const pathOf = (poly) => "M" + poly.map(([x, y]) => `${x.toFixed(3)},${(-y).toFixed(3)}`).join(" L") + " Z";
+
+  // ── the duct solids for the 3-D preview, built off the render pass ────────
+  // ductSections applies the same inset the STL export applies, so what the
+  // preview shows IS the exported geometry. Every 2nd boundary point is kept —
+  // plenty for the eye, and it halves the fill work per frame.
+  const [solids3d, setSolids3d] = useState(null);
+  useEffect(() => {
+    if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setSolids3d(null); return; }
+    const id = setTimeout(() => {
+      const ducts = [];
+      for (const cc of throat.cells) {
+        const r = map.rows.find((x) => x.id === cc.id);
+        if (!r) continue;
+        const secs = G.ductSections(cc, r, { t: thickness, dividerEndFrac });
+        if (!secs) continue;
+        ducts.push({
+          id: cc.id, color: cellFill(cc),
+          rings: secs.map((s) => s.pts.filter((_, k) => k % 2 === 0)),
+        });
+      }
+      setSolids3d({ of: map, ducts });
+    }, 80);
+    return () => clearTimeout(id);
+  }, [map]);
+  const solidsStale = !solids3d || solids3d.of !== map;
 
   const throatSVG = () => {
     const pad = R * 0.18;
@@ -1201,6 +1392,24 @@ export default function GinkgoHorn() {
         </div>
       )}
 
+      {/* 3-D DUCT PREVIEW — the exported solids, live */}
+      {map && (
+        <div style={card}>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
+            <span style={{ ...secTitle, marginBottom: 0 }}>Duct solids · what the STL exports</span>
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>drag to orbit · scroll to zoom</span>
+            {solidsStale && <Solving label="building solids" />}
+          </div>
+          {solids3d && <DuctPreview ducts={solids3d.ducts} dim={solidsStale} />}
+          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
+            The {throat.N} ducts exactly as the STL carries them — inset by half the divider thickness where the dividers run, tapering to
+            nothing where they stop. The gaps the expansion profile opens, the bows path lengthening adds, and any contact the clearance
+            warnings report are all visible here: the numbers above are the measurement, this is the picture. Throat at the {" "}
+            <em>front</em> view's near side; <em>top</em> looks down the vertical axis.
+          </div>
+        </div>
+      )}
+
       {/* HYPEX EXPANSION — the design intent, before any geometry */}
       <div style={card}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
@@ -1405,6 +1614,45 @@ export default function GinkgoHorn() {
             at the mouth. Past about 1.2 the tangent overshoots into a loop; the turning-angle warning catches it.
             {" "}Both depth solves <strong style={{ color: C.inkDim }}>reset the two runs to 0</strong> as their reference state, so a solve is
             repeatable; adjust the runs afterwards to experiment from that point.
+          </div>
+
+          {/* PATH LENGTHENING */}
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ ...secTitle, marginBottom: 0 }}>Path lengthening</span>
+              <button onClick={() => setLengthenOn(!lengthenOn)} style={btn(lengthenOn, C.series1)}>
+                {lengthenOn ? "equalising to the longest cell" : "off — bare geometry"}
+              </button>
+              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>lobes</span>
+              {[1, 2, 3, 4].map((n) => (
+                <button key={n} onClick={() => setLengthLobes(n)} disabled={!lengthenOn}
+                  style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
+              ))}
+              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>bow direction</span>
+              {[["y", "+y"], ["-y", "−y"], ["x", "+x"], ["-x", "−x"]].map(([v, l]) => (
+                <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
+                  style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
+              ))}
+              {lengthenOn && map && map.lengthen && (
+                <span style={{ fontFamily: C.mono, fontSize: 11, marginLeft: 8 }}>
+                  <span style={{ color: C.inkMuted }}>target </span>{fmt(map.lengthen.target, 1)} mm
+                  <span style={{ color: C.inkMuted }}> · {map.lengthen.cells} cells bowed · max amplitude </span>
+                  <span style={{ color: map.lengthen.ampMax > 15 ? C.series1 : C.series4 }}>{fmt(map.lengthen.ampMax, 1)} mm</span>
+                  <span style={{ color: C.inkMuted }}> · ΔL now </span>
+                  <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : C.series5 }}>{fmt(map.dL, 3)} mm</span>
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
+              Each cell shorter than the longest is <strong style={{ color: C.inkDim }}>bowed sideways</strong> until its centreline reaches the
+              longest cell's length — the deficit map decides which cells move, and the longest cell is never touched, because a bow can only add.
+              The window is sin²(n·π·u): zero value <em>and</em> zero slope at both ends, so the throat mating face, the mouth tiling and the launch
+              and arrival directions all survive exactly (verified to 3×10⁻¹⁴ mm). More lobes buy the same length at 1/n the amplitude — and amplitude
+              is what eats the clearance between ducts, so raise the lobes before accepting a bigger bow. Equalising path length also equalises f_c:
+              the spread readout below collapses when this is on. The price is paid in clearance — read the narrowest-gap / interpenetration figures
+              below after every change here. Swept-mode only, and depth solves always run on the bare geometry: get depth close first, then let the
+              bows close what depth cannot.
+            </div>
           </div>
 
           {/* SECTION CONSTRUCTION */}
@@ -1633,6 +1881,7 @@ export default function GinkgoHorn() {
         <div style={{ overflowX: "auto", maxHeight: 360 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: C.mono, fontSize: 11 }}>
             <thead><tr>{["cell", "open mm²", "L_long", "L_short", "aspect", "⌀", "convex", "P–W kHz", "f₁ kHz", "model", "path mm", "pad", "turn°", "twist°", "aim°",
+              ...(map && map.lengthen ? ["bow mm"] : []),
               ...(profileT != null ? ["f_c Hz", "k max", "gap mm"] : [])].map((h) => (
               <th key={h} style={{ textAlign: "right", padding: "6px 9px", borderBottom: `1px solid ${C.borderStrong}`, color: C.inkDim, fontSize: 10, fontWeight: 500, position: "sticky", top: 0, background: C.panel, whiteSpace: "nowrap" }}>{h}</th>
             ))}</tr></thead>
@@ -1661,6 +1910,7 @@ export default function GinkgoHorn() {
                     {td(r ? fmt(r.turnDeg, 1) : "—", r && r.turnDeg > map.turnLimitDeg ? C.series5 : C.inkDim)}
                     {td(r ? fmt(r.twistDeg, 1) : "—", C.inkDim)}
                     {td(r ? fmt(r.aimErrDeg, 2) : "—", r && r.aimErrDeg > map.aimLimitDeg ? C.series5 : C.inkDim)}
+                    {map && map.lengthen && td(r && r.snakeAmp > 1e-9 ? fmt(r.snakeAmp, 1) : "0", r && r.snakeAmp > 1e-9 ? C.series1 : C.inkMuted)}
                     {profileT != null && <>
                       {td(r && r.profFc != null ? fmt(r.profFc, 0) : "—", C.series4)}
                       {td(r && r.profScaleMax != null ? fmt(r.profScaleMax, 3) : "—",

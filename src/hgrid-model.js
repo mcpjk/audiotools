@@ -1577,6 +1577,14 @@ export function mapThroatToMouth(throat, opts) {
     // their boundary exactly). "swept" = sections built per cell in specified
     // planes, which trades that invariant for centreline freedom.
     sectionMode = "flow",
+    // ── PER-CELL PATH LENGTHENING ──
+    // { lobes, dir, tol, ampCap } or null. Each cell whose centreline is
+    // shorter than the longest cell's gets a lateral bow solved to close its
+    // own deficit — the deficit map decides which cells move, nothing here
+    // assumes rows, centres or rims. Swept mode only: in flow mode a shared
+    // boundary point cannot follow two different paths, so the feature is
+    // structurally unavailable there, not merely unimplemented.
+    lengthen = null,
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
   // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
@@ -1659,6 +1667,59 @@ export function mapThroatToMouth(throat, opts) {
 
   const lam = (c / fTarget) * 1000; // mm
   const rows = [];
+  const pathOpts = { divergeLen, arriveLen, tight, tightThroat, tightMouth };
+  const cellEnds = (cellRec) => {
+    const P0 = v3(cellRec.centroid[0], cellRec.centroid[1], 0);
+    return {
+      P0,
+      T0dir: un3(s3(P0, v3(0, 0, zLaunch))),
+      P1: mouthAt(cellRec.i + 0.5, cellRec.j + 0.5),
+      T1dir: mouthNorm(cellRec.i + 0.5, cellRec.j + 0.5),
+    };
+  };
+  const arcLenOf = (P) => {
+    let L = 0;
+    for (let q = 0; q < P.length - 1; q++) L += nrm3(s3(P[q + 1], P[q]));
+    return L;
+  };
+
+  // ── PER-CELL PATH LENGTHENING: THE TARGET, AND THE BOW THAT REACHES IT ───
+  // The target is the LONGEST cell's base length, because a bow can only add
+  // length — a short cell is bowed out to meet the long one, never the other
+  // way round. Which cells move is read off the deficit map: on the biradial
+  // mouth the ordering flips with depth (rim cells long when shallow, the
+  // centre cell when deep), so nothing here may assume rows, centres or rims.
+  //
+  // The displacement window is sin^2(n·pi·u) along the arc-length fraction u:
+  // zero VALUE at both ends, so the throat and mouth rings stay exactly where
+  // the tiling put them, and zero SLOPE at both ends, so the launch and
+  // arrival directions survive exactly — the mating face and the aim are both
+  // built on those. Its added length is n^2 pi^2 a^2 / (4L) to leading order
+  // (same closed form as the plain half-sine, and what the tests check), so
+  // more lobes buy the same length at 1/n the amplitude — which is the whole
+  // game, because amplitude is what eats the clearance between ducts.
+  const snake = (() => {
+    if (!lengthen || sectionMode !== "swept") return null;
+    const { lobes = 2, dir = "y", tol = 0.02, ampCap = 150, targetLen = null } = lengthen;
+    const D = dir === "x" ? v3(1, 0, 0) : dir === "-x" ? v3(-1, 0, 0)
+      : dir === "-y" ? v3(0, -1, 0) : v3(0, 1, 0);
+    // targetLen overrides the longest-cell rule — a margin above the longest,
+    // or a synthetic deficit for the straight-path closed-form test. Note the
+    // closed form n^2 pi^2 a^2 / (4L) holds on a STRAIGHT base path only: on
+    // a curved one a lateral offset changes length at FIRST order through the
+    // kappa.delta term, so the solver bisects on the measured length and the
+    // formula is only its seed.
+    let target = targetLen ?? 0;
+    if (targetLen == null)
+      for (const cellRec of throat.cells) {
+        const e0 = cellEnds(cellRec);
+        const tr = buildTrajectory(e0.P0, e0.T0dir, e0.P1, e0.T1dir, pathOpts);
+        const P = [];
+        for (let q = 0; q <= samples; q++) P.push(tr(q / samples));
+        target = Math.max(target, arcLenOf(P));
+      }
+    return { target, lobes, dir, D, tol, ampCap };
+  })();
 
   for (const cellRec of throat.cells) {
     const { i, j } = cellRec;
@@ -1672,7 +1733,6 @@ export function mapThroatToMouth(throat, opts) {
     const T0dir = un3(s3(P0, v3(0, 0, zLaunch)));
     const P1 = mc;
     const T1dir = nWave; // aim the duct at the apparent apex, not at the surface
-    const pathOpts = { divergeLen, arriveLen, tight, tightThroat, tightMouth };
     const centreTraj = buildTrajectory(P0, T0dir, P1, T1dir, pathOpts);
 
     // sample the centreline
@@ -1688,6 +1748,47 @@ export function mapThroatToMouth(throat, opts) {
     let L = 0;
     const sArr = [0];
     for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr.push(L); }
+
+    // bow this cell out to the target length, if it is short and snaking is on
+    let snakeAmp = 0, snakeShort = 0;
+    if (snake && snake.target - L > snake.tol) {
+      const L0 = L;
+      const deficit = snake.target - L0;
+      // lateral direction field: the requested direction with the tangent
+      // component removed, so the bow is always square to the path
+      const dHat = pts.map((_, k) => {
+        const t = tans[k];
+        const d = s3(snake.D, m3(t, dot3(snake.D, t)));
+        return nrm3(d) > 1e-6 ? un3(d) : v3(0, 0, 0);
+      });
+      const win = sArr.map((s) => Math.sin(snake.lobes * Math.PI * (s / L0)) ** 2);
+      const bowed = (a) => pts.map((p, k) => a3(p, m3(dHat[k], a * win[k])));
+      const lenAt = (a) => arcLenOf(bowed(a));
+      // closed-form seed a = 2 sqrt(L dL) / (n pi), then bisection on the
+      // MEASURED length — the closed form is leading-order, the path is
+      // curved, and the solver must land on the real thing
+      let hi = (2 * Math.sqrt(L0 * deficit)) / (Math.PI * snake.lobes) * 1.25;
+      for (let it = 0; it < 40 && lenAt(hi) < snake.target && hi < snake.ampCap; it++) hi *= 1.4;
+      hi = Math.min(hi, snake.ampCap);
+      let lo = 0;
+      for (let it = 0; it < 60; it++) {
+        const mid = (lo + hi) / 2;
+        if (lenAt(mid) < snake.target) lo = mid; else hi = mid;
+        if (hi - lo < 1e-7) break;
+      }
+      snakeAmp = (lo + hi) / 2;
+      const newPts = bowed(snakeAmp);
+      for (let q = 0; q <= M; q++) pts[q] = newPts[q];
+      // tangents from the displaced points. The window's slope is zero at the
+      // ends, so the end tangents come back as the launch and arrival
+      // directions they were.
+      for (let q = 0; q <= M; q++)
+        tans[q] = un3(s3(pts[Math.min(M, q + 1)], pts[Math.max(0, q - 1)]));
+      L = 0;
+      for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr[q + 1] = L; }
+      // capped short of the target: reported, never silently absorbed
+      snakeShort = Math.max(0, snake.target - L);
+    }
 
     // total turning angle, and where the trailing run stops being straight
     let turn = 0;
@@ -2091,6 +2192,7 @@ export function mapThroatToMouth(throat, opts) {
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
       sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll,
+      snakeAmp, snakeShort,
       profRatioGross,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
@@ -2182,6 +2284,14 @@ export function mapThroatToMouth(throat, opts) {
   return {
     clearance,
     profileT, profileArea,
+    // the lengthening that was applied, if any: the common target length,
+    // the largest bow, and the worst shortfall against the amplitude cap
+    lengthen: snake ? {
+      target: snake.target, lobes: snake.lobes, dir: snake.dir,
+      ampMax: Math.max(...rows.map((r) => r.snakeAmp)),
+      cells: rows.reduce((n, r) => n + (r.snakeAmp > 1e-9 ? 1 : 0), 0),
+      shortfall: Math.max(...rows.map((r) => r.snakeShort)),
+    } : null,
     ratioSpreadGross: spreadOf(rows.map((r) => r.profRatioGross || 1)),
     profFcMin: profileT != null ? Math.min(...rows.map((r) => r.profFc)) : null,
     profFcMax: profileT != null ? Math.max(...rows.map((r) => r.profFc)) : null,
@@ -3436,6 +3546,10 @@ export function solveEqualArea(cfg, pRequested, opts = {}) {
   let G = geometry(p);
   let r = residuals(p, G);
 
+  // `it` must exist before the trivial-case return: finish() reports it, and
+  // a 1x1 grid (zero constraints) used to crash on the temporal dead zone here
+  let it = 0, mu = 1, sinceJ = 0;
+
   if (nCon === 0) return finish(true, "trivial");
 
   const jacobian = (p0, r0) => {
@@ -3452,7 +3566,6 @@ export function solveEqualArea(cfg, pRequested, opts = {}) {
   };
 
   let J = jacobian(p, r);
-  let it = 0, mu = 1, sinceJ = 0;
   const wnorm2 = (d) => d.reduce((a, v, k) => a + W[k] * v * v, 0);
   const objOf = (q) => 0.5 * wnorm2(q.map((v, k) => v - pReq[k]));
 

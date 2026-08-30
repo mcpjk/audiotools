@@ -7,7 +7,7 @@ under "Known findings worth not re-deriving".
 
 ## Where the tool stands
 
-Built and tested (306 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (317 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
 - Equal-area throat partition — H-grid, O-grid, butterfly.
@@ -62,47 +62,48 @@ Decisions the owner has made and that should not be relitigated:
   repeatable reference point, the runs are the experiment on top of it. The
   owner's working direction is arrival run long, divergence run short.
 
-## Task 1 — flexible per-cell path lengthening (the main build)
+## Task 1 — iterate lengthening against clearance (the next build)
 
-**Why.** Path-length spread dL is the dominant term in the fc spread, and the
-geometry alone cannot always remove it: depth removes it when both mouth axes
-curve, but not for a vertically flat mouth, and the owner wants lengthening
-available wherever the deficit lands.
+Per-cell lengthening is BUILT (`lengthen`, see CLAUDE.md's finding): every
+cell short of the longest is bowed with a sin^2(n pi u) window, amplitude
+bisected on the measured length, the deficit map deciding who moves. What is
+NOT built is any automatic handling of the clearance it spends:
 
-**Which cells need it is NOT fixed.** On the biradial mouth the ordering
-flips with depth — rim cells are the long ones when shallow, the centre cell
-when deep (`CLAUDE.md`, "AXIAL DEPTH IS THE DOMINANT dL LEVER"). The old
-"centre cell is always shortest" claim holds only for the legacy apex-sphere
-mouth and is marked superseded. So build the general mechanism:
+1. The bow direction is one global world axis (+-x, +-y) with all bows on the
+   same side. Nested same-side bows keep near-parallel neighbours apart, but
+   cells with very different deficits still converge — measured 2.05 mm of
+   overlap at 11.4 mm of bow (2 lobes, 90x40 @ 425). Candidates, in order of
+   likely value: per-cell sign (checkerboard) so neighbours part instead of
+   chase; direction chosen per cell from where its clearance is largest; the
+   bow direction taken in the cell's own section frame rather than world
+   axes.
+2. The amplitude solve never consults clearance. A clearance-aware version
+   should use a cheap per-pair estimate in the loop (the bowing cell against
+   its own neighbours only) and the full `ductClearance` once at the end —
+   the full metric is ~80 ms and a bisection would otherwise pay it per step.
+3. The same lever — moving centrelines — is also the stated fix for the
+   swept-mode interpenetration the PROFILE causes (independent of bows).
+   Spreading centrelines apart where k approaches 1 is the build that would
+   retire that standing warning.
 
-1. Per-cell centreline offset: a lateral displacement along the centreline,
-   zero at both ends, one amplitude per cell (half-cosine in arc length is
-   enough to start — the measured deficits, 11.5 mm over ~420 mm, are well
-   under one lobe's capacity).
-2. Solve each cell's amplitude so its path length hits the target — the
-   longest cell's length, since lengthening can only add. Cells already at
-   the target get amplitude 0. Monotone in amplitude, so bisection.
-3. The deficit map decides which cells snake; nothing in the mechanism may
-   assume rows, centres, or rims.
-4. Swept mode only — in flow mode a shared boundary point cannot follow two
-   different paths; the feature is structurally unavailable there, not
-   merely unimplemented.
-5. Measure, do not assert: report achieved dL and the clearance
-   (`overlap`, `minMid`) together. For the solver's inner loop use a cheap
-   estimate (the snaking cell against its own neighbours only) and run the
-   full `ductClearance` once at the end — the full metric is ~80 ms and an
-   amplitude bisection would otherwise pay it per step.
-6. Test against the closed form: a sinusoidal perturbation of amplitude `a`
-   over length `L` adds `(pi^2 a^2)/(4 L)` to leading order. Check the
-   solver's achieved length against that, never against the tool's own
-   previous output.
-
-**The trap to avoid.** Do not reach for a general 3-D spline. Higher order
-buys shape freedom and curvature oscillation in the same purchase, and
-curvature is the thing being controlled.
+**The trap to avoid** stands: no general 3-D spline. Higher order buys shape
+freedom and curvature oscillation in the same purchase, and curvature is the
+thing being controlled.
 
 ## Done since the last handover
 
+- Renamed to **Ginkgo** (the botanical spelling), URL and all. The old
+  `gingko-horn.html` 404s in production, accepted like `cd-exit-divider`.
+- **Per-cell path lengthening** (`lengthen`): sin^2(n pi u) bows, amplitude
+  bisected on measured length, longest cell untouched, end rings frozen to
+  3e-14 mm, fc spread collapses with dL. UI block in the path card; bow
+  amplitudes in the table and CSV. 317 checks.
+- **3-D duct preview**: the exported solids (inset and all) on a hand-rolled
+  canvas — orthographic, painter's sort, two-sided lambert, palette-derived
+  shading. Deferred off the render pass like the clearance. No three.js;
+  the no-external-libraries rule stands.
+- Fixed a 1x1-grid crash in `solveEqualArea` (temporal dead zone on the
+  zero-constraint path).
 - Task 2 (surface the fc spread): the UI shows the fc range, the
   length/ratio decomposition, and now warns past a 3% spread. Done.
 - Task 3 (dL depth solver): `solveDepthForMinDL` + "solve min ΔL" button.
@@ -131,7 +132,7 @@ curvature is the thing being controlled.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 306 closed-form checks; a physics change without a
+npm run test:hgrid     # 317 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors
