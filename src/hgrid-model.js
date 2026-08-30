@@ -19,12 +19,11 @@
 // and that is what the solve equalises once the walls have thickness. The
 // GEOMETRIC areas still sum to pi R^2 exactly whatever the parameters are.
 //
-// Three topologies, all reduced to the same cell record so everything
+// Two topologies, both reduced to the same cell record so everything
 // downstream is family-agnostic:
 //
-//   ogrid      concentric rings          no singular vertices
+//   ogrid      concentric rings              no singular vertices
 //   hgrid      one (i,j) index on the disc   4 singular vertices, on the rim
-//   butterfly  square core + 4 fan blocks    4 singular vertices, at the core
 //
 // A singular vertex is one where the number of cells meeting is not 4. Mapping
 // a rectangular index onto a disc cannot avoid them — this is a fact about the
@@ -846,96 +845,6 @@ export function buildOGrid({ R, hubR = 0, rings, rotDeg = 0 }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FAMILY 3 — BUTTERFLY
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// An m x m square core with four m x p fan blocks reaching the rim. The four
-// singular vertices are the core corners, where three cells meet. N = m^2 + 4mp.
-// Trades the H-grid's rim singularities — which sit right where the cells are
-// most distorted — for interior ones in a region that is already well behaved.
-
-export function buildButterfly({ R, m, p, alphaDeg = 45, coreFrac = 0.42 }) {
-  const alpha = alphaDeg * D2R;
-  const mesh = makeMesh(R);
-  mesh.family = "butterfly";
-  mesh.m = m; mesh.p = p; mesh.alphaDeg = alphaDeg;
-  const cornerTh = [-alpha, alpha, Math.PI - alpha, Math.PI + alpha];
-  const ax = coreFrac * R * Math.cos(alpha), ay = coreFrac * R * Math.sin(alpha);
-
-  const coreKey = (ci, cj) => `k${ci}_${cj}`;
-  const corePos = (ci, cj) => [ax * (-1 + (2 * ci) / m), ay * (-1 + (2 * cj) / m)];
-  for (let ci = 0; ci <= m; ci++)
-    for (let cj = 0; cj <= m; cj++) {
-      const pos = corePos(ci, cj);
-      addNode(mesh, coreKey(ci, cj), { kind: "free", x: pos[0], y: pos[1] });
-    }
-
-  // fan f, inner index q along the core side it sits on
-  const fanCore = (f, q) => (f === 0 ? [m, q] : f === 1 ? [m - q, m] : f === 2 ? [0, m - q] : [q, 0]);
-  const rimTh = (f, q) => {
-    const t0 = cornerTh[f], t1 = cornerTh[(f + 1) % 4] + (f === 3 ? TAU : 0);
-    return t0 + ((t1 - t0) * q) / m;
-  };
-  const fanKey = (f, k, q) => {
-    if (k === 0) { const [ci, cj] = fanCore(f, q); return coreKey(ci, cj); }
-    if (k === p) return q === 0 ? `RC${f}` : q === m ? `RC${(f + 1) % 4}` : `RM${f}_${q}`;
-    if (q === 0) return `D${f}_${k}`;
-    if (q === m) return `D${(f + 1) % 4}_${k}`;
-    return `F${f}_${k}_${q}`;
-  };
-
-  for (let f = 0; f < 4; f++)
-    for (let k = 1; k <= p; k++)
-      for (let q = 0; q <= m; q++) {
-        const kk = fanKey(f, k, q);
-        if (mesh.nodeKey.has(kk)) continue;
-        const th = rimTh(f, q);
-        const rimPt = [R * Math.cos(th), R * Math.sin(th)];
-        // theta is kept unwrapped, running -alpha .. 2pi-alpha around the rim,
-        // so the ordering test in the solver can just compare neighbours
-        if (k === p) { addNode(mesh, kk, { kind: "rim", th }); continue; }
-        const [ci, cj] = fanCore(f, q);
-        const inner = corePos(ci, cj);
-        const s = k / p;
-        addNode(mesh, kk, { kind: "free", x: inner[0] + (rimPt[0] - inner[0]) * s, y: inner[1] + (rimPt[1] - inner[1]) * s });
-      }
-
-  const rev = (h) => ({ e: h.e, rev: !h.rev });
-  const cu = [], cv = [];
-  for (let ci = 0; ci < m; ci++) { cu.push([]); for (let cj = 0; cj <= m; cj++) cu[ci].push(addEdge(mesh, coreKey(ci, cj), coreKey(ci + 1, cj), {})); }
-  for (let ci = 0; ci <= m; ci++) { cv.push([]); for (let cj = 0; cj < m; cj++) cv[ci].push(addEdge(mesh, coreKey(ci, cj), coreKey(ci, cj + 1), {})); }
-  let id = 0;
-  for (let ci = 0; ci < m; ci++)
-    for (let cj = 0; cj < m; cj++)
-      addCell(mesh, [[cu[ci][cj]], [cv[ci + 1][cj]], [rev(cu[ci][cj + 1])], [rev(cv[ci][cj])]],
-        { kind: "quad", block: "core", i: ci, j: cj, label: `C${++id}` });
-
-  for (let f = 0; f < 4; f++) {
-    const qE = [], kE = [];
-    for (let k = 0; k <= p; k++) {
-      qE.push([]);
-      for (let q = 0; q < m; q++)
-        qE[k].push(addEdge(mesh, fanKey(f, k, q), fanKey(f, k, q + 1),
-          k === p ? { arc: { r: R, sign: 1 }, rim: true } : {}));
-    }
-    for (let k = 0; k < p; k++) {
-      kE.push([]);
-      for (let q = 0; q <= m; q++) kE[k].push(addEdge(mesh, fanKey(f, k, q), fanKey(f, k + 1, q), {}));
-    }
-    // counterclockwise: outward along q, round in +q, back in, then -q
-    for (let k = 0; k < p; k++)
-      for (let q = 0; q < m; q++)
-        addCell(mesh, [[kE[k][q]], [qE[k + 1][q]], [rev(kE[k][q + 1])], [rev(qE[k][q])]],
-          { kind: "quad", block: `fan${f}`, i: k, j: q, label: `F${f}${k + 1}${q + 1}` });
-  }
-  mesh.singular = [0, 1, 2, 3].map((f) => {
-    const [ci, cj] = f === 0 ? [m, 0] : f === 1 ? [m, m] : f === 2 ? [0, m] : [0, 0];
-    return mesh.nodeKey.get(coreKey(ci, cj));
-  });
-  return finalizeMesh(mesh);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // STAGE 2 — EQUALISE
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -1259,7 +1168,7 @@ export function analyseThroat(cells, opts = {}) {
 // from the paths.
 //
 // The cell-for-cell mapping needs a rectangular index at both ends, which only
-// the H-grid has. An O-grid or butterfly throat has no cell-for-cell match to
+// the H-grid has. An O-grid throat has no cell-for-cell match to
 // a rectangular mouth grid — that is a property of their topology, not a gap
 // in the tool — so this section runs for the H-grid only.
 
@@ -1588,7 +1497,7 @@ export function mapThroatToMouth(throat, opts) {
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
   // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
-  // the H-grid has. An O-grid or butterfly throat has no such match — that is a
+  // the H-grid has. An O-grid throat has no such match — that is a
   // property of its topology, not a gap in the tool.
   if (!rectangular || !nc || !nr) return null;
   // Arc mode needs the cap to be a true SPHERE about the apex, or the
@@ -1699,33 +1608,82 @@ export function mapThroatToMouth(throat, opts) {
   // more lobes buy the same length at 1/n the amplitude — which is the whole
   // game, because amplitude is what eats the clearance between ducts.
   //
-  // ── WHY THE DIRECTION HAS A SYMMETRIC OPTION ────────────────────────────
-  // A single world axis bows every cell the same way, which breaks the mirror
-  // symmetry the layout has: bow everything +y and the top row is no longer
-  // the mirror of the bottom. "radial" instead gives each cell its OWN
-  // direction — the outward ray from the horn axis through that duct — so a
-  // cell and its mirror image get mirrored bows and the whole assembly stays
-  // symmetric about BOTH planes, which is what a symmetric mouth and a
-  // symmetric deficit map deserve. "-radial" is the same field pointing
-  // inward. A duct sitting exactly ON the axis has no radial direction and
-  // no lateral bow can be symmetric for it, so it is left unbowed and its
-  // shortfall reported rather than silently breaking the symmetry the mode
-  // exists to keep.
+  // ── WHERE THE BOW SITS, AND WHICH WAY IT GOES ───────────────────────────
+  // SUPPORT. The window spans [u0, u1] of the arc length rather than the
+  // whole path. sin^2 has zero value AND zero slope at every multiple of pi,
+  // so the path leaves the bowed region straight and whatever lies outside
+  // the support is untouched. Two things follow. The straight runs are
+  // honoured: divergeLen and arriveLen are excised from the support per cell,
+  // because a run the user asked to be STRAIGHT must not be bowed — before
+  // this the window ran the whole path and a 40 mm arrival run measured
+  // 1.2 mm of bow through it. And the bending becomes placeable: narrowing
+  // the support concentrates the turning where you put it.
+  // Amplitude for a given added length goes as sqrt(span) and curvature as
+  // span^-1.5, so a shorter window is a SMALLER bow that turns harder —
+  // measured at 2 lobes, [0,1] needs 16.3 mm at R_min 91 mm while [0,0.35]
+  // needs 7.3 mm at R_min 37 mm.
+  //
+  // DIRECTION. A single world axis bows every cell the same way, which breaks
+  // the mirror symmetry the layout has: bow everything +y and the top row is
+  // no longer the mirror of the bottom. The two fields kept are per-cell and
+  // symmetric, because a symmetric mouth and a symmetric deficit map deserve
+  // a symmetric horn:
+  //   "radial"  the outward ray from the horn axis through this duct.
+  //   "short"   the duct section's SHORT axis, oriented outward. When a duct
+  //             of width w turns through angle th, its outer wall runs
+  //             w * th longer than its inner wall, and that difference is
+  //             phase error straight across the passage. w is the extent
+  //             ALONG THE BEND NORMAL, so bending across the section's short
+  //             dimension is the cheaper turn — at a 2:1 throat cell it
+  //             halves the widening for the same turning. Reported as
+  //             `bendWiden` and never assumed.
+  // Both are mirror-covariant, so mirrored cells get mirrored bows. A duct
+  // sitting exactly ON the axis has no outward direction and no lateral bow
+  // can be symmetric for it, so it is left unbowed and its shortfall
+  // reported rather than silently breaking the symmetry the mode exists to
+  // keep.
   const snake = (() => {
     if (!lengthen || sectionMode !== "swept") return null;
-    const { lobes = 2, dir = "y", tol = 0.02, ampCap = 150, targetLen = null } = lengthen;
-    const AXES = { x: v3(1, 0, 0), "-x": v3(-1, 0, 0), y: v3(0, 1, 0), "-y": v3(0, -1, 0) };
-    // the bow direction for one cell, from its own base centreline
-    const dirFor = (pts) => {
-      if (dir !== "radial" && dir !== "-radial") return AXES[dir] || AXES.y;
-      // taken at mid-path, where the duct's position off the axis is
-      // representative of the whole run; mirrored cells have mirrored
-      // mid-points, so they get exactly mirrored directions
+    const {
+      lobes = 1, dir = "radial", tol = 0.02, ampCap = 150, targetLen = null,
+      uStart = 0, uEnd = 1,
+    } = lengthen;
+    // the OUTWARD ray from the horn axis through this duct, at mid-path,
+    // where its position off the axis is representative of the whole run.
+    // Mirrored cells have mirrored mid-points, so they get exactly mirrored
+    // directions — that is what keeps both mirrors.
+    const outward = (pts) => {
       const mid = pts[Math.round((pts.length - 1) / 2)];
       const r = Math.hypot(mid[0], mid[1]);
-      if (!(r > 1e-6)) return null; // on the axis: no symmetric bow exists
-      const sg = dir === "radial" ? 1 : -1;
-      return v3((sg * mid[0]) / r, (sg * mid[1]) / r, 0);
+      return r > 1e-6 ? v3(mid[0] / r, mid[1] / r, 0) : null;
+    };
+    // the bow direction for one cell, from its own base centreline and its
+    // own throat section
+    // A fixed world axis is NOT symmetric — it keeps the mirror it lies
+    // across and breaks the other — so the tool does not offer it. It stays
+    // reachable from the model because the straight-path closed-form test
+    // needs a direction that works on a cell sitting ON the axis, where no
+    // outward ray exists.
+    const AXES = { x: v3(1, 0, 0), "-x": v3(-1, 0, 0), y: v3(0, 1, 0), "-y": v3(0, -1, 0) };
+    const dirFor = (pts, cellRec) => {
+      if (AXES[dir]) return AXES[dir];
+      const out = outward(pts);
+      if (!out || dir === "radial") return out;
+      // "short": the throat section's short axis as a LINE, then oriented
+      // outward so the field stays mirror-covariant. iDir is the cell's own
+      // u direction and sideLen 0/2 are its extent along it, so the short
+      // axis is iDir when the cell is narrow across u and the perpendicular
+      // when it is narrow across v.
+      const iD = v3(cellRec.iDir[0], cellRec.iDir[1], 0);
+      const perp = v3(-iD[1], iD[0], 0);
+      const alongI = (cellRec.sideLen[0] + cellRec.sideLen[2]) / 2;
+      const alongV = (cellRec.sideLen[1] + cellRec.sideLen[3]) / 2;
+      const axis = alongI <= alongV ? iD : perp;
+      const sg = dot3(axis, out);
+      // a short axis exactly square to the outward ray has no symmetric
+      // orientation of its own; fall back to the radial field, which has one
+      if (Math.abs(sg) < 1e-9) return out;
+      return sg >= 0 ? axis : m3(axis, -1);
     };
     // targetLen overrides the longest-cell rule — a margin above the longest,
     // or a synthetic deficit for the straight-path closed-form test. Note the
@@ -1742,7 +1700,7 @@ export function mapThroatToMouth(throat, opts) {
         for (let q = 0; q <= samples; q++) P.push(tr(q / samples));
         target = Math.max(target, arcLenOf(P));
       }
-    return { target, lobes, dir, dirFor, tol, ampCap };
+    return { target, lobes, dir, dirFor, tol, ampCap, uStart, uEnd };
   })();
 
   for (const cellRec of throat.cells) {
@@ -1774,12 +1732,12 @@ export function mapThroatToMouth(throat, opts) {
     for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr.push(L); }
 
     // bow this cell out to the target length, if it is short and snaking is on
-    let snakeAmp = 0, snakeShort = 0, snakeOnAxis = false;
+    let snakeAmp = 0, snakeShort = 0, snakeOnAxis = false, snakeSpan = 0;
     if (snake && snake.target - L > snake.tol) {
       const L0 = L;
       const deficit = snake.target - L0;
-      const D = snake.dirFor(pts);
-      // a duct on the axis has no radial direction — reported, never bowed
+      const D = snake.dirFor(pts, cellRec);
+      // a duct on the axis has no outward direction — reported, never bowed
       // in some arbitrary direction that would break the symmetry
       if (!D) { snakeOnAxis = true; snakeShort = deficit; }
       else {
@@ -1790,13 +1748,32 @@ export function mapThroatToMouth(throat, opts) {
         const d = s3(D, m3(t, dot3(D, t)));
         return nrm3(d) > 1e-6 ? un3(d) : v3(0, 0, 0);
       });
-      const win = sArr.map((s) => Math.sin(snake.lobes * Math.PI * (s / L0)) ** 2);
+      // THE SUPPORT. Requested [uStart, uEnd], with the straight runs cut
+      // out of it: a run the user asked to be straight is not a place to put
+      // a bow. Both are in arc-length fraction of THIS cell's own path, so a
+      // run of a given mm length excises the right amount from every cell
+      // whatever its length.
+      const u0 = Math.max(snake.uStart, divergeLen > 0 ? divergeLen / L0 : 0);
+      const u1 = Math.min(snake.uEnd, arriveLen > 0 ? 1 - arriveLen / L0 : 1);
+      const span = u1 - u0;
+      snakeSpan = span;
+      // the runs (or the request) have squeezed the support to nothing: there
+      // is nowhere left to put a bow, so say so rather than iterating to the
+      // amplitude cap against a window that is identically zero
+      if (!(span > 1e-6)) { snakeShort = deficit; }
+      else {
+      const win = sArr.map((s) => {
+        const u = s / L0;
+        if (u < u0 || u > u1) return 0;
+        return Math.sin(snake.lobes * Math.PI * ((u - u0) / span)) ** 2;
+      });
       const bowed = (a) => pts.map((p, k) => a3(p, m3(dHat[k], a * win[k])));
       const lenAt = (a) => arcLenOf(bowed(a));
       // closed-form seed a = 2 sqrt(L dL) / (n pi), then bisection on the
       // MEASURED length — the closed form is leading-order, the path is
       // curved, and the solver must land on the real thing
-      let hi = (2 * Math.sqrt(L0 * deficit)) / (Math.PI * snake.lobes) * 1.25;
+      // closed-form seed on the SPAN the window actually occupies
+      let hi = (2 * Math.sqrt(Math.max(span, 1e-6) * L0 * deficit)) / (Math.PI * snake.lobes) * 1.25;
       for (let it = 0; it < 40 && lenAt(hi) < snake.target && hi < snake.ampCap; it++) hi *= 1.4;
       hi = Math.min(hi, snake.ampCap);
       let lo = 0;
@@ -1817,6 +1794,7 @@ export function mapThroatToMouth(throat, opts) {
       for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr[q + 1] = L; }
       // capped short of the target: reported, never silently absorbed
       snakeShort = Math.max(0, snake.target - L);
+      }
       }
     }
 
@@ -2152,6 +2130,35 @@ export function mapThroatToMouth(throat, opts) {
       }
     }
 
+    // ── HOW MUCH LONGER THE OUTER WALL RUNS THAN THE INNER ─────────────────
+    // A duct of width w turning through angle dth puts w * dth more length on
+    // its outer wall than its inner one, and that difference is phase error
+    // straight across the passage — the same quantity turnLimitDeg estimates
+    // from one nominal width, measured here on the real geometry instead.
+    // w is the section's extent ALONG THE BEND NORMAL, so it is the width in
+    // the plane the duct is actually turning in: bending across a section's
+    // short dimension is a cheaper turn than bending across its long one,
+    // which is what the "short" bow direction exists to exploit. Integrated
+    // over the path and reported in mm, against the lambda/8 budget.
+    let bendWiden = 0;
+    for (let q = 0; q < stations; q++) {
+      const idx = Math.round((q / stations) * M), nx = Math.min(M, idx + 1), pv = Math.max(0, idx - 1);
+      const d1 = s3(pts[nx], pts[pv]);
+      const d2 = a3(s3(pts[nx], pts[idx]), s3(pts[pv], pts[idx]));
+      const t = un3(d1);
+      // the component of the second difference square to the path IS the
+      // bend normal; a straight stretch has none and contributes nothing
+      const nvec = s3(d2, m3(t, dot3(d2, t)));
+      if (!(nrm3(nvec) > 1e-12)) continue;
+      const nHat = un3(nvec);
+      const ring = rings[q];
+      let lo = Infinity, hi = -Infinity;
+      for (const pt of ring) { const e = dot3(pt, nHat); if (e < lo) lo = e; if (e > hi) hi = e; }
+      const dth = 0.5 * (kappa[q === stations ? M : idx] + kappa[nx]) *
+        (sArr[Math.min(M, idx + 1)] - sArr[Math.max(0, idx - 1)]) / 2;
+      bendWiden += (hi - lo) * dth;
+    }
+
     const sched = [];
     let scDev = 0; // developed length along the SECTION CENTROIDS, not the centreline
     for (let q = 0; q <= stations; q++) {
@@ -2221,8 +2228,8 @@ export function mapThroatToMouth(throat, opts) {
       mouthCentroid: mc, mouthCorners: corners, mouthNormal: nSurf,
       mouthArea: sched[stations].area,
       f1End, decayLen: decay, runNeeded, straightAvail,
-      sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll,
-      snakeAmp, snakeShort, snakeOnAxis,
+      sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll, bendWiden,
+      snakeAmp, snakeShort, snakeOnAxis, snakeSpan,
       profRatioGross,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
@@ -2344,6 +2351,8 @@ export function mapThroatToMouth(throat, opts) {
     band: dL <= lam / 8 ? "ok" : dL <= lam / 4 ? "warn" : "bad",
     twistMax: Math.max(...rows.map((r) => Math.abs(r.twistDeg))),
     turnMax: Math.max(...rows.map((r) => r.turnDeg)),
+    // the real inner-vs-outer wall difference, measured on the geometry
+    bendWidenMax: Math.max(...rows.map((r) => r.bendWiden)),
     aimMax: Math.max(...rows.map((r) => r.aimErrDeg)),
     turnLimitDeg,
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
@@ -2738,6 +2747,22 @@ export function solveDepthForFc(throat, opts, cfg = {}) {
     // the per-cell spread that remains: with an equal-area mouth this is
     // path length alone, which is what the dL budget is for
     fcDecomp: best.map.fcDecomp, Lmin: best.map.Lmin, Lmax: best.map.Lmax,
+    // ── THE HORN THIS ACTUALLY PRODUCED ──────────────────────────────────
+    // Worth reporting because the answer is often not a horn anyone would
+    // build, and the reason is structural rather than a solver fault. On the
+    // biradial mouth the aperture is fixed by the coverage arcs, so DEPTH
+    // CANNOT CHANGE THE MOUTH AREA OR THE EXPANSION RATIO — it changes only
+    // the path length. Asking for a cutoff therefore just asks "how long
+    // must this horn be", and a high cutoff answers with a very short horn
+    // carrying a full-size mouth: measured at 90x40 with a 600 mm arc,
+    // fc 900 Hz lands at 85 mm of depth with the same 1560 cm2 mouth, dL
+    // 177 mm, and a per-cell cutoff spread of 551-1534 Hz. That is the
+    // pick-two-of-three biting: fixing the mouth AND the cutoff leaves depth
+    // no freedom to serve dL. Reported so the caller can see it rather than
+    // discovering it in CAD.
+    mouthArea: best.map.mouthAreaTotal,
+    ratio: best.map.rows[0].profRatio,
+    dL: best.map.dL, dLfrac: best.map.dLfrac,
   };
 }
 
@@ -2797,7 +2822,7 @@ export function buildLayout(o) {
   const {
     family = "hgrid", R, nc = 6, nr = 3, m = 2, symmetric = true,
     params = null, seed: seedKind = "elliptical", seedObj = null, pStart = null,
-    rings = [1, 6, 12], hubR = 0, rotDeg = 0, bm = 2, bp = 2, coreFrac = 0.42,
+    rings = [1, 6, 12], hubR = 0, rotDeg = 0,
     alphaDeg = null, t = 0, c = 343, solveOpts = {},
   } = o;
 
@@ -2811,9 +2836,10 @@ export function buildLayout(o) {
     return { family, cfg, solve: sol, geometry: sol.geometry, throat, seedObj: sol.seed, rectangular: true, nc, nr };
   }
 
-  const mesh = family === "ogrid"
-    ? buildOGrid({ R, hubR, rings, rotDeg })
-    : buildButterfly({ R, m: bm, p: bp, alphaDeg: alphaDeg ?? 45, coreFrac });
+  // O-grid is the one remaining comparison family: concentric rings, no
+  // singular vertices, and no rectangular index either, which is exactly
+  // what makes it the reference the H-grid has to beat at the throat.
+  const mesh = buildOGrid({ R, hubR, rings, rotDeg });
   const eq = equaliseAreasStaged(mesh, { t, iters: 50 });
   const cells = meshCells(mesh, { c, t });
   const throat = analyseThroat(cells, { c, R, dividerTotal: meshDividerLength(mesh) });

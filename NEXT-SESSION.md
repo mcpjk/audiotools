@@ -7,10 +7,11 @@ under "Known findings worth not re-deriving".
 
 ## Where the tool stands
 
-Built and tested (323 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (329 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
-- Equal-area throat partition — H-grid, O-grid, butterfly.
+- Equal-area throat partition — H-grid, plus the O-grid as the equal-N
+  comparison at the throat.
 - **Biradial mouth**, apex-free. Stated as two independent arcs: a coverage
   angle and an arc length per axis. `Th_v = 0` gives a vertically flat mouth.
 - **Hypex expansion imposed** (`profileT`), written on the OPEN passage, with
@@ -62,29 +63,33 @@ Decisions the owner has made and that should not be relitigated:
   repeatable reference point, the runs are the experiment on top of it. The
   owner's working direction is arrival run long, divergence run short.
 
-## Task 1 — iterate lengthening against clearance (the next build)
+## Task 1 — make the bow direction and region SOLVED, not chosen
 
-Per-cell lengthening is BUILT (`lengthen`, see CLAUDE.md's finding): every
-cell short of the longest is bowed with a sin^2(n pi u) window, amplitude
-bisected on the measured length, the deficit map deciding who moves. What is
-NOT built is any automatic handling of the clearance it spends:
+Lengthening is built and now has three knobs the designer sets by hand: the
+bow REGION [uStart, uEnd], the DIRECTION (radial out / short axis), and
+implicitly the lobe count (fixed at 1 in the UI, still a model parameter).
+All three trade the same two quantities against each other, and the tool
+measures both:
 
-1. The direction is CHOSEN, not solved. Four world axes plus `radial` /
-   `-radial` (the symmetric field — see CLAUDE.md; it is the one that keeps
-   both mirrors, and on a curved mouth it also halves the overlap, but on a
-   flat mouth it doubles it). The obvious next step is to pick the direction
-   PER CELL from where that cell actually has room — its largest local
-   clearance — while keeping mirror pairs mirrored so the symmetry survives
-   the choice. A per-cell direction in the duct's own section frame rather
-   than a world axis is the more general version of the same idea.
-2. The amplitude solve never consults clearance. A clearance-aware version
-   should use a cheap per-pair estimate in the loop (the bowing cell against
-   its own neighbours only) and the full `ductClearance` once at the end —
-   the full metric is ~80 ms and a bisection would otherwise pay it per step.
-3. The same lever — moving centrelines — is also the stated fix for the
-   swept-mode interpenetration the PROFILE causes (independent of bows).
-   Spreading centrelines apart where k approaches 1 is the build that would
-   retire that standing warning.
+  `bendWiden`  the outer wall's excess length over the inner, in mm, against
+               the lambda/8 budget — the acoustic cost of turning
+  `clearance`  overlap / narrowest gap — the geometric cost of amplitude
+
+What is missing is anything that CHOOSES. The measured trade at 6x3, 90x40,
+depth 425 (see CLAUDE.md for the full tables): short axis buys 29.1 mm of
+bendWiden against radial's 37.1 but pays 16.6 mm of overlap against 1.27; one
+lobe is acoustically best and geometrically worst; the throat is where the
+bend is cheapest acoustically and where there is no room at all (gap is
+NEGATIVE through the first third).
+
+So the build is a search, per cell, over (direction, region, amplitude) that
+minimises bendWiden subject to a clearance floor, keeping mirror pairs
+mirrored so the symmetry survives the choice. Use a cheap per-pair clearance
+estimate inside the loop and the full `ductClearance` once at the end — the
+full metric is ~80 ms.
+
+The same lever fixes the standing swept-mode interpenetration the PROFILE
+causes, independent of bows: spreading centrelines apart where k approaches 1.
 
 **The trap to avoid** stands: no general 3-D spline. Higher order buys shape
 freedom and curvature oscillation in the same purchase, and curvature is the
@@ -105,6 +110,20 @@ thing being controlled.
 - **UI layout**: the horizontal section and the 3-D duct preview sit side by
   side directly under the throat and mouth plans, and BOTH depth solves are
   one control group in the section card — they spend the same knob.
+- **Bow region** [uStart, uEnd] with the straight runs excised per cell, so
+  `arriveLen` is finally honoured (it was bowed 1.2-1.4 mm through before).
+- **Short-axis bow direction** and the `bendWiden` metric that justifies it.
+- **The fc depth solve now reports the horn it built** — mouth area,
+  expansion ratio, duct length, dL against budget, and how far it landed from
+  the dL optimum. It was returning physically silly horns for a structural
+  reason, not a solver fault: on the biradial mouth the aperture is fixed by
+  the coverage arcs, so depth moves ONLY path length. Asking for a cutoff is
+  asking how long the horn must be, and a high cutoff answers with a very
+  short body under a full-size mouth (fc 900 Hz -> 85 mm depth, 1560 cm2
+  mouth, dL 177 mm, per-cell fc 551-1534 Hz). Kept, with the consequence
+  visible.
+- **Removed at the owner's request**: the lobe selector (fixed at 1), the
+  radial-in and four world-axis bow directions, and the butterfly family.
 - **3-D duct preview**: the exported solids (inset and all) on a hand-rolled
   canvas — orthographic, painter's sort, two-sided lambert, palette-derived
   shading. Deferred off the render pass like the clearance. No three.js;
@@ -139,7 +158,7 @@ thing being controlled.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 323 closed-form checks; a physics change without a
+npm run test:hgrid     # 329 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors

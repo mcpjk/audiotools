@@ -1341,6 +1341,74 @@ head("Per-cell path lengthening");
     cR.overlap < cY.overlap,
     `radial ${cR.overlap.toFixed(2)} mm against +y ${cY.overlap.toFixed(2)} mm`);
 
+  // ── THE BOW REGION, AND THE STRAIGHT RUNS ───────────────────────────────
+  // The window spans [uStart, uEnd] of the arc length, with the straight runs
+  // cut out of it per cell. sin^2 has zero value AND zero slope at both ends
+  // of its support, so everything outside the support is untouched.
+  const runOpts = { ...curOpts, keepGeometry: true, divergeLen: 12, arriveLen: 40, samples: 128, stations: 64 };
+  // how far the last `len` mm of a centreline departs from its own chord
+  const runBend = (m, len) => {
+    let worst = 0;
+    m.rows.forEach((r) => {
+      const P = r.sched.map((x) => x.origin);
+      const sA = [0];
+      for (let q = 1; q < P.length; q++)
+        sA.push(sA[q - 1] + Math.hypot(P[q][0] - P[q - 1][0], P[q][1] - P[q - 1][1], P[q][2] - P[q - 1][2]));
+      const L = sA[sA.length - 1];
+      const seg = P.filter((_, q) => sA[q] >= L - len - 1e-9);
+      if (seg.length < 3) return;
+      const A = seg[0], B = seg[seg.length - 1];
+      const d = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], dl = Math.hypot(...d);
+      for (const q of seg) {
+        const v = [q[0] - A[0], q[1] - A[1], q[2] - A[2]];
+        const t = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / (dl * dl);
+        worst = Math.max(worst, Math.hypot(v[0] - t * d[0], v[1] - t * d[1], v[2] - t * d[2]));
+      }
+    });
+    return worst;
+  };
+  const runsBowed = M.mapThroatToMouth(Lay.throat, { ...runOpts, lengthen: { lobes: 2, dir: "radial" } });
+  check("an arrival run the user asked to be STRAIGHT is left straight by the bow",
+    runBend(runsBowed, 40), 0, 1e-6, "mm");
+  checkTrue("...and the bow still closed dL, using only the region left to it",
+    runsBowed.dL < 0.05 && runsBowed.lengthen.ampMax > 1,
+    `dL ${runsBowed.dL.toFixed(4)} mm at ${runsBowed.lengthen.ampMax.toFixed(1)} mm amplitude`);
+
+  // narrowing the region: amplitude goes as sqrt(span), so a TIGHTER window
+  // is a SMALLER bow — the opposite of the intuition, and it is why placing
+  // the bend is not simply a cost
+  const spanCase = (u0, u1) => M.mapThroatToMouth(Lay.throat, {
+    ...curOpts, keepGeometry: true, lengthen: { lobes: 2, dir: "radial", uStart: u0, uEnd: u1 },
+  });
+  const wide = spanCase(0, 1), tight = spanCase(0, 0.35);
+  checkTrue("a narrower bow region needs LESS amplitude, as sqrt(span) says",
+    tight.lengthen.ampMax < wide.lengthen.ampMax && tight.dL < 0.05,
+    `${wide.lengthen.ampMax.toFixed(1)} mm over [0,1] against ${tight.lengthen.ampMax.toFixed(1)} mm over [0,0.35]`);
+  // and everything outside the support is untouched, to machine precision
+  const bare = M.mapThroatToMouth(Lay.throat, { ...curOpts, keepGeometry: true });
+  let outside = 0;
+  tight.rows.forEach((r, k) => {
+    const P = r.sched.map((x) => x.origin), Q = bare.rows[k].sched.map((x) => x.origin);
+    for (let q = Math.ceil(0.45 * (P.length - 1)); q < P.length; q++)
+      outside = Math.max(outside, Math.hypot(P[q][0] - Q[q][0], P[q][1] - Q[q][1], P[q][2] - Q[q][2]));
+  });
+  check("the path beyond the bow region is untouched", outside, 0, 1e-9, "mm");
+
+  // ── BENDING ACROSS THE SHORT AXIS IS THE CHEAPER TURN ────────────────────
+  // A duct of width w turning through th puts w * th more length on its outer
+  // wall than its inner one. w is the extent along the BEND NORMAL, so
+  // bending across the section's short dimension costs less — measured, not
+  // assumed, and the reason the "short" direction exists.
+  const bowRad = M.mapThroatToMouth(Lay.throat, { ...curOpts, keepGeometry: true, lengthen: { lobes: 1, dir: "radial" } });
+  const bowShort = M.mapThroatToMouth(Lay.throat, { ...curOpts, keepGeometry: true, lengthen: { lobes: 1, dir: "short" } });
+  checkTrue("the short axis is the cheaper turn: less outer-wall widening for the same dL",
+    bowShort.bendWidenMax < bowRad.bendWidenMax && bowShort.dL < 0.05,
+    `${bowShort.bendWidenMax.toFixed(1)} mm against radial's ${bowRad.bendWidenMax.toFixed(1)} mm`);
+  const eS = mirrorErr(bowShort);
+  checkTrue("and it is mirror-covariant too — both mirrors survive it",
+    eS.mx < 1e-6 && eS.my < 1e-6,
+    `x ${eS.mx.toExponential(1)} mm, y ${eS.my.toExponential(1)} mm`);
+
   // a duct ON the axis has no radial direction, and no lateral bow can be
   // symmetric for it: left unbowed and REPORTED, never quietly skewed
   const odd = M.buildLayout({ family: "hgrid", R, nc: 5, nr: 3, m: 2, t: 0.4, c });
