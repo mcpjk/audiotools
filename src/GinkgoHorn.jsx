@@ -368,11 +368,14 @@ export default function GinkgoHorn() {
   // asked to be straight is not a place to put a bow.
   const [bowFrom, setBowFrom] = useState(0);
   const [bowTo, setBowTo] = useState(1);
-  // ONE lobe. Fewer lobes means less total turning for the same added
-  // length, and turning is what costs phase error — measured bendWiden
-  // 37.1 mm at 1 lobe against 48.3 mm at 3. The price is amplitude, which
-  // goes as 1/n, so a single lobe is the biggest bow; read the clearance.
-  const lengthLobes = 1;
+  // TWO lobes by default. This is the opposite of what the integrated
+  // turning metric suggested, and the measured wall spread is why: a
+  // reversing bend cancels its own wall-length error, so more lobes is
+  // LESS phase error, not more — 23.2 mm at 1 lobe against 8.7 mm at 2 on
+  // the same geometry — and the amplitude falls as 1/n as well. Past 2 the
+  // gain flattens (7.0 mm at 3), so the choice is 1, 2 or 3.
+  const [lengthLobes, setLengthLobes] = useState(2);
+  const [bowSolve, setBowSolve] = useState(null);
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
@@ -554,7 +557,7 @@ export default function GinkgoHorn() {
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     tight, tightSplit, tightThroat, tightMouth, thetaH, thetaV, arcH, arcV,
     fTarget, dividerEndFrac, stations, thickness, profileArea,
-    lengthenOn, lengthDir, bowFrom, bowTo]);
+    lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes]);
 
   // The clearance is skipped HERE and measured in the deferred effect below:
   // it costs ~5x the rest of the mapping (measured ~100 ms against ~20), and
@@ -1373,7 +1376,43 @@ export default function GinkgoHorn() {
               color={map.Lmin >= href.minLength ? C.series4 : C.series5} />}
           </div>
         )}
+        {/* THREE DIFFERENT FREQUENCIES, AND THEY ARE ROUTINELY MISREAD AS ONE.
+            f_c is the FLARE constant, m·c/2π — it says how fast the passage
+            expands and nothing about the mouth. Whether the mouth is big
+            enough is two further, harder questions, and at wide coverage the
+            pattern one is by far the most demanding. Spelling all three out
+            here because "mouth area needed 7654 cm² but f_c already reads
+            500 Hz at 997 cm²" looks like a contradiction and is not. */}
+        {map && (
+          <div style={{ marginTop: 8, padding: "7px 9px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4,
+            fontFamily: C.mono, fontSize: 11, display: "flex", gap: 18, flexWrap: "wrap" }}>
+            <span style={{ color: C.inkDim }}>THE MOUTH YOU HAVE, {fmt(map.mouthAreaTotal / 100, 0)} cm², REACHES</span>
+            {(() => {
+              const dEq = 2 * Math.sqrt(map.mouthAreaTotal / Math.PI);
+              const loadHz = (c * 1000) / (Math.PI * dEq);
+              const patHz = (c * 1000) / (dEq * Math.max(1e-6, Math.sin((thetaH / 2) * D2R)));
+              const fcNow = map.profFcMin != null ? (map.profFcMin + map.profFcMax) / 2 : null;
+              return <>
+                <span><span style={{ color: C.inkMuted }}>flare cutoff </span>
+                  <span style={{ color: C.series3 }}>{fcNow ? fmt(fcNow, 0) : "—"} Hz</span></span>
+                <span><span style={{ color: C.inkMuted }}>loads to </span>
+                  <span style={{ color: loadHz <= (fcNow || Infinity) ? C.series4 : C.series1 }}>{fmt(loadHz, 0)} Hz</span>
+                  <span style={{ color: C.inkMuted }}> (circumference = λ)</span></span>
+                <span><span style={{ color: C.inkMuted }}>holds {fmt(thetaH, 0)}° to </span>
+                  <span style={{ color: patHz <= (fcNow || Infinity) * 1.2 ? C.series4 : C.series5 }}>{fmt(patHz, 0)} Hz</span>
+                  <span style={{ color: C.inkMuted }}> (λ/sin(Θ/2))</span></span>
+              </>;
+            })()}
+          </div>
+        )}
         <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
+          <strong style={{ color: C.inkDim }}>Three different frequencies, and only the first is f_c.</strong> The cutoff this tool solves and
+          reports is the <em>flare</em> constant, f_c = m·c/2π: how fast the passage expands, and nothing more. Whether the mouth is large enough
+          to <em>load</em> at that frequency, and whether it is large enough to hold the <em>pattern</em> there, are two further questions with
+          their own answers — shown above. They routinely disagree by an order of magnitude at wide coverage, and a horn can perfectly well have a
+          500 Hz flare cutoff, load comfortably below it, and still lose 90° control above 1 kHz. That is not an inconsistency in the numbers; it is
+          the actual behaviour of a small-mouthed horn, and the reason all three are printed rather than one.
+          <br />
           The same calculation the standalone horn tool does, run on this multicell's <strong style={{ color: C.inkDim }}>acoustic</strong> throat —
           the summed open area of the cells, not the driver's bore, because the dividers are in the way and the wave only sees what is left.
           Two criteria compete for the mouth size: <em>loading</em> wants a mouth circumference of about λ at cutoff (⌀{fmt(href ? href.diaLoading : 0, 0)} mm here),
@@ -1678,11 +1717,23 @@ export default function GinkgoHorn() {
               <button onClick={() => setLengthenOn(!lengthenOn)} style={btn(lengthenOn, C.series1)}>
                 {lengthenOn ? "equalising to the longest cell" : "off — bare geometry"}
               </button>
+              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>lobes</span>
+              {[1, 2, 3].map((n) => (
+                <button key={n} onClick={() => setLengthLobes(n)} disabled={!lengthenOn}
+                  style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
+              ))}
               <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>bow direction</span>
               {[["radial", "radial out"], ["short", "short axis"]].map(([v, l]) => (
                 <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
                   style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
               ))}
+              {/* the whole trade is discrete and small, so it can simply be
+                  enumerated and measured rather than dialled by hand */}
+              <button disabled={!lengthenOn} onClick={() => {
+                const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, {});
+                setBowSolve(r);
+                if (r.ok) { setLengthDir(r.best.dir); setLengthLobes(r.best.lobes); setBowFrom(r.best.uStart); setBowTo(r.best.uEnd); }
+              }} style={{ ...btn(false, C.series3), opacity: lengthenOn ? 1 : 0.4 }}>solve the bow</button>
               {lengthenOn && map && map.lengthen && map.lengthen.onAxis > 0 && (
                 <span style={{ fontFamily: C.mono, fontSize: 10, color: C.series5 }}>
                   {map.lengthen.onAxis} duct(s) on the axis — no symmetric bow exists for them
@@ -1717,10 +1768,28 @@ export default function GinkgoHorn() {
                     {fmt(map.lengthen.ampMax, 1)} mm</span></span>
                 <span><span style={{ color: C.inkMuted }}>ΔL now </span>
                   <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : C.series5 }}>{fmt(map.dL, 3)} mm</span></span>
-                <span><span style={{ color: C.inkMuted }}>outer wall runs longer by </span>
-                  <span style={{ color: map.bendWidenMax > map.lambda / 8 ? C.series1 : C.series4 }}>
-                    {fmt(map.bendWidenMax, 1)} mm</span>
+                <span><span style={{ color: C.inkMuted }}>longest wall runs longer than the shortest by </span>
+                  <span style={{ color: map.wallSpreadMax > map.lambda / 8 ? C.series1 : C.series4 }}>
+                    {fmt(map.wallSpreadMax, 2)} mm</span>
                   <span style={{ color: C.inkMuted }}> vs λ/8 = {fmt(map.lambda / 8, 2)}</span></span>
+              </div>
+            )}
+
+            {bowSolve && (
+              <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+                {bowSolve.ok
+                  ? <div><span style={{ color: C.inkMuted }}>solved: </span>
+                      <span style={{ color: C.series3 }}>{bowSolve.best.dir}, {bowSolve.best.lobes} lobe{bowSolve.best.lobes > 1 ? "s" : ""}, region [{bowSolve.best.uStart}, {bowSolve.best.uEnd}]</span>
+                      <span style={{ color: C.inkMuted }}> — lowest wall spread that stays inside the overlap floor</span></div>
+                  : <div style={{ color: C.series5 }}>no candidate qualified — {bowSolve.reason}</div>}
+                {/* the whole measured set, so the trade is visible rather than
+                    hidden behind one answer */}
+                {bowSolve.measured.map((m, k) => (
+                  <div key={k} style={{ color: bowSolve.best && m === bowSolve.measured[0] ? C.ink : C.inkMuted }}>
+                    {"  "}{m.dir.padEnd(7)} {m.lobes} lobe · [{m.uStart}, {m.uEnd}] · wall spread {fmt(m.wallSpread, 2)} mm ·
+                    {" "}amplitude {fmt(m.amp, 1)} mm · overlap {m.overlap == null ? "not measured" : fmt(m.overlap, 2) + " mm"}
+                  </div>
+                ))}
               </div>
             )}
 

@@ -253,6 +253,22 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **f_c IS THE FLARE CONSTANT AND NOTHING ELSE, and this reads as a
+  contradiction until it is spelled out.** The tool solves m from (area
+  ratio, path length) and reports f_c = mc/2pi: how fast the passage
+  expands. Whether the mouth is big enough to LOAD there, and whether it is
+  big enough to hold the PATTERN there, are two further questions with their
+  own answers, and at wide coverage they disagree with f_c by an order of
+  magnitude. Measured at 500 Hz, 90 deg, the fc-solved horn: mouth 997 cm2,
+  flare cutoff 500 Hz, loading limit (circumference = lambda) 312 Hz — so
+  loading is comfortable — but pattern control (lambda/sin(Th/2)) only down
+  to 1385 Hz, because 90 deg at 500 Hz wants 7653 cm2 and there is 997.
+  All three are now printed together in the Hypex card. A horn can honestly
+  have a 500 Hz flare cutoff, load below it, and lose 90 deg control above
+  1 kHz; that is the behaviour of a small-mouthed horn, not an inconsistency.
+  Note the direction of the directivity term: WIDER coverage needs a SMALLER
+  mouth, so it is the narrow-pattern horn that comes out enormous.
+
 - **PER-CELL LENGTHENING IS BUILT (`lengthen`), and its closed form is
   straight-path only.** Each cell shorter than the longest is bowed laterally
   with a sin^2(n pi u) window — zero value AND zero slope at both ends, so the
@@ -318,16 +334,41 @@ exists.
   425: bendWiden 29.1 mm against radial's 37.1 mm, for the same dL. It buys
   that with clearance — 16.6 mm of overlap against radial's 1.27 mm on that
   case — so the two are offered together and both numbers are shown.
-  `bendWiden` supersedes `turnLimitDeg` as the number to read: the latter
-  estimates from one nominal width and reads ~100x over budget with or
-  without bows, which makes it useless as a threshold.
-- **FEWER LOBES IS ACOUSTICALLY BETTER AND GEOMETRICALLY WORSE.** Measured at
-  6x3, radial, 90x40 depth 425: 1 lobe bendWiden 37.1 mm at 82.5 mm
-  amplitude, 2 lobes 40.2 mm at 16.3 mm, 3 lobes 48.3 mm at 9.6 mm. More
-  lobes means more total turning for the same added length, so phase error
-  rises, while amplitude falls as 1/n and clearance improves. The tool is
-  fixed at ONE lobe at the owner's request; `lobes` remains a model
-  parameter and the tests still exercise n = 1, 2, 3.
+  Both supersede `turnLimitDeg`, which estimates from one nominal width and
+  reads ~100x over budget with or without bows, making it useless as a
+  threshold. Between the two, read `wallSpread` — see the lobe finding below
+  for why `bendWiden` misleads.
+- **MORE LOBES IS BETTER ON EVERY COUNT, and the integrated metric said the
+  opposite.** This bullet previously claimed the reverse on the strength of
+  `bendWiden`; that was wrong and the correction is the point. `bendWiden`
+  integrates |w dtheta|, so it charges for every turn — but a REVERSING bend
+  does not cost that: a wall fibre running short through the first half runs
+  long through the second and the error cancels. `wallSpread` measures the
+  fibres themselves (each boundary index is the same material line down the
+  duct in swept mode, so max minus min over the index IS the inner-vs-outer
+  difference) and it ranks the lobe count the other way round. Measured at
+  6x3, radial, 90x40 depth 425:
+    lobes        1      2      3      4
+    wallSpread  23.2    8.7    7.0    6.4  mm   <- the truth
+    bendWiden   37.1   40.2   48.3   ...  mm   <- misleading, do not optimise on it
+    amplitude   82.5   16.3    9.6    6.6  mm
+  So more lobes is less phase error AND less amplitude AND better clearance,
+  all at once. Two is the knee; three buys little. The window is sin^2, which
+  never goes negative, so n lobes is n humps on the SAME side of the path
+  touching the centreline between them — NOT a sine wave and not an S-bend.
+  The cancellation comes from each hump reversing its own curvature.
+  **Read `wallSpread`, never `bendWiden`, when judging a bow.** bendWiden is
+  kept only as the gross-turning figure and is tested as such.
+- **THE BOW IS SOLVED BY ENUMERATION (`solveBow`), because the options are
+  few and neither quantity has a cheap surrogate.** direction x lobes x
+  region, each candidate BUILT and measured, ranked on wallSpread, with the
+  clearance (the expensive half) measured only on the survivors and an
+  overlap floor as the constraint. Measured at 6x3, 90x40 depth 425, floor
+  2 mm: the winner is short-axis / 3 lobes / region [0.3, 0.95] at
+  wallSpread 4.75 mm and overlap 1.98 mm, and the candidate with the very
+  lowest wallSpread (short / 2 / [0, 0.7], 4.50 mm) is REJECTED at 4.54 mm
+  of overlap. Note the winning region is "where the room is" — the gap
+  profile predicted exactly that.
 - **COLUMN PARITY decides where the dividers sit, not how well the horn
   works.** Even n_cols forces a longitude line to u = 0, so a divider runs
   down the vertical centreline of the throat — through the exit's
