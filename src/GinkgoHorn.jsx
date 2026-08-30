@@ -1337,79 +1337,6 @@ export default function GinkgoHorn() {
         )}
       </div>
 
-      {/* HORIZONTAL CROSS-SECTION — the view that shows path length differing */}
-      {map && (
-        <div style={card}>
-          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
-            <span style={{ ...secTitle, marginBottom: 0 }}>Horizontal section</span>
-            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
-              middle row · centrelines and rough duct extent
-            </span>
-            <span style={{ marginLeft: "auto", display: "flex", gap: 14, fontFamily: C.mono, fontSize: 11 }}>
-              <span><span style={{ color: C.inkMuted }}>ΔL </span>
-                <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : map.dLfrac <= 0.25 ? C.series1 : C.series5 }}>
-                  {fmt(map.dL, 1)} mm</span>
-                <span style={{ color: C.inkMuted }}> · {fmt(map.dL / (map.lambda / 8), 1)}× the λ/8 budget</span></span>
-              {depthEqualising && (
-                <span><span style={{ color: C.inkMuted }}>equalising depth ≈ </span>
-                  <span style={{ color: C.series4 }}>{fmt(depthEqualising, 0)} mm</span>
-                  {/* the seed is the closed-form argument; the button runs the
-                      golden section on the REAL dL through the forward model
-                      and lands on the measured optimum, not the estimate */}
-                  <button onClick={() => {
-                    const r = G.solveDepthForMinDL(throat, solveRefOpts());
-                    setDlSolve(r);
-                    if (r.ok) setDepth(Math.round(r.depth));
-                  }} style={{ ...btn(false, C.series4), marginLeft: 6 }}>solve min ΔL</button>
-                  {dlSolve && (dlSolve.ok
-                    ? <span style={{ marginLeft: 6 }}><span style={{ color: C.inkMuted }}>→ depth </span>
-                        <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
-                        <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></span>
-                    : <span style={{ marginLeft: 6, color: C.series5 }}>{dlSolve.reason}</span>)}</span>
-              )}
-            </span>
-          </div>
-          <div style={{ opacity: stale ? 0.35 : 1 }}>{crossSVG()}</div>
-          <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 2, flexWrap: "wrap", fontSize: 10 }}>
-            <span style={{ color: C.series5 }}>━ shorter than mean</span>
-            <span style={{ color: C.series4 }}>━ near mean</span>
-            <span style={{ color: C.series1 }}>━ longer than mean</span>
-          </div>
-          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
-            Watch this while moving <strong style={{ color: C.inkDim }}>axial depth</strong>. Shallow, and the mouth curves away from the
-            throat so the outer cells reach further — they are the long ones. Deep, and the mouth flattens out ahead of the throat so the
-            centre cell becomes the long one. Between the two there is a depth where the mouth's curvature centre sits ON the throat, the
-            mouth is momentarily a sphere about it, and <strong style={{ color: C.inkDim }}>every cell is the same distance away</strong>.
-            Measured at 90°×40° with a 600 mm arc, ΔL falls from 81 mm at 200 mm depth to <strong style={{ color: C.inkDim }}>2.0 mm at
-            425 mm</strong> — from 38× the phase budget to about 1×, with no path manipulation at all.
-            {" "}It needs <em>both</em> mouth radii to land together, so the aspect ratio is not free: ΔL is lowest near
-            arc<sub>h</sub>/arc<sub>v</sub> ≈ Θh/Θv, and rises steeply away from it (2.4 mm at matched radii, 9.2 mm at aspect 1.4 for
-            90°×40°). The minimum is broad, so near enough is enough.
-            {" "}Note the over-determination: the dL rule ties depth to the mouth radius while the expansion law ties mouth area to path
-            length, so of <strong style={{ color: C.inkDim }}>{"{f_c, mouth size, dL-optimal depth}"}</strong> you may pick any two — the
-            third follows. This button spends depth on ΔL; the f_c solve below spends it on the cutoff. They fight over the same knob.
-          </div>
-        </div>
-      )}
-
-      {/* 3-D DUCT PREVIEW — the exported solids, live */}
-      {map && (
-        <div style={card}>
-          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
-            <span style={{ ...secTitle, marginBottom: 0 }}>Duct solids · what the STL exports</span>
-            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>drag to orbit · scroll to zoom</span>
-            {solidsStale && <Solving label="building solids" />}
-          </div>
-          {solids3d && <DuctPreview ducts={solids3d.ducts} dim={solidsStale} />}
-          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-            The {throat.N} ducts exactly as the STL carries them — inset by half the divider thickness where the dividers run, tapering to
-            nothing where they stop. The gaps the expansion profile opens, the bows path lengthening adds, and any contact the clearance
-            warnings report are all visible here: the numbers above are the measurement, this is the picture. Throat at the {" "}
-            <em>front</em> view's near side; <em>top</em> looks down the vertical axis.
-          </div>
-        </div>
-      )}
-
       {/* HYPEX EXPANSION — the design intent, before any geometry */}
       <div style={card}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
@@ -1526,6 +1453,106 @@ export default function GinkgoHorn() {
         </div>
       </div>
 
+      {/* THE TWO VIEWS OF THE SAME GEOMETRY, SIDE BY SIDE ─────────────────────
+          Left: the horizontal section, which is the view that EXPLAINS path
+          length — it shows the mouth curving away from the throat, so it is
+          the one to watch while depth moves. Right: the duct solids as the
+          STL carries them. Kept together and directly under the throat and
+          mouth plans, so the plan, the section and the solid read as one
+          sequence rather than being scattered down the page. */}
+      {map && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 14, marginBottom: 14 }}>
+          <div style={{ ...card, marginBottom: 0 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              <span style={{ ...secTitle, marginBottom: 0 }}>Horizontal section</span>
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>middle row · centrelines and duct extent</span>
+              <span style={{ marginLeft: "auto", fontFamily: C.mono, fontSize: 11 }}>
+                <span style={{ color: C.inkMuted }}>ΔL </span>
+                <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : map.dLfrac <= 0.25 ? C.series1 : C.series5 }}>
+                  {fmt(map.dL, 1)} mm</span>
+                <span style={{ color: C.inkMuted }}> · {fmt(map.dL / (map.lambda / 8), 1)}× λ/8</span>
+              </span>
+            </div>
+
+            {/* BOTH DEPTH SOLVES, TOGETHER. They compete for the same knob —
+                axial depth — so they belong side by side, not at opposite
+                ends of the page. */}
+            <div style={{ marginTop: 8, padding: "7px 9px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10, color: C.inkDim, letterSpacing: "0.03em" }}>SOLVE AXIAL DEPTH FOR</span>
+                <button onClick={() => {
+                  const r = G.solveDepthForMinDL(throat, solveRefOpts());
+                  setDlSolve(r);
+                  if (r.ok) setDepth(Math.round(r.depth));
+                }} style={btn(false, C.series4)}>minimum ΔL</button>
+                <button onClick={() => {
+                  const r = G.solveDepthForFc(throat, solveRefOpts(), { fcTarget: fcWanted, T: profileT });
+                  setFcSolve(r);
+                  if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
+                }} style={btn(false, C.series3)}>f_c = {fmt(fcWanted, 0)} Hz</button>
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted, marginLeft: "auto" }}>
+                  now {fmt(depth, 0)} mm{depthEqualising ? ` · ΔL estimate ≈ ${fmt(depthEqualising, 0)} mm` : ""}
+                </span>
+              </div>
+              {(dlSolve || fcSolve) && (
+                <div style={{ marginTop: 5, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+                  {dlSolve && <div>{dlSolve.ok
+                    ? <><span style={{ color: C.inkMuted }}>min ΔL → depth </span>
+                        <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
+                        <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></>
+                    : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}</div>}
+                  {fcSolve && <div>{fcSolve.ok
+                    ? <><span style={{ color: C.inkMuted }}>f_c → depth </span>
+                        <span style={{ color: C.series3 }}>{fmt(fcSolve.depth, 1)} mm</span>
+                        <span style={{ color: C.inkMuted }}> → {fmt(fcSolve.fcLo, 0)}–{fmt(fcSolve.fcHi, 0)} Hz across cells</span></>
+                    : <span style={{ color: C.series5 }}>f_c out of reach — {fcSolve.reason === "too low"
+                        ? `${fmt(fcSolve.bound, 0)} Hz is the floor at ${fcSolve.at} mm depth`
+                        : `${fmt(fcSolve.bound, 0)} Hz is the ceiling at ${fcSolve.at} mm depth`}</span>}</div>}
+                </div>
+              )}
+              <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 5, lineHeight: 1.45 }}>
+                Pick any <strong style={{ color: C.inkDim }}>two of three</strong> — f_c, mouth size, ΔL-optimal depth — never all three: the ΔL rule
+                ties depth to the mouth radius while the expansion law ties mouth area to path length. Both solves reset the straight runs to 0 first,
+                so each is a repeatable reference point.
+              </div>
+            </div>
+
+            <div style={{ opacity: stale ? 0.35 : 1, marginTop: 6 }}>{crossSVG()}</div>
+            <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 2, flexWrap: "wrap", fontSize: 10 }}>
+              <span style={{ color: C.series5 }}>━ shorter than mean</span>
+              <span style={{ color: C.series4 }}>━ near mean</span>
+              <span style={{ color: C.series1 }}>━ longer than mean</span>
+            </div>
+            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
+              Watch this while moving <strong style={{ color: C.inkDim }}>axial depth</strong>. Shallow, and the mouth curves away from the
+              throat so the outer cells reach further — they are the long ones. Deep, and the mouth flattens out ahead of the throat so the
+              centre cell becomes the long one. Between the two there is a depth where the mouth's curvature centre sits ON the throat, the
+              mouth is momentarily a sphere about it, and <strong style={{ color: C.inkDim }}>every cell is the same distance away</strong>.
+              Measured at 90°×40° with a 600 mm arc, ΔL falls from 81 mm at 200 mm depth to <strong style={{ color: C.inkDim }}>2.0 mm at
+              425 mm</strong> — from 38× the phase budget to about 1×, with no path manipulation at all.
+              {" "}It needs <em>both</em> mouth radii to land together, so the aspect ratio is not free: ΔL is lowest near
+              arc<sub>h</sub>/arc<sub>v</sub> ≈ Θh/Θv, and rises steeply away from it (2.4 mm at matched radii, 9.2 mm at aspect 1.4 for
+              90°×40°). The minimum is broad, so near enough is enough.
+            </div>
+          </div>
+
+          <div style={{ ...card, marginBottom: 0 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
+              <span style={{ ...secTitle, marginBottom: 0 }}>Duct solids · what the STL exports</span>
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>drag to orbit · scroll to zoom</span>
+              {solidsStale && <Solving label="building solids" />}
+            </div>
+            {solids3d && <DuctPreview ducts={solids3d.ducts} dim={solidsStale} />}
+            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
+              The {throat.N} ducts exactly as the STL carries them — inset by half the divider thickness where the dividers run, tapering to
+              nothing where they stop. The gaps the expansion profile opens, the bows path lengthening adds, and any contact the clearance
+              warnings report are all visible here: the numbers elsewhere are the measurement, this is the picture. Throat at the {" "}
+              <em>front</em> view's near side; <em>top</em> looks down the vertical axis.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HOVER READOUT — fixed to the viewport, out of flow; see hoverEnter */}
       {hoverCell && (
         <div style={{
@@ -1629,10 +1656,15 @@ export default function GinkgoHorn() {
                   style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
               ))}
               <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>bow direction</span>
-              {[["y", "+y"], ["-y", "−y"], ["x", "+x"], ["-x", "−x"]].map(([v, l]) => (
+              {[["radial", "radial out"], ["-radial", "radial in"], ["y", "+y"], ["-y", "−y"], ["x", "+x"], ["-x", "−x"]].map(([v, l]) => (
                 <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
                   style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
               ))}
+              {lengthenOn && map && map.lengthen && map.lengthen.onAxis > 0 && (
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.series5 }}>
+                  {map.lengthen.onAxis} duct(s) on the axis — no symmetric radial bow exists
+                </span>
+              )}
               {lengthenOn && map && map.lengthen && (
                 <span style={{ fontFamily: C.mono, fontSize: 11, marginLeft: 8 }}>
                   <span style={{ color: C.inkMuted }}>target </span>{fmt(map.lengthen.target, 1)} mm
@@ -1649,9 +1681,16 @@ export default function GinkgoHorn() {
               The window is sin²(n·π·u): zero value <em>and</em> zero slope at both ends, so the throat mating face, the mouth tiling and the launch
               and arrival directions all survive exactly (verified to 3×10⁻¹⁴ mm). More lobes buy the same length at 1/n the amplitude — and amplitude
               is what eats the clearance between ducts, so raise the lobes before accepting a bigger bow. Equalising path length also equalises f_c:
-              the spread readout below collapses when this is on. The price is paid in clearance — read the narrowest-gap / interpenetration figures
-              below after every change here. Swept-mode only, and depth solves always run on the bare geometry: get depth close first, then let the
-              bows close what depth cannot.
+              the spread readout below collapses when this is on. Swept-mode only, and depth solves always run on the bare geometry: get depth close
+              first, then let the bows close what depth cannot.
+              <br />
+              <strong style={{ color: C.inkDim }}>Radial</strong> is the symmetric field: each duct bows along its own outward ray from the horn axis,
+              so a cell and its mirror image get mirrored bows and the assembly stays symmetric about <em>both</em> planes (measured 6×10⁻¹¹ mm on each
+              mirror). A single world axis keeps the mirror it lies across and breaks the other — +y bows the top and bottom rows the same way, putting
+              20 mm between what should be mirror images. Which one costs less clearance is geometry-dependent and must be read, not assumed: on a
+              curved mouth radial-out measured 1.09 mm of overlap against +y's 2.05 mm, but on a <em>vertically flat</em> mouth the deficit sits in the
+              middle row whose outward ray points <em>along</em> the row, and radial cost 8.9 mm against +y's 4.1 mm. Radial-in is almost always worse —
+              it walks every duct toward the axis, where they are already closest.
             </div>
           </div>
 
@@ -1765,31 +1804,12 @@ export default function GinkgoHorn() {
                       {fcReq.shortfall > 0 ? `${fmt(fcReq.shortfall, 1)} mm short` : `${fmt(-fcReq.shortfall, 1)} mm spare`}</span>
                   </> : <span style={{ color: C.inkMuted }}>unreachable at this T</span>}
                 </span>
-                {/* THE INVERSION. m is solved from (ratio, length), so fc has only
-                    ever been a readout. Leaving the axial depth free turns it into
-                    an input: fc and T give m, m gives the length each cell needs,
-                    and depth is solved to deliver it. */}
-                <button style={btn(false, C.series3)} onClick={() => {
-                  // the SAME options the live mapping uses — this once carried
-                  // its own copy with arcH/arcV missing, and solved the default
-                  // mouth whatever the sliders said. The straight runs reset to
-                  // the reference state, like every depth solve.
-                  const r = G.solveDepthForFc(throat, solveRefOpts(), { fcTarget: fcWanted, T: profileT });
-                  setFcSolve(r);
-                  if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
-                }}>solve depth for it</button>
-                {fcSolve && (
-                  <span style={{ fontFamily: C.mono, fontSize: 10 }}>
-                    {fcSolve.ok
-                      ? <><span style={{ color: C.inkMuted }}>depth </span>
-                          <span style={{ color: C.series4 }}>{fmt(fcSolve.depth, 1)} mm</span>
-                          <span style={{ color: C.inkMuted }}> → {fmt(fcSolve.fcLo, 0)}–{fmt(fcSolve.fcHi, 0)} Hz across cells</span></>
-                      : <span style={{ color: C.series5 }}>
-                          out of reach — {fcSolve.reason === "too low"
-                            ? `${fmt(fcSolve.bound, 0)} Hz is the floor at ${fcSolve.at} mm depth`
-                            : `${fmt(fcSolve.bound, 0)} Hz is the ceiling at ${fcSolve.at} mm depth`}</span>}
-                  </span>
-                )}
+                {/* THE INVERSION lives with the other depth solve, up in the
+                    horizontal-section card: both spend the same knob, so they
+                    sit together rather than at opposite ends of the page. */}
+                <span style={{ fontSize: 10, color: C.inkMuted }}>
+                  — solve depth for it in the horizontal-section card above
+                </span>
               </div>
             )}
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>

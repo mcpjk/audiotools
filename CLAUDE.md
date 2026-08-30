@@ -268,6 +268,25 @@ exists.
   measured 2.05 mm of overlap on that case): raise lobes before accepting a
   bigger bow, and read the clearance after every change. Flow mode refuses
   the feature — a shared boundary point cannot follow two paths.
+- **The BOW DIRECTION decides whether the horn stays symmetric, and "radial"
+  is the field that keeps both mirrors.** A single world axis bows every duct
+  the same way: it keeps the mirror it lies across and BREAKS the other —
+  measured 5e-11 mm on the x mirror and 20.5 mm on the y mirror for dir "y".
+  `dir: "radial"` gives each duct the outward ray from the horn axis through
+  its own mid-path point, so mirrored cells get mirrored bows and both
+  mirrors hold at 5.6e-11 mm. A duct sitting exactly ON the axis (odd x odd
+  grids, e.g. 5x3) has no radial direction — NO lateral bow can be symmetric
+  for it — so it is left unbowed and counted in `lengthen.onAxis` with its
+  shortfall, never skewed in an arbitrary direction.
+  **Which direction costs less clearance is geometry-dependent and must be
+  read, not assumed.** On the curved mouth (90x40, depth 425) radial-out
+  HALVES the overlap: 1.09 mm against 2.05 mm for "+y". On a VERTICALLY FLAT
+  mouth it is the other way — 8.9 mm against 4.1 mm — because there the
+  deficit sits in the middle row, whose outward ray points ALONG the row, so
+  those ducts bow straight into their left and right neighbours while "+y"
+  carries them clear of the row entirely. Radial-in is worse than both
+  everywhere tried (5.6 mm on the curved case): it walks every duct toward
+  the axis, where they are already closest.
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now
