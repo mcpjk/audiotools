@@ -1,17 +1,49 @@
 # Ginkgo Multicell Horn — immediate tasks
 
-Updated by the housekeeping run-through session (2026-08-31). Read `CLAUDE.md`
+Updated by the build session of 2026-08-31 (STEP export + preview/export
+decoupling, after the same day's housekeeping run-through). Read `CLAUDE.md`
 first; this file only says **what to do next and why**, not how the thing
 works. Every number quoted here is measured, and the measurement is recorded
 in `CLAUDE.md` under "Known findings worth not re-deriving".
 
-## Run-through result (2026-08-31)
+## Done in the 2026-08-31 build session
+
+- **Task B — STEP export — is BUILT** (`buildSTEP` in the model, "STEP ·
+  B-spline solids" button in the export card). One AP214 file, 18
+  MANIFOLD_SOLID_BREP solids; each duct is 4 lofted B-spline wall faces split
+  at the section corners plus 2 Coons caps, interpolated through every
+  sampled ring point (residual 1e-13), watertight by shared entities (seams
+  exactly 0). 13 new checks in the test suite (350 total), including the
+  fan-capped volume identity that isolates the cap-fill ambiguity — see the
+  three new CLAUDE.md findings (STEP topology, cap-fill volume, LU pivoting
+  conventions).
+  **What remains is OWNER VALIDATION IN CAD** — nothing here can open STEP.
+  Ask them to check, in this order: the file imports at all and yields 18
+  separate bodies; the driver mating faces sit flat and coplanar; a fillet
+  and a boolean each succeed on one duct; and mass-properties volume against
+  the tool's number (expect the cap-fill difference recorded in CLAUDE.md).
+  Expect one or two round trips; the writer's entity boilerplate is the
+  usual first thing a picky importer complains about.
+- **Preview/export resolution decoupled** (plan item 3): the live map is
+  pinned at 24 stations (~60 ms per slider tick against ~136 at 64), and
+  every export builds a fresh full-resolution map at the "export stations"
+  setting when its button is pressed. The clearance and the 3-D preview ride
+  the preview map, so they got cheaper too. Headline readouts (path lengths,
+  dL, fc) come from the centreline `samples` setting and did not move.
+- **Task A decision recorded** (owner): mouth area under convex cell edges is
+  the UNION — no double-counting of overlaps — and the UI must also report
+  the double-counted area as a percentage against the naive per-cell SUM.
+  See the note added to Task A below for the geometric identity that makes
+  this cheap.
+
+## Run-through result (2026-08-31, earlier session)
 
 The whole tool was walked end to end and is healthy:
 
-- 337 closed-form checks pass; `npm run build` (palette check included) is
-  clean; all five tool pages plus the landing page mount in headless Chromium
-  with no console errors.
+- 337 closed-form checks passed as of that session (350 now, with the STEP
+  checks); `npm run build` (palette check included) is clean; all five tool
+  pages plus the landing page mount in headless Chromium with no console
+  errors.
 - Interactive costs re-measured and consistent with the recorded figures:
   mapping 136 ms at 64 stations (51 ms at 16), deferred clearance 534 ms,
   3-D preview solids 20 ms — the deferral pattern is doing its job.
@@ -28,12 +60,12 @@ The whole tool was walked end to end and is healthy:
     the never-referenced `constraintCount` export in the model.
 - Housekeeping looked at and deliberately NOT done: many model exports are
   only used internally (over-exported, not dead) — de-exporting is churn with
-  no behaviour change, skip it; the preview/export resolution decoupling
-  stays conditional (below).
+  no behaviour change, skip it. (The preview/export resolution decoupling was
+  conditional then; the owner approved it and it is now done.)
 
 ## Where the tool stands
 
-Built and tested (337 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (350 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
 - Equal-area throat partition — H-grid, plus the O-grid as the equal-N
@@ -56,7 +88,8 @@ forms):
   computes the mapping live and defers the clearance a beat, same pattern as
   the equal-area solve. `computeClearance: false` skips it in the model;
   defaults stay ON.
-- Volume identity with a tested convergence rate, solid/STL/DXF/CSV export.
+- Volume identity with a tested convergence rate; STL, STEP (AP214
+  B-spline solids), DXF and CSV export.
 - One mapping options object (`mapOpts`) feeds the live map and BOTH depth
   solvers. The fc solver used to assemble its own copy with `arcH`/`arcV`
   missing and silently solved the default 480x213 mouth — measured 17 Hz off
@@ -97,20 +130,18 @@ Decisions the owner has made and that should not be relitigated:
 1. **Task A — convex mouth-cell edges** (below). The owner's stated next
    direction; they will drive it. It is also the prerequisite for restoring
    the evanescent-run/recombination analysis, so it unblocks physics, not
-   just geometry. Settle the union-vs-sum mouth-area question BEFORE touching
-   geometry.
-2. **Task B — STEP export** (below). Independent of A — it can run in a
-   parallel session without conflict, since it adds an exporter rather than
-   changing the geometry. If A lands first, the exporter should emit the
-   coped-joint geometry too, so doing B second wastes nothing.
-3. **Conditional optimisation — preview vs export resolution.** The mapping
-   is ~136 ms per slider tick at 64 stations (~7 fps on a drag). The fix is
-   known and recorded: build the live map at 16–24 stations and re-run at the
-   export setting only when an export button is pressed. Do it when the drag
-   starts to grate or when Task A makes the mapping dearer, not before — the
-   deferred clearance already keeps the worst cost off the interactive path.
-4. **Task C — per-cell bow choice** (below). Stays deferred until wavefront
+   just geometry. The union-vs-sum question is now SETTLED (union, with the
+   double-counted percentage reported) — see the decision note in Task A.
+2. **Task B — STEP export: owner validation round trips.** The writer is
+   built and self-checked; what remains is real CAD feedback. When Task A
+   lands, the exporter must carry the coped-joint geometry too — the
+   knife-edge intersection curves become real edges, which is a topology
+   change to the curved-box B-rep, not just new surface data.
+3. **Task C — per-cell bow choice** (below). Stays deferred until wavefront
    manipulation beyond dL equalisation is wanted.
+
+(The preview/export resolution decoupling that was item 3 here is done —
+see "Done in the 2026-08-31 build session".)
 
 ## Task A — convex mouth-cell edges, for coped knife-edge joints
 
@@ -140,7 +171,37 @@ the expansion law targets per cell). The law reads the per-cell figure, so
 it needs the honest one. The owner has acknowledged this disrupts the
 expansion maths and wants to work through it deliberately.
 
+**DECIDED (owner, 2026-08-31): the mouth area is the UNION**, and the UI
+must also report the double-counted area — sum minus union — as a
+percentage of the sum, so the size of the overlap bookkeeping is always
+visible rather than silently absorbed.
+
+A geometric identity makes this cheaper than it looks, and it is worth
+holding onto while building: **as long as every bulge crosses only an
+INTERIOR shared edge (never the aperture rim), the union of the bulged
+cells is EXACTLY the original tiled aperture.** Cell A's bulge past a
+shared edge lies inside neighbour B's original territory, so it is already
+covered by B's outline — each pairwise overlap lens is precisely A's lobe
+plus B's lobe, and union = sum − overlaps = the tiled total. Consequences:
+`mouthAreaTotal`, the loading limit and the pattern limits DO NOT CHANGE
+under Task A; the total radiating aperture is invariant. What changes is
+per-cell accounting. And for MIRROR-SYMMETRIC bulges the exchange across
+each edge cancels pairwise, so each cell's share of the union equals its
+original tiled area — meaning the expansion law can keep targeting the
+tiled per-cell area it targets today, with the bulge a pure joint-geometry
+feature on top. The reported percentage (sum vs union) then measures how
+much outline area the coped joints double-count, which is exactly the
+number the owner asked to see. Verify the identity numerically once the
+bulges exist (union via sampling or clipping vs the tiled total), and
+treat any residual as a bug in the bulge construction — a bulge crossing
+the rim, or an asymmetric exchange.
+
 ## Task B — STEP export
+
+**BUILT in the 2026-08-31 session — see "Done" at the top.** What follows is
+the original brief, kept because it states the purpose the validation round
+trips must serve. The self-checks it asked for all exist and run in the
+test suite; the remaining work is acting on the owner's CAD feedback.
 
 **Owner's stated purpose:** the STEP files are to be MANIPULATED downstream
 — adding features, and introducing joints so the horn can be 3D printed in
@@ -245,15 +306,14 @@ thing being controlled.
   region default [0, 0.5] with only "throat half" and "divider region"
   offered.
 
-## Known cost worth watching
+## Known cost — RESOLVED (2026-08-31)
 
-At stations 64 the render-pass mapping is ~142 ms at 6x3 (it was ~19 ms at
-16 with no bows, and ~101 ms before the divider taper ran the full path).
-That is ~7 fps on a slider drag. If it starts to grate,
-the fix is to decouple PREVIEW resolution from EXPORT resolution — build the
-live map at 16-24 stations and re-run at the export setting only when the
-STL/DXF/STEP button is pressed. Not done yet because the deferred clearance
-already keeps the worst cost off the interactive path.
+At stations 64 the render-pass mapping was ~142 ms at 6x3 — ~7 fps on a
+slider drag. The recorded fix is now built: the live map is pinned at
+24 stations (~60 ms) and every export rebuilds at the "export stations"
+setting on its own click. Kept here because the numbers are the reference
+if the preview count ever needs revisiting — 16 was visibly faceted through
+a bend, which is why the preview sits at 24, not 16.
 - **3-D duct preview**: the exported solids (inset and all) on a hand-rolled
   canvas — orthographic, painter's sort, two-sided lambert, palette-derived
   shading. Deferred off the render pass like the clearance. No three.js;
@@ -288,7 +348,7 @@ already keeps the worst cost off the interactive path.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 337 closed-form checks; a physics change without a
+npm run test:hgrid     # 350 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors
