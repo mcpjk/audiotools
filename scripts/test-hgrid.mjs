@@ -462,7 +462,7 @@ head("Throat divergence");
     const map = M.mapThroatToMouth(L.throat, {
       c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
       flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
-      stations: ST, keepGeometry: true, wallWidthAt: 200 / 6, divergeLen: dl,
+      stations: ST, keepGeometry: true, divergeLen: dl,
     });
     let worst = 0;
     for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
@@ -527,7 +527,7 @@ head("Hypex expansion profile");
   const mopt = {
     c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
     flatten: 1, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
-    stations: ST, keepGeometry: true, wallWidthAt: 200 / 6,
+    stations: ST, keepGeometry: true,
   };
   const off = M.mapThroatToMouth(L.throat, { ...mopt, profileT: null });
 
@@ -707,7 +707,7 @@ head("Expansion law on the open passage");
     const base = {
       c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
       tight: 0.55, fTarget: 20000, stations: ST, keepGeometry: true,
-      wallWidthAt: 200 / 6, t, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
+      t, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
     };
     const gross = M.mapThroatToMouth(Lay.throat, { ...base, profileArea: "gross" });
     const open = M.mapThroatToMouth(Lay.throat, { ...base, profileArea: "open" });
@@ -762,7 +762,7 @@ head("Expansion law on the open passage");
   const opts = {
     c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
     tight: 0.55, fTarget: 20000, stations: ST, keepGeometry: true,
-    wallWidthAt: 200 / 6, t: 0, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
+    t: 0, profileT: 0.3, mouthMode: "arc", thetaH: 90, thetaV: 40,
   };
   const g0 = M.mapThroatToMouth(bare.throat, { ...opts, profileArea: "gross" });
   const o0 = M.mapThroatToMouth(bare.throat, { ...opts, profileArea: "open" });
@@ -788,7 +788,7 @@ head("Biradial mouth (apex-free)");
   const rSph = 305.6, TH = 90, TV = 40;
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8, tight: 0.55, fTarget: 20000,
-    stations: ST, keepGeometry: true, wallWidthAt: 80, t, profileT: 0.3,
+    stations: ST, keepGeometry: true, t, profileT: 0.3,
   };
   const asArc = M.mapThroatToMouth(Lay.throat, {
     ...common, mouthMode: "arc", apex: rSph - depth, depth, thetaH: TH, thetaV: TV });
@@ -915,7 +915,7 @@ head("Path family");
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, mouthW: 200, mouthH: 100, apex: 120, depth: 150,
     flatten: 1, exitHalfAngle: 8, fTarget: 20000, stations: 16,
-    keepGeometry: true, wallWidthAt: 200 / 6,
+    keepGeometry: true,
   };
   const bend = (o) => {
     const m = M.mapThroatToMouth(Lay.throat, { ...common, ...o });
@@ -951,7 +951,7 @@ head("Mouth by arc angles");
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0, c });
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, apex, depth, exitHalfAngle: 8, tight: 0.55,
-    fTarget: 20000, stations: ST, keepGeometry: true, wallWidthAt: 200 / 6,
+    fTarget: 20000, stations: ST, keepGeometry: true,
   };
   const rect = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1, profileT: 1 });
   const arc = M.mapThroatToMouth(Lay.throat, { ...common, mouthMode: "arc", thetaH: TH, thetaV: TV, profileT: 1 });
@@ -1068,7 +1068,7 @@ head("fc as an input (depth solved)");
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const arcOpts = {
     c, nc: 6, nr: 3, R, rectangular: true, apex: 120, flatten: 1, exitHalfAngle: 8,
-    fTarget: 20000, stations: 16, wallWidthAt: 200 / 6, tight: 0.55,
+    fTarget: 20000, stations: 16, tight: 0.55,
     mouthMode: "arc", thetaH: 90, thetaV: 60,
   };
   // THE ROUND TRIP, and it is closed against the forward model rather than
@@ -1166,7 +1166,7 @@ head("Depth for minimum dL");
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t: 0.4, c });
   const biOpts = {
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
-    fTarget: 20000, stations: 16, wallWidthAt: 100, tight: 0.55,
+    fTarget: 20000, stations: 16, tight: 0.55,
     t: 0.4, profileArea: "open", sectionMode: "swept",
     mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 600, arcV: (600 * 40) / 90,
   };
@@ -1225,7 +1225,7 @@ head("Per-cell path lengthening");
     c, nc: 1, nr: 1, R, rectangular: true, exitHalfAngle: 8, depth: 300,
     mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
     t: 0, fTarget: 20000, stations: 16, profileT: null,
-    sectionMode: "swept", wallWidthAt: 80, keepGeometry: false, computeClearance: false,
+    sectionMode: "swept", keepGeometry: false, computeClearance: false,
   };
   const oneBase = M.mapThroatToMouth(one.throat, oneOpts);
   const L0 = oneBase.rows[0].Lpath;
@@ -1254,7 +1254,7 @@ head("Per-cell path lengthening");
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8, depth: 200,
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 480, arcV: 213,
     t: 0.4, profileArea: "open", fTarget: 20000,
-    stations: 16, profileT: 0.7, sectionMode: "swept", wallWidthAt: 80,
+    stations: 16, profileT: 0.7, sectionMode: "swept",
     keepGeometry: true, computeClearance: false,
   };
   const off = M.mapThroatToMouth(Lay.throat, flatOpts);
@@ -1491,7 +1491,7 @@ head("Volume identity and its convergence");
     const map = M.mapThroatToMouth(Lay.throat, {
       c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
       tight: 0.55, fTarget: 20000, keepGeometry: true,
-      wallWidthAt: 200 / 6, t, stations: ST, profileT: 0.3, ...mo });
+      t, stations: ST, profileT: 0.3, ...mo });
     const solids = M.ductSolids(Lay.throat, map, { t });
     let worst = 0;
     for (const cell of Lay.throat.cells) {
@@ -1552,7 +1552,6 @@ head("Swept sections (Phase D)");
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, apex: 120, depth: 150, exitHalfAngle: 8,
     tight: 0.55, fTarget: 20000, stations: ST, keepGeometry: true,
-    wallWidthAt: 200 / 6,
   };
   const modes = [["rect", { mouthMode: "rect", mouthW: 200, mouthH: 100, flatten: 1 }],
                  ["arc", { mouthMode: "arc", thetaH: 90, thetaV: 60 }]];

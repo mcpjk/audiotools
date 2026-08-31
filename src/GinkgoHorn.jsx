@@ -97,21 +97,6 @@ function NumInput({ label, value, onChange, unit, min, max, step: s = 1, accent,
   );
 }
 
-function Slider({ label, value, onChange, min, max, step, hint, disabled, col }) {
-  return (
-    <div style={{ marginBottom: 8, opacity: disabled ? 0.4 : 1 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <label style={{ ...sLabel, marginBottom: 1 }}>{label}</label>
-        <span style={{ fontFamily: C.mono, fontSize: 11, color: col || C.accent }}>{value.toFixed(3)}</span>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        style={{ width: "100%", accentColor: col || C.accent, margin: 0 }} />
-      {hint && <div style={{ fontSize: 10, color: C.inkMuted, lineHeight: 1.35, marginTop: 1 }}>{hint}</div>}
-    </div>
-  );
-}
-
 const Metric = ({ label, value, sub, color }) => (
   <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 5, padding: "8px 10px" }}>
     <div style={{ fontSize: 10, color: C.inkDim, marginBottom: 3 }}>{label}</div>
@@ -563,7 +548,6 @@ export default function GinkgoHorn() {
     tightThroat: tight, tightMouth: tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
     lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo } : null,
-    wallWidthAt: arcH / shown.nc,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     thetaH, thetaV, arcH, arcV,
     fTarget, stations, thickness, profileArea,
@@ -685,7 +669,7 @@ export default function GinkgoHorn() {
         const th = G.analyseThroat(cells, { c, R, dividerTotal: G.lineGridDividerLength(sol.geometry) });
         const mp = wTwist > 0 ? G.mapThroatToMouth(th, {
           c, nc, nr, R, rectangular: true, depth, mouthMode: "biradial", thetaH, thetaV, arcH, arcV,
-          exitHalfAngle: exitAngle, divergeLen, tight, fTarget, samples: 16, stations: 6, wallWidthAt: arcH / nc,
+          exitHalfAngle: exitAngle, divergeLen, tight, fTarget, samples: 16, stations: 6,
         }) : null;
         return G.objective(th, mp, {
           wAspect, wTwist, wCorrection,
@@ -721,8 +705,6 @@ export default function GinkgoHorn() {
       w.push(`${fab.process.label} needs at least ${fab.tMin} mm of wall; ${fmt(thickness, 2)} mm will not print reliably.`);
     if (map && map.band !== "ok")
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
-    if (map && map.turnMax > map.turnLimitDeg)
-      w.push(`Largest total turning angle is ${fmt(map.turnMax, 1)}° against a ${fmt(map.turnLimitDeg, 1)}° limit (w·θ < λ/8 at ${fmt(arcH / shown.nc, 0)} mm cell width). A symmetric S-bend is wall-length balanced; a single bend is not.`);
     if (map && clearance && clearance.overlap > 1e-3)
       w.push(`Swept sections interpenetrate ${fmt(clearance.overlap, 3)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s). This is the trade the mode makes on purpose — the ends stay shared, the interior does not — but it is not yet resolved: lower T pulls the sections further inward, and centreline manipulation is the stronger lever that is not built. Note the section scale reads k = ${fmt(map.profScaleMax, 4)} ≤ 1, which proves non-overlap ONLY for flowed sections; here it says nothing.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
@@ -2007,7 +1989,10 @@ export default function GinkgoHorn() {
         {map && <>
           <Metric label="ΔL max" value={`${fmt(map.dL, 2)} mm`} sub={`λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz`}
             color={map.band === "ok" ? C.series4 : map.band === "warn" ? C.series1 : C.series5} />
-          <Metric label="Max turning" value={`${fmt(map.turnMax, 1)}°`} sub={`limit ${fmt(map.turnLimitDeg, 1)}° · w·θ < λ/8`} color={map.turnMax > map.turnLimitDeg ? C.series5 : C.ink} />
+          <Metric label="Max turning" value={`${fmt(map.turnMax, 1)}°`} sub="gross centreline turning — wall spread is the phase metric" />
+          <Metric label="Wall spread" value={`${fmt(map.wallSpreadMax, 1)} mm`}
+            sub={`longest vs shortest wall fibre · λ/8 = ${fmt(map.lambda / 8, 2)} mm`}
+            color={map.wallSpreadMax > map.lambda / 8 ? C.series1 : C.series4} />
           <Metric label="Max twist" value={`${fmt(map.twistMax, 1)}°`} sub="cross-section rotation, throat to mouth" />
           <Metric label="Max aim error" value={`${fmt(map.aimMax, 2)}°`} sub={`tolerance ≈ λ/(4d) = ${fmt(map.aimLimitDeg, 1)}°`} color={map.aimMax > map.aimLimitDeg ? C.series5 : C.ink} />
         </>}
@@ -2074,7 +2059,7 @@ export default function GinkgoHorn() {
                     </td>
                     {td(r ? fmt(r.Lpath, 2) : "—", C.inkDim)}
                     {td(r ? fmt(r.pad, 2) : "—", C.inkDim)}
-                    {td(r ? fmt(r.turnDeg, 1) : "—", r && r.turnDeg > map.turnLimitDeg ? C.series5 : C.inkDim)}
+                    {td(r ? fmt(r.turnDeg, 1) : "—", C.inkDim)}
                     {td(r ? fmt(r.twistDeg, 1) : "—", C.inkDim)}
                     {td(r ? fmt(r.aimErrDeg, 2) : "—", r && r.aimErrDeg > map.aimLimitDeg ? C.series5 : C.inkDim)}
                     {map && map.lengthen && td(r && r.snakeAmp > 1e-9 ? fmt(r.snakeAmp, 1) : "0", r && r.snakeAmp > 1e-9 ? C.series1 : C.inkMuted)}
