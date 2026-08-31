@@ -4386,3 +4386,616 @@ export function ductSolids(throat, map, opts = {}) {
   }
   return out;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STEP EXPORT — LOFTED B-SPLINE SOLIDS (AP214)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The STL above is a faceted approximation, and its purpose stops at
+// visualisation and printing as-is. The owner's stated purpose for STEP is
+// DOWNSTREAM MANIPULATION — filleting, offsetting, cutting joints so the horn
+// prints in parts — and a CAD kernel cannot reliably do any of that to a shell
+// of thousands of planar facets. So this writer emits real surfaces: each duct
+// is a solid bounded by four lofted B-spline wall faces, a throat cap and a
+// mouth cap, with proper closed-shell topology a kernel can boolean.
+//
+// WHY THE TOPOLOGY IS A CURVED BOX. Every section ring is four equal runs of
+// n points with the cell's real corners at the run boundaries (that is the
+// structure insetPolygon mitres on). The corners are genuine tangent
+// discontinuities of the geometry — a cell is a curved quadrilateral — so the
+// natural B-rep is one face per wall, split exactly at the corners: 6 faces,
+// 12 edges, 8 vertices per duct. Splitting anywhere else would smooth over a
+// real crease or put a seam in the middle of a smooth wall.
+//
+// WHY INTERPOLATION, NOT CONTROL-POINTS-AS-DATA. Using the sampled points
+// directly as control points smooths the surface off the samples. The walls
+// between neighbouring ducts are t x taper apart — 0.2 mm at the throat at
+// t = 0.4 — so a few hundredths of a millimetre of smoothing bias is not
+// obviously negligible against the thing being modelled. Global cubic
+// interpolation (natural end conditions, tridiagonal-dense solve, LU factored
+// once per direction and reused) makes the surface pass through every sampled
+// ring point, so the B-rep is the same geometry the STL and the clearance
+// measurement describe, to interpolation error BETWEEN samples only.
+//
+// WATERTIGHTNESS IS BY SHARED ENTITIES, NOT BY TOLERANCE. Adjacent wall
+// patches share their corner control columns as the same CARTESIAN_POINT
+// entities; edge curves are the patches' own boundary iso-curves referencing
+// those same points; the caps are Coons patches whose boundary control rows
+// ARE the wall patches' end rows. Two faces meeting along an edge therefore
+// agree exactly — not to a tolerance — because they reference identical
+// geometry. The clamped interpolation pins end control points to end data
+// points (forced exactly after the solve, so LU pivoting cannot leave them a
+// few ulps off), which is what makes the shared columns identical across
+// independently solved patches.
+//
+// THE CAPS ARE COONS PATCHES, EMITTED AS B-SPLINE SURFACES. A bilinearly
+// blended Coons patch of four B-spline curves with a common knot vector is
+// itself a B-spline surface whose control net combines the boundary nets with
+// Greville-abscissa weights — and its boundary curves are EXACTLY the four
+// input curves, which is the whole point: the cap meets the walls with no
+// gap. The throat cap comes out planar automatically (every control point has
+// z = 0 because the ring does), and the mouth cap is a smooth fill of the
+// mouth ring. The fill is not exactly the biradial aperture surface in its
+// interior; it is a cap, not a routing surface, and nothing downstream reads
+// its interior.
+//
+// Orientation is decided by MEASUREMENT, exactly like ductMesh does: each
+// face's surface normal is sampled at the patch centre and compared with the
+// outward direction; the face flag and its loop direction follow. The edge
+// pairing check (every edge used exactly twice, opposite senses) then
+// verifies the shell is consistently oriented rather than assuming it.
+//
+// Self-checks live in scripts/test-hgrid.mjs: interpolation residual at every
+// sample, shared-boundary identity, edge pairing, referential integrity of
+// the emitted entity graph, and the divergence-theorem volume of the
+// tessellated B-rep against the mesh volume — with the CONVERGENCE RATE
+// tested, not a fixed tolerance, per the volume-identity finding.
+
+// ── B-spline basics (cubic, clamped) ───────────────────────────────────────
+function findSpan(knots, deg, nCtrl, t) {
+  if (t >= knots[nCtrl]) return nCtrl - 1;
+  let lo = deg, hi = nCtrl;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (t < knots[mid]) hi = mid; else lo = mid;
+  }
+  return lo;
+}
+
+// Piegl & Tiller A2.3: values and derivatives of the deg+1 nonzero basis
+// functions at t. Returns ders[k][j], k = derivative order, j = 0..deg.
+function dersBasisFuns(span, t, deg, nDer, knots) {
+  const ndu = Array.from({ length: deg + 1 }, () => new Array(deg + 1).fill(0));
+  const left = new Array(deg + 1).fill(0), right = new Array(deg + 1).fill(0);
+  ndu[0][0] = 1;
+  for (let j = 1; j <= deg; j++) {
+    left[j] = t - knots[span + 1 - j];
+    right[j] = knots[span + j] - t;
+    let saved = 0;
+    for (let r = 0; r < j; r++) {
+      ndu[j][r] = right[r + 1] + left[j - r];
+      const temp = ndu[r][j - 1] / ndu[j][r];
+      ndu[r][j] = saved + right[r + 1] * temp;
+      saved = left[j - r] * temp;
+    }
+    ndu[j][j] = saved;
+  }
+  const ders = Array.from({ length: nDer + 1 }, () => new Array(deg + 1).fill(0));
+  for (let j = 0; j <= deg; j++) ders[0][j] = ndu[j][deg];
+  const a = [new Array(deg + 1).fill(0), new Array(deg + 1).fill(0)];
+  for (let r = 0; r <= deg; r++) {
+    let s1 = 0, s2 = 1;
+    a[0][0] = 1;
+    for (let k = 1; k <= nDer; k++) {
+      let d = 0;
+      const rk = r - k, pk = deg - k;
+      if (r >= k) { a[s2][0] = a[s1][0] / ndu[pk + 1][rk]; d = a[s2][0] * ndu[rk][pk]; }
+      const j1 = rk >= -1 ? 1 : -rk;
+      const j2 = r - 1 <= pk ? k - 1 : deg - r;
+      for (let j = j1; j <= j2; j++) {
+        a[s2][j] = (a[s1][j] - a[s1][j - 1]) / ndu[pk + 1][rk + j];
+        d += a[s2][j] * ndu[rk + j][pk];
+      }
+      if (r <= pk) { a[s2][k] = -a[s1][k - 1] / ndu[pk + 1][r]; d += a[s2][k] * ndu[r][pk]; }
+      ders[k][r] = d;
+      const tmp = s1; s1 = s2; s2 = tmp;
+    }
+  }
+  let f = deg;
+  for (let k = 1; k <= nDer; k++) {
+    for (let j = 0; j <= deg; j++) ders[k][j] *= f;
+    f *= deg - k;
+  }
+  return ders;
+}
+
+// Clamped knot vector for interpolating m+1 uniformly spaced data points with
+// a cubic: interior knots at the interior data parameters, m+3 control points.
+function interpKnots(m) {
+  const k = [0, 0, 0, 0];
+  for (let q = 1; q < m; q++) k.push(q / m);
+  k.push(1, 1, 1, 1);
+  return k;
+}
+
+// LU factorisation with partial pivoting, kept so one matrix can solve many
+// right-hand sides — every row of a net uses the same collocation matrix.
+function luFactor(A) {
+  const n = A.length;
+  const M = A.map((r) => r.slice());
+  const piv = new Array(n);
+  for (let k = 0; k < n; k++) {
+    let p = k;
+    for (let i = k + 1; i < n; i++) if (Math.abs(M[i][k]) > Math.abs(M[p][k])) p = i;
+    if (Math.abs(M[p][k]) < 1e-13) return null;
+    if (p !== k) { const t = M[p]; M[p] = M[k]; M[k] = t; }
+    piv[k] = p;
+    for (let i = k + 1; i < n; i++) {
+      M[i][k] /= M[k][k];
+      for (let j = k + 1; j < n; j++) M[i][j] -= M[i][k] * M[k][j];
+    }
+  }
+  return { M, piv, n };
+}
+function luSolve(lu, b) {
+  const { M, piv, n } = lu;
+  const x = b.slice();
+  // The factorisation swaps FULL rows, prior multiplier columns included, so
+  // the whole permutation must be applied to the right-hand side BEFORE any
+  // substitution. Interleaving swap and update — the other classic
+  // convention — silently corrupts the solve when a later pivot moves a row
+  // whose multiplier was already used.
+  for (let k = 0; k < n; k++)
+    if (piv[k] !== k) { const t = x[piv[k]]; x[piv[k]] = x[k]; x[k] = t; }
+  for (let k = 0; k < n; k++)
+    for (let i = k + 1; i < n; i++) x[i] -= M[i][k] * x[k];
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = i + 1; j < n; j++) x[i] -= M[i][j] * x[j];
+    x[i] /= M[i][i];
+  }
+  return x;
+}
+
+// The collocation matrix for cubic interpolation of m+1 uniform data points
+// with natural end conditions (zero second derivative at both ends). Rows:
+// C(t_0) = D_0, C''(t_0) = 0, C(t_1)..C(t_{m-1}), C''(t_m) = 0, C(t_m) = D_m
+// — so the right-hand side is the data with a zero inserted second and
+// second-to-last.
+function interpSystem(m) {
+  const knots = interpKnots(m), n = m + 3, deg = 3;
+  const A = Array.from({ length: n }, () => new Array(n).fill(0));
+  const rowAt = (row, t, der) => {
+    const span = findSpan(knots, deg, n, t);
+    const d = dersBasisFuns(span, t, deg, der, knots);
+    for (let j = 0; j <= deg; j++) A[row][span - deg + j] = d[der][j];
+  };
+  rowAt(0, 0, 0);
+  rowAt(1, 0, 2);
+  for (let q = 1; q < m; q++) rowAt(1 + q, q / m, 0);
+  rowAt(n - 2, 1, 2);
+  rowAt(n - 1, 1, 0);
+  return { knots, lu: luFactor(A) };
+}
+
+// Interpolate one coordinate of m+1 data values; ends are pinned to the data
+// exactly afterwards so pivoting round-off can never leave a shared corner a
+// few ulps off between two independently solved patches.
+function interpSolve(sys, data) {
+  const m = data.length - 1;
+  const rhs = [data[0], 0];
+  for (let q = 1; q < m; q++) rhs.push(data[q]);
+  rhs.push(0, data[m]);
+  const x = luSolve(sys.lu, rhs);
+  x[0] = data[0];
+  x[x.length - 1] = data[m];
+  return x;
+}
+const interpSolve3 = (sys, pts) => {
+  const xs = interpSolve(sys, pts.map((p) => p[0]));
+  const ys = interpSolve(sys, pts.map((p) => p[1]));
+  const zs = interpSolve(sys, pts.map((p) => p[2]));
+  return xs.map((x, i) => [x, ys[i], zs[i]]);
+};
+
+// The collocation matrix depends only on the point count, so it is factored
+// once per count and reused across every side of every duct.
+const interpCache = new Map();
+const interpSystemCached = (m) => {
+  let s = interpCache.get(m);
+  if (!s) { s = interpSystem(m); interpCache.set(m, s); }
+  return s;
+};
+
+// Evaluate a B-spline surface given its control net (net[i][j], i along u).
+export function evalBsplineSurf(net, uKnots, vKnots, u, v) {
+  const deg = 3, nu = net.length, nv = net[0].length;
+  const su = findSpan(uKnots, deg, nu, u), sv = findSpan(vKnots, deg, nv, v);
+  const Nu = dersBasisFuns(su, u, deg, 0, uKnots)[0];
+  const Nv = dersBasisFuns(sv, v, deg, 0, vKnots)[0];
+  const P = [0, 0, 0];
+  for (let i = 0; i <= deg; i++)
+    for (let j = 0; j <= deg; j++) {
+      const w = Nu[i] * Nv[j], q = net[su - deg + i][sv - deg + j];
+      P[0] += w * q[0]; P[1] += w * q[1]; P[2] += w * q[2];
+    }
+  return P;
+}
+
+// Greville abscissae of a cubic knot vector — the coefficients that express
+// the linear function t in the B-spline basis, which is what lets the Coons
+// patch's bilinear blend be written exactly as a control net.
+const greville = (knots, n) =>
+  Array.from({ length: n }, (_, i) => (knots[i + 1] + knots[i + 2] + knots[i + 3]) / 3);
+
+// ── the B-rep of one duct ──────────────────────────────────────────────────
+// Interpolates the sampled rings into four wall patches split at the section
+// corners, plus two Coons caps. Returns control nets and knot vectors with
+// the sharing structure explicit: corner columns appear once and both
+// adjacent walls reference them.
+export function ductBrep(sections) {
+  const S = sections.length;            // stations, incl. both ends
+  const N = sections[0].pts.length;     // points around the ring
+  if (N % 4 !== 0) return null;
+  const n = N / 4;                      // points per side, corner to corner-1
+  const mU = n, mV = S - 1;
+  const sysU = interpSystemCached(mU), sysV = interpSystemCached(mV);
+  if (!sysU.lu || !sysV.lu) return null;
+  const nu = mU + 3, nv = mV + 3;
+
+  // u-interpolation per side per station: 4 x S rows of nu control points
+  const rowsU = Array.from({ length: 4 }, () => new Array(S));
+  for (let s = 0; s < 4; s++)
+    for (let q = 0; q < S; q++) {
+      const data = [];
+      for (let i = 0; i <= n; i++) data.push(sections[q].pts[(s * n + i) % N]);
+      rowsU[s][q] = interpSolve3(sysU, data);
+    }
+
+  // v-interpolation. Corner columns are solved ONCE and shared by both
+  // adjacent walls — that identity is what makes the seam exact.
+  const cornerCols = Array.from({ length: 4 }, (_, s) =>
+    interpSolve3(sysV, Array.from({ length: S }, (_, q) => rowsU[s][q][0])));
+  const walls = Array.from({ length: 4 }, (_, s) => {
+    const net = new Array(nu);
+    net[0] = cornerCols[s];
+    net[nu - 1] = cornerCols[(s + 1) % 4];
+    for (let i = 1; i < nu - 1; i++)
+      net[i] = interpSolve3(sysV, Array.from({ length: S }, (_, q) => rowsU[s][q][i]));
+    return net;
+  });
+
+  // Coons caps from the four wall end rows. B0..B3 run head-to-tail round the
+  // ring; the quad wants B2 and B3 reversed, and the reversal is exact
+  // because the clamped uniform knot vector is symmetric.
+  const coonsCap = (j) => {
+    const B = walls.map((net) => net.map((col) => col[j]));   // 4 boundary curves, ring order
+    const B0 = B[0], B1 = B[1], B2 = B[2].slice().reverse(), B3 = B[3].slice().reverse();
+    const g = greville(sysU.knots, nu);
+    const Q00 = B0[0], Q10 = B0[nu - 1], Q11 = B2[nu - 1], Q01 = B2[0];
+    const net = Array.from({ length: nu }, (_, i) =>
+      Array.from({ length: nu }, (_, jj) => {
+        const gi = g[i], gj = g[jj];
+        return [0, 1, 2].map((c) =>
+          (1 - gj) * B0[i][c] + gj * B2[i][c] + (1 - gi) * B3[jj][c] + gi * B1[jj][c]
+          - ((1 - gi) * (1 - gj) * Q00[c] + gi * (1 - gj) * Q10[c]
+             + gi * gj * Q11[c] + (1 - gi) * gj * Q01[c]));
+      }));
+    // pin the boundaries to the exact input curves — the blend already lands
+    // there analytically; this removes the last round-off
+    for (let i = 0; i < nu; i++) { net[i][0] = B0[i]; net[i][nu - 1] = B2[i]; }
+    for (let jj = 0; jj < nu; jj++) { net[0][jj] = B3[jj]; net[nu - 1][jj] = B1[jj]; }
+    return net;
+  };
+
+  return {
+    n, S, nu, nv,
+    uKnots: sysU.knots, vKnots: sysV.knots,
+    walls, cornerCols,
+    capThroat: coonsCap(0), capMouth: coonsCap(nv - 1),
+  };
+}
+
+// Largest distance between the interpolated wall surfaces and the sampled
+// ring points they were built from — the number that says the B-rep IS the
+// sampled geometry and not a smoothed cousin of it.
+export function brepResidual(brep, sections) {
+  const { n, S, walls, uKnots, vKnots } = brep;
+  let worst = 0;
+  for (let s = 0; s < 4; s++)
+    for (let q = 0; q < S; q++)
+      for (let i = 0; i <= n; i++) {
+        const P = evalBsplineSurf(walls[s], uKnots, vKnots, i / n, q / (S - 1));
+        const D = sections[q].pts[(s * n + i) % (4 * n)];
+        const d = Math.hypot(P[0] - D[0], P[1] - D[1], P[2] - D[2]);
+        if (d > worst) worst = d;
+      }
+  return worst;
+}
+
+// Divergence-theorem volume of the B-rep, by tessellating each face on a
+// parameter grid. Each face's orientation is MEASURED against its outward
+// direction — the caps' natural u x v normals both point the same axial way
+// (both nets are built in ring order), so assuming a winding would get
+// exactly one of them wrong whichever way the ring runs.
+//
+// caps: "coons" closes with the emitted Coons cap surfaces — the volume of
+// the solid as written to the file. "fan" closes with the same centroid fans
+// ductMesh uses, which makes the number directly comparable to the mesh
+// volume: the walls are then the only thing that differs, and the two must
+// agree to chord error. The difference between the two modes IS the cap-fill
+// ambiguity on a curved mouth ring — the ring lies on the curved aperture,
+// so what surface spans it is a choice, and the enclosed volume moves with
+// the choice (measured 0.8-5% of a duct depending on mouth curvature).
+export function brepVolume(brep, sections, du = 12, dv = 48, caps = "coons") {
+  const { uKnots, vKnots, walls, capThroat, capMouth } = brep;
+  const S = sections.length;
+  const centroid = (q) => {
+    const c = [0, 0, 0], P = sections[q].pts;
+    for (const p of P) { c[0] += p[0] / P.length; c[1] += p[1] / P.length; c[2] += p[2] / P.length; }
+    return c;
+  };
+  const c0 = centroid(0), c1 = centroid(1), cQ = centroid(S - 1), cQ1 = centroid(S - 2);
+  const cMid = centroid(Math.floor(S / 2));
+  let V = 0;
+  const addFace = (net, uk, vk, gu, gv, outward) => {
+    const P = evalBsplineSurf(net, uk, vk, 0.5, 0.5);
+    const e = 1e-4;
+    const Pu = evalBsplineSurf(net, uk, vk, 0.5 + e, 0.5);
+    const Pv = evalBsplineSurf(net, uk, vk, 0.5, 0.5 + e);
+    const nrm = [
+      (Pu[1] - P[1]) * (Pv[2] - P[2]) - (Pu[2] - P[2]) * (Pv[1] - P[1]),
+      (Pu[2] - P[2]) * (Pv[0] - P[0]) - (Pu[0] - P[0]) * (Pv[2] - P[2]),
+      (Pu[0] - P[0]) * (Pv[1] - P[1]) - (Pu[1] - P[1]) * (Pv[0] - P[0]),
+    ];
+    const out = outward || [P[0] - cMid[0], P[1] - cMid[1], P[2] - cMid[2]];
+    const sgn = nrm[0] * out[0] + nrm[1] * out[1] + nrm[2] * out[2] >= 0 ? 1 : -1;
+    const grid = [];
+    for (let i = 0; i <= gu; i++) {
+      const row = [];
+      for (let j = 0; j <= gv; j++) row.push(evalBsplineSurf(net, uk, vk, i / gu, j / gv));
+      grid.push(row);
+    }
+    for (let i = 0; i < gu; i++)
+      for (let j = 0; j < gv; j++) {
+        const A = grid[i][j], B = grid[i + 1][j], C = grid[i + 1][j + 1], D = grid[i][j + 1];
+        for (const [Pa, Qa, Ra] of [[A, B, C], [A, C, D]])
+          V += sgn * (Pa[0] * (Qa[1] * Ra[2] - Ra[1] * Qa[2])
+              - Pa[1] * (Qa[0] * Ra[2] - Ra[0] * Qa[2])
+              + Pa[2] * (Qa[0] * Ra[1] - Ra[0] * Qa[1])) / 6;
+      }
+  };
+  const addFan = (pts, outward) => {
+    const n = pts.length, ctr = [0, 0, 0];
+    for (const p of pts) { ctr[0] += p[0] / n; ctr[1] += p[1] / n; ctr[2] += p[2] / n; }
+    let F = 0;
+    for (let k = 0; k < n; k++) {
+      const A = pts[k], B = pts[(k + 1) % n];
+      F += (ctr[0] * (A[1] * B[2] - B[1] * A[2])
+          - ctr[1] * (A[0] * B[2] - B[0] * A[2])
+          + ctr[2] * (A[0] * B[1] - B[0] * A[1])) / 6;
+    }
+    // orient by the fan's own vector area against the outward direction
+    let ax = 0, ay = 0, az = 0;
+    for (let k = 0; k < n; k++) {
+      const A = pts[k], B = pts[(k + 1) % n];
+      ax += A[1] * B[2] - A[2] * B[1]; ay += A[2] * B[0] - A[0] * B[2]; az += A[0] * B[1] - A[1] * B[0];
+    }
+    const sgn = ax * outward[0] + ay * outward[1] + az * outward[2] >= 0 ? 1 : -1;
+    V += sgn * F;
+  };
+  for (const w of walls) addFace(w, uKnots, vKnots, du, dv, null);
+  const outT = [c0[0] - c1[0], c0[1] - c1[1], c0[2] - c1[2]];
+  const outM = [cQ[0] - cQ1[0], cQ[1] - cQ1[1], cQ[2] - cQ1[2]];
+  if (caps === "fan") {
+    addFan(sections[0].pts, outT);
+    addFan(sections[S - 1].pts, outM);
+  } else {
+    addFace(capThroat, uKnots, uKnots, du, du, outT);
+    addFace(capMouth, uKnots, uKnots, du, du, outM);
+  }
+  return Math.abs(V);
+}
+
+// ── the AP214 writer ───────────────────────────────────────────────────────
+// A STEP real must carry a decimal point, and exponents are uppercase.
+function stepReal(x) {
+  if (!isFinite(x)) return "0.";
+  if (Math.abs(x) < 1e-12) return "0.";
+  let s = String(Number(x.toPrecision(12)));
+  if (s.includes("e") || s.includes("E")) {
+    const [m, e] = s.toLowerCase().split("e");
+    return (m.includes(".") ? m : m + ".") + "E" + e;
+  }
+  return s.includes(".") ? s : s + ".";
+}
+
+// Emit one file: every duct as a MANIFOLD_SOLID_BREP in a single
+// ADVANCED_BREP_SHAPE_REPRESENTATION, so CAD imports one part with one body
+// per duct. Returns { text, checks } — the checks are computed on the same
+// structures that were emitted, not re-derived.
+export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
+  if (!map) return null;
+  const E = [];
+  let nid = 0;
+  const add = (txt) => { E.push(`#${++nid}=${txt};`); return nid; };
+  const pt = (p) => add(`CARTESIAN_POINT('',(${stepReal(p[0])},${stepReal(p[1])},${stepReal(p[2])}))`);
+
+  // header / context boilerplate
+  const appCtx = add(`APPLICATION_CONTEXT('automotive design')`);
+  add(`APPLICATION_PROTOCOL_DEFINITION('draft international standard','automotive_design',1998,#${appCtx})`);
+  const prodCtx = add(`PRODUCT_CONTEXT('',#${appCtx},'mechanical')`);
+  const prod = add(`PRODUCT('${name}','ginkgo multicell horn ducts','',(#${prodCtx}))`);
+  add(`PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#${prod}))`);
+  const pdf = add(`PRODUCT_DEFINITION_FORMATION('','',#${prod})`);
+  const pdCtx = add(`PRODUCT_DEFINITION_CONTEXT('part definition',#${appCtx},'design')`);
+  const pd = add(`PRODUCT_DEFINITION('design','',#${pdf},#${pdCtx})`);
+  const pds = add(`PRODUCT_DEFINITION_SHAPE('','',#${pd})`);
+  const uLen = add(`(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))`);
+  const uAng = add(`(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))`);
+  const uSol = add(`(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())`);
+  const unc = add(`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-4),#${uLen},'distance_accuracy_value','')`);
+  const geoCtx = add(`(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#${unc}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#${uLen},#${uAng},#${uSol}))REPRESENTATION_CONTEXT('',''))`);
+  const org = pt([0, 0, 0]);
+  const dz = add(`DIRECTION('',(0.,0.,1.))`);
+  const dx = add(`DIRECTION('',(1.,0.,0.))`);
+  const place = add(`AXIS2_PLACEMENT_3D('',#${org},#${dz},#${dx})`);
+
+  const knotTxt = (knots) => {
+    const vals = [], mult = [];
+    for (const k of knots) {
+      if (vals.length && Math.abs(k - vals[vals.length - 1]) < 1e-15) mult[mult.length - 1]++;
+      else { vals.push(k); mult.push(1); }
+    }
+    return { m: `(${mult.join(",")})`, v: `(${vals.map(stepReal).join(",")})` };
+  };
+  const curveEnt = (ids, knots) => {
+    const { m, v } = knotTxt(knots);
+    return add(`B_SPLINE_CURVE_WITH_KNOTS('',3,(${ids.map((i) => "#" + i).join(",")}),.UNSPECIFIED.,.F.,.F.,${m},${v},.UNSPECIFIED.)`);
+  };
+  const surfEnt = (idNet, uKnots, vKnots) => {
+    const ku = knotTxt(uKnots), kv = knotTxt(vKnots);
+    const rows = idNet.map((col) => `(${col.map((i) => "#" + i).join(",")})`).join(",");
+    return add(`B_SPLINE_SURFACE_WITH_KNOTS('',3,3,(${rows}),.UNSPECIFIED.,.F.,.F.,.F.,${ku.m},${kv.m},${ku.v},${kv.v},.UNSPECIFIED.)`);
+  };
+
+  const solids = [];
+  const checks = { ducts: 0, residual: 0, edgePairing: true, capPlanarZ: 0, volumes: [] };
+
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const sections = ductSections(cellRec, row, { t });
+    if (!sections) return null;
+    const brep = ductBrep(sections);
+    if (!brep) return null;
+    const { nu, nv, uKnots, vKnots, walls, cornerCols, capThroat, capMouth } = brep;
+    checks.ducts++;
+    checks.residual = Math.max(checks.residual, brepResidual(brep, sections));
+    for (const col of capThroat) for (const p of col) checks.capPlanarZ = Math.max(checks.capPlanarZ, Math.abs(p[2]));
+    const dm = ductMesh(sections);
+    checks.volumes.push({ brep: brepVolume(brep, sections), mesh: Math.abs(meshVolume(dm.verts, dm.tris)) });
+
+    // point entities, with the sharing structure explicit: corner columns
+    // once, wall interiors once, cap interiors once
+    const cornerIds = cornerCols.map((col) => col.map(pt));
+    const wallIds = walls.map((net, s) => net.map((col, i) =>
+      i === 0 ? cornerIds[s] : i === nu - 1 ? cornerIds[(s + 1) % 4] : col.map(pt)));
+    // Cap id nets. The boundary rows and columns reference the wall patches'
+    // own end-row point ids — that identity, not a tolerance, is what makes
+    // the cap watertight against the walls. Row i = 0 is B3 (side 3
+    // reversed), row i = nu-1 is B1 (side 1), column jj = 0 is B0 (side 0),
+    // column jj = nu-1 is B2 (side 2 reversed). Only the interior is new.
+    const capIds = (net, j) => net.map((col, i) => {
+      if (i === 0) return wallIds[3].slice().reverse().map((c) => c[j]);
+      if (i === nu - 1) return wallIds[1].map((c) => c[j]);
+      return col.map((p, jj) =>
+        jj === 0 ? wallIds[0][i][j] : jj === nu - 1 ? wallIds[2][nu - 1 - i][j] : pt(p));
+    });
+    const capThroatIds = capIds(capThroat, 0);
+    const capMouthIds = capIds(capMouth, nv - 1);
+
+    // vertices: the 8 ring corners
+    const vThroat = cornerIds.map((c) => add(`VERTEX_POINT('',#${c[0]})`));
+    const vMouth = cornerIds.map((c) => add(`VERTEX_POINT('',#${c[nv - 1]})`));
+
+    // the 12 edges. Vertical edges run throat -> mouth along a corner column;
+    // end edges run corner s -> corner s+1 along a wall's end row.
+    const edges = [];
+    const mkEdge = (v1, v2, ids, knots) =>
+      edges.push({ id: add(`EDGE_CURVE('',#${v1},#${v2},#${curveEnt(ids, knots)},.T.)`), uses: [] }) - 1;
+    const eVert = [], eThroat = [], eMouth = [];
+    for (let s = 0; s < 4; s++) eVert.push(mkEdge(vThroat[s], vMouth[s], cornerIds[s], vKnots));
+    for (let s = 0; s < 4; s++)
+      eThroat.push(mkEdge(vThroat[s], vThroat[(s + 1) % 4], wallIds[s].map((c) => c[0]), uKnots));
+    for (let s = 0; s < 4; s++)
+      eMouth.push(mkEdge(vMouth[s], vMouth[(s + 1) % 4], wallIds[s].map((c) => c[nv - 1]), uKnots));
+
+    // outward references, for the orientation measurement
+    const ringCentroid = (q) => {
+      const c = [0, 0, 0];
+      for (const p of sections[q].pts) { c[0] += p[0] / sections[q].pts.length; c[1] += p[1] / sections[q].pts.length; c[2] += p[2] / sections[q].pts.length; }
+      return c;
+    };
+    const cMid = ringCentroid(Math.floor((nv - 3) / 2)), c0 = ringCentroid(0), c1 = ringCentroid(1);
+    const cQ = ringCentroid(brep.S - 1), cQ1 = ringCentroid(brep.S - 2);
+    const outwardOf = (kind) => {
+      if (kind === "throat") return [c0[0] - c1[0], c0[1] - c1[1], c0[2] - c1[2]];
+      if (kind === "mouth") return [cQ[0] - cQ1[0], cQ[1] - cQ1[1], cQ[2] - cQ1[2]];
+      return null; // wall: outward is measured per patch, from the mid centroid
+    };
+
+    // one face from a whole patch: measure the normal, choose the flag and
+    // loop direction together so the loop is always CCW about the FACE normal
+    const faceFrom = (net, uk, vk, loop, kind) => {
+      const P = evalBsplineSurf(net, uk, vk, 0.5, 0.5);
+      const eps = 1e-4;
+      const Pu = evalBsplineSurf(net, uk, vk, 0.5 + eps, 0.5);
+      const Pv = evalBsplineSurf(net, uk, vk, 0.5, 0.5 + eps);
+      const du3 = [Pu[0] - P[0], Pu[1] - P[1], Pu[2] - P[2]];
+      const dv3 = [Pv[0] - P[0], Pv[1] - P[1], Pv[2] - P[2]];
+      const nrm = [du3[1] * dv3[2] - du3[2] * dv3[1], du3[2] * dv3[0] - du3[0] * dv3[2], du3[0] * dv3[1] - du3[1] * dv3[0]];
+      const outw = outwardOf(kind) || [P[0] - cMid[0], P[1] - cMid[1], P[2] - cMid[2]];
+      const same = nrm[0] * outw[0] + nrm[1] * outw[1] + nrm[2] * outw[2] >= 0;
+      const useLoop = same ? loop : loop.slice().reverse().map(([e, f]) => [e, !f]);
+      for (const [e, f] of useLoop) edges[e].uses.push(f);
+      const oes = useLoop.map(([e, f]) => add(`ORIENTED_EDGE('',*,*,#${edges[e].id},${f ? ".T." : ".F."})`));
+      const el = add(`EDGE_LOOP('',(${oes.map((i) => "#" + i).join(",")}))`);
+      const fb = add(`FACE_OUTER_BOUND('',#${el},.T.)`);
+      const su = surfEnt(net === capThroat ? capThroatIds : net === capMouth ? capMouthIds : wallIds[walls.indexOf(net)], uk, vk);
+      return add(`ADVANCED_FACE('',(#${fb}),#${su},${same ? ".T." : ".F."})`);
+    };
+
+    const faces = [];
+    for (let s = 0; s < 4; s++)
+      faces.push(faceFrom(walls[s], uKnots, vKnots,
+        [[eThroat[s], true], [eVert[(s + 1) % 4], true], [eMouth[s], false], [eVert[s], false]], "wall"));
+    faces.push(faceFrom(capThroat, uKnots, uKnots,
+      [[eThroat[0], true], [eThroat[1], true], [eThroat[2], true], [eThroat[3], true]], "throat"));
+    faces.push(faceFrom(capMouth, uKnots, uKnots,
+      [[eMouth[0], true], [eMouth[1], true], [eMouth[2], true], [eMouth[3], true]], "mouth"));
+
+    // every edge must be used exactly twice, once each way
+    for (const e of edges)
+      if (e.uses.length !== 2 || e.uses[0] === e.uses[1]) checks.edgePairing = false;
+
+    const shell = add(`CLOSED_SHELL('',(${faces.map((i) => "#" + i).join(",")}))`);
+    solids.push(add(`MANIFOLD_SOLID_BREP('duct ${cellRec.label}',#${shell})`));
+  }
+
+  const rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${place},${solids.map((i) => "#" + i).join(",")}),#${geoCtx})`);
+  add(`SHAPE_DEFINITION_REPRESENTATION(#${pds},#${rep})`);
+
+  const stamp = new Date().toISOString().slice(0, 19);
+  const text = [
+    "ISO-10303-21;",
+    "HEADER;",
+    `FILE_DESCRIPTION(('ginkgo multicell horn ducts, lofted B-spline solids'),'2;1');`,
+    `FILE_NAME('${name}.step','${stamp}',(''),(''),'audiotools ginkgo','','');`,
+    "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));",
+    "ENDSEC;",
+    "DATA;",
+    ...E,
+    "ENDSEC;",
+    "END-ISO-10303-21;",
+    "",
+  ].join("\n");
+  return { text, checks };
+}
+
+// Referential integrity of an emitted file: every #id referenced in the DATA
+// section is defined there. Run on the text itself so it checks what was
+// actually written, typos and all.
+export function stepIntegrity(text) {
+  const defined = new Set();
+  for (const m of text.matchAll(/^#(\d+)=/gm)) defined.add(m[1]);
+  let missing = 0, refs = 0;
+  for (const line of text.split("\n")) {
+    const eq = line.indexOf("=");
+    if (!line.startsWith("#") || eq < 0) continue;
+    for (const m of line.slice(eq).matchAll(/#(\d+)/g)) {
+      refs++;
+      if (!defined.has(m[1])) missing++;
+    }
+  }
+  return { entities: defined.size, refs, missing, ok: missing === 0 };
+}

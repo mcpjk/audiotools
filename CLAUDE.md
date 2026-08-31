@@ -445,6 +445,40 @@ exists.
   19.01 vs 19.28 and 4x3 14.62 vs 14.92. So it wins on squarer grids and
   loses on the wide ones, and 119 ms against 1372 ms for the solve. Try both;
   do not assume conformal is the better seed.
+- **THE STEP EXPORT IS A CURVED BOX PER DUCT, watertight by shared entities,
+  and its surfaces INTERPOLATE the sampled rings.** Every section ring is 4
+  equal runs of n points with the cell's real corners at the run boundaries,
+  so each duct is 4 lofted B-spline wall faces split exactly at the corners
+  plus 2 Coons-patch caps — 6 faces, 12 edges, 8 vertices. Adjacent faces
+  reference the SAME control-point entities along their seams (corner columns
+  solved once, cap boundary rows taken from the wall end rows), so seams
+  measure exactly 0, not a tolerance. Global cubic interpolation (natural
+  ends, one LU per direction reused across all solves) puts the surface
+  through every sampled point to 1e-13 — control-points-as-data was rejected
+  because its smoothing bias is not obviously small against 0.2 mm walls.
+  Face orientation is MEASURED at the patch centre, never assumed: the two
+  caps' natural u x v normals point the same axial way, so any assumed
+  winding gets exactly one of them wrong.
+- **A CAPPED DUCT'S VOLUME DEPENDS ON THE CAP FILL, and that explains the
+  whole brep-vs-STL volume difference.** The mouth ring is NON-PLANAR in
+  every mouth mode — rect included, its ring spans ~1.7 mm of z — so the
+  surface spanning it is a choice: the STL fans to the ring centroid, the
+  STEP fills with a Coons patch, and the enclosed volume moves 0.8-5% of a
+  duct with that choice (5% on a wide biradial cell). The walls are NOT part
+  of the difference: closing the B-spline walls with the SAME fans the mesh
+  uses agrees with the mesh volume to 0.097% worst-case over 18 ducts. The
+  test asserts the fan-capped identity tightly and bounds the Coons-vs-fan
+  difference by ring area x ring normal-spread; do not chase the raw
+  brep-vs-mesh percentage, it is measuring the cap choice.
+- **LU WITH PARTIAL PIVOTING HAS TWO CONVENTIONS AND THEY DO NOT MIX.** Swap
+  full rows during factorisation (multiplier columns included) and you must
+  apply the whole permutation to the right-hand side BEFORE substitution;
+  swap only columns >= k and you must interleave swap-and-update. Mixing
+  them (full-row swaps + interleaved solve) corrupts the solve whenever a
+  later pivot moves a row whose multiplier was already used — measured 6.0
+  absolute error on a random 11x11, and 105 mm of surface residual before
+  the fix. The residual check caught it; a fixed-tolerance "looks close"
+  check would not have, because small systems often pivot trivially.
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now

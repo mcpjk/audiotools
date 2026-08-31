@@ -1961,5 +1961,139 @@ head("Fabrication");
     fab.roughRatio > 0.5, `Ra/delta_v = ${fab.roughRatio.toFixed(2)}`);
 }
 
+head("STEP export (AP214 B-spline solids)");
+{
+  // ── the closed forms first ────────────────────────────────────────────────
+  // A straight square tube: linear data, so the cubic interpolant must
+  // reproduce it EXACTLY, and the volume is a product. This catches basis,
+  // collocation, LU and orientation errors with no geometry in the way.
+  const n4 = 4, S4 = 9;
+  const tube = [];
+  for (let q = 0; q < S4; q++) {
+    const z = q * 10, pts = [];
+    const cs = [[-10, -10], [10, -10], [10, 10], [-10, 10]];
+    for (let s = 0; s < 4; s++) {
+      const A = cs[s], B = cs[(s + 1) % 4];
+      for (let i = 0; i < n4; i++) pts.push([A[0] + (B[0] - A[0]) * (i / n4), A[1] + (B[1] - A[1]) * (i / n4), z]);
+    }
+    tube.push({ pts });
+  }
+  const tb = M.ductBrep(tube);
+  check("straight tube: surface through every sample", M.brepResidual(tb, tube), 0, 1e-9, "mm");
+  check("straight tube: exact 20x20x80 volume", M.brepVolume(tb, tube), 32000, 1e-6, "mm3");
+
+  // ── the real geometry, and the file it emits ─────────────────────────────
+  const t = 0.4, ST = 32;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  const map = M.mapThroatToMouth(th, {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    sectionMode: "swept", stations: ST, depth: 150, profileT: 0.7,
+    keepGeometry: true, computeClearance: false,
+  });
+  const out = M.buildSTEP(th, map, { t, name: "test" });
+  checkTrue("one B-rep solid per duct", out.checks.ducts === 18, `${out.checks.ducts} ducts`);
+  check("wall surfaces pass through every sampled ring point", out.checks.residual, 0, 1e-9, "mm");
+  checkTrue("every edge is used exactly twice, opposite senses", out.checks.edgePairing, "12 edges x 18 ducts");
+  check("the throat cap is exactly planar in z = 0", out.checks.capPlanarZ, 0, 1e-9, "mm");
+  const integ = M.stepIntegrity(out.text);
+  checkTrue("every referenced entity is defined", integ.ok,
+    `${integ.entities} entities, ${integ.refs} references, ${integ.missing} missing`);
+  checkTrue("18 solids in one AP214 representation",
+    (out.text.match(/MANIFOLD_SOLID_BREP/g) || []).length === 18
+    && (out.text.match(/ADVANCED_BREP_SHAPE_REPRESENTATION/g) || []).length === 1
+    && out.text.includes("AUTOMOTIVE_DESIGN"), "");
+  // STEP grammar requires reals to carry a decimal point — "1" is an
+  // integer, "1." is a real, and strict parsers reject the wrong one.
+  let badReals = 0, nPts = 0;
+  for (const m2 of out.text.matchAll(/CARTESIAN_POINT\('',\(([^)]*)\)\)/g)) {
+    nPts++;
+    for (const v of m2[1].split(","))
+      if (!/\./.test(v)) badReals++;
+  }
+  checkTrue("every coordinate is written as a STEP real", badReals === 0 && nPts > 1000,
+    `${nPts} points, ${badReals} bare integers`);
+
+  // ── seams: shared by identity, so they must measure EXACTLY zero ─────────
+  const cell = th.cells[7];
+  const row = map.rows.find((r) => r.id === cell.id);
+  const secs = M.ductSections(cell, row, { t });
+  const brep = M.ductBrep(secs);
+  let seamWall = 0, seamCap = 0;
+  for (let s = 0; s < 4; s++)
+    for (let q = 0; q <= 16; q++) {
+      const P = M.evalBsplineSurf(brep.walls[s], brep.uKnots, brep.vKnots, 1, q / 16);
+      const Q = M.evalBsplineSurf(brep.walls[(s + 1) % 4], brep.uKnots, brep.vKnots, 0, q / 16);
+      seamWall = Math.max(seamWall, Math.hypot(P[0] - Q[0], P[1] - Q[1], P[2] - Q[2]));
+    }
+  // cap boundaries against the wall end curves: cap u runs along side 0, cap
+  // v along side 1; sides 2 and 3 appear reversed, which the loop handles
+  for (let i = 0; i <= 16; i++) {
+    const u = i / 16;
+    const pairs = [
+      [M.evalBsplineSurf(brep.walls[0], brep.uKnots, brep.vKnots, u, 0),
+       M.evalBsplineSurf(brep.capThroat, brep.uKnots, brep.uKnots, u, 0)],
+      [M.evalBsplineSurf(brep.walls[1], brep.uKnots, brep.vKnots, u, 0),
+       M.evalBsplineSurf(brep.capThroat, brep.uKnots, brep.uKnots, 1, u)],
+      [M.evalBsplineSurf(brep.walls[2], brep.uKnots, brep.vKnots, u, 1),
+       M.evalBsplineSurf(brep.capMouth, brep.uKnots, brep.uKnots, 1 - u, 1)],
+      [M.evalBsplineSurf(brep.walls[3], brep.uKnots, brep.vKnots, u, 1),
+       M.evalBsplineSurf(brep.capMouth, brep.uKnots, brep.uKnots, 0, 1 - u)],
+    ];
+    for (const [P, Q] of pairs)
+      seamCap = Math.max(seamCap, Math.hypot(P[0] - Q[0], P[1] - Q[1], P[2] - Q[2]));
+  }
+  check("wall-to-wall seams", seamWall, 0, 1e-9, "mm");
+  check("cap-to-wall seams", seamCap, 0, 1e-9, "mm");
+
+  // ── volume, with the cap ambiguity separated out ─────────────────────────
+  // The mouth ring lies on the curved aperture, so the surface that spans it
+  // is a CHOICE and the enclosed volume moves with the choice. Closing the
+  // B-rep walls with the SAME centroid fans ductMesh uses removes that
+  // freedom: then the walls are the only thing that differs, and the two
+  // constructions must agree to chord error. The Coons-capped volume — the
+  // solid as actually emitted — differs from the fan-capped one by exactly
+  // the two cap fills, and that difference must stay cap-sized: bounded by
+  // mouth ring area x the ring's own spread along its normal.
+  let worstWalls = 0, worstCapExcess = 0;
+  for (const cc of th.cells) {
+    const r2 = map.rows.find((x) => x.id === cc.id);
+    const sc = M.ductSections(cc, r2, { t });
+    const br = M.ductBrep(sc);
+    const dm = M.ductMesh(sc);
+    const vMesh = Math.abs(M.meshVolume(dm.verts, dm.tris));
+    const vFan = M.brepVolume(br, sc, 16, 64, "fan");
+    const vCoons = M.brepVolume(br, sc, 16, 64, "coons");
+    worstWalls = Math.max(worstWalls, Math.abs(vFan - vMesh) / vMesh);
+    // the ring's spread along its own mean normal bounds any fill's reach
+    const ring = sc[sc.length - 1].pts;
+    const ctr = [0, 0, 0];
+    for (const p of ring) { ctr[0] += p[0] / ring.length; ctr[1] += p[1] / ring.length; ctr[2] += p[2] / ring.length; }
+    let ax = 0, ay = 0, az = 0;
+    for (let k = 0; k < ring.length; k++) {
+      const A = ring[k], B = ring[(k + 1) % ring.length];
+      ax += (A[1] - ctr[1]) * (B[2] - ctr[2]) - (A[2] - ctr[2]) * (B[1] - ctr[1]);
+      ay += (A[2] - ctr[2]) * (B[0] - ctr[0]) - (A[0] - ctr[0]) * (B[2] - ctr[2]);
+      az += (A[0] - ctr[0]) * (B[1] - ctr[1]) - (A[1] - ctr[1]) * (B[0] - ctr[0]);
+    }
+    const nl = Math.hypot(ax, ay, az) || 1;
+    let lo = Infinity, hi = -Infinity;
+    for (const p of ring) {
+      const d = (p[0] * ax + p[1] * ay + p[2] * az) / nl;
+      if (d < lo) lo = d; if (d > hi) hi = d;
+    }
+    const bound = M.polyArea3(ring) * (hi - lo);
+    const excess = Math.abs(vCoons - vFan) / Math.max(bound, 1e-9);
+    worstCapExcess = Math.max(worstCapExcess, excess);
+  }
+  checkTrue("fan-capped B-rep volume matches the mesh volume", worstWalls < 2e-3,
+    `worst ${(worstWalls * 100).toFixed(4)}% across 18 ducts — walls are the same geometry`);
+  checkTrue("Coons-vs-fan difference stays cap-sized", worstCapExcess < 1,
+    `worst ${(worstCapExcess * 100).toFixed(1)}% of the ring-spread bound`);
+}
+
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

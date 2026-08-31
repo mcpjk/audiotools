@@ -386,12 +386,19 @@ export default function GinkgoHorn() {
   // solved from the geometry, so fc is a result and this is the readout that
   // says how far the geometry is from delivering the one you wanted
   const [fcWanted, setFcWanted] = useState(500);
-  // 64 stations by default. The bows and the profile both put structure
-  // BETWEEN stations, and at 16 the section plot and the exported solid were
-  // visibly faceted through a bend. The clearance measurement scales with
-  // this and is deferred off the render pass, so the cost lands where it is
-  // not felt.
+  // EXPORT resolution — 64 stations by default. The bows and the profile
+  // both put structure BETWEEN stations, and at 16 the exported solid was
+  // visibly faceted through a bend. The LIVE map no longer runs at this
+  // setting: it is pinned to PREVIEW_STATIONS below, so this number is spent
+  // only when an export button is pressed.
   const [stations, setStations] = useState(64);
+  // The live mapping at 64 stations cost ~136 ms per slider tick (~7 fps on
+  // a drag); at 24 it is ~60 ms, and every readout that matters on a drag —
+  // path lengths, dL, fc — comes from the centreline sampling, which is a
+  // separate `samples` setting and does not move with this. The clearance
+  // and the 3-D preview follow the preview map, so they get cheaper too;
+  // the full-resolution geometry is built fresh when an export is pressed.
+  const PREVIEW_STATIONS = 24;
 
   // ── optimiser ──
   const [wAspect, setWAspect] = useState(0.6);
@@ -541,7 +548,7 @@ export default function GinkgoHorn() {
   const mapOpts = useMemo(() => ({
     c: shown.c, nc: shown.nc, nr: shown.nr, R: shown.R, rectangular: layout.rectangular,
     exitHalfAngle: exitAngle,
-    divergeLen, arriveLen, tight, fTarget, stations,
+    divergeLen, arriveLen, tight, fTarget, stations: PREVIEW_STATIONS,
     // the profile is written on the OPEN passage, so it needs the divider
     // thickness — without this it silently falls back to the gross outline
     t: thickness, profileArea,
@@ -550,7 +557,7 @@ export default function GinkgoHorn() {
     lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo } : null,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     thetaH, thetaV, arcH, arcV,
-    fTarget, stations, thickness, profileArea,
+    fTarget, thickness, profileArea,
     lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes]);
 
   // The clearance is skipped HERE and measured in the deferred effect below:
@@ -731,7 +738,15 @@ export default function GinkgoHorn() {
   // ── exports ────────────────────────────────────────────────────────────────
   const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
 
-  const buildDXF = () => {
+  // Exports run at the export station count, not the preview's. The map is
+  // rebuilt here, once, when a button is pressed — ~140 ms at 64 stations,
+  // paid at the click instead of on every slider tick.
+  const exportMap = () => (map && stations !== PREVIEW_STATIONS
+    ? G.mapThroatToMouth(throat, { ...mapOpts, depth, profileT, keepGeometry: true, computeClearance: false, stations })
+    : map);
+  const [stepNote, setStepNote] = useState(null);
+
+  const buildDXF = (map) => {
     const L = [];
     const put = (k, v) => { L.push(String(k)); L.push(String(v)); };
     put(0, "SECTION"); put(2, "ENTITIES");
@@ -759,7 +774,7 @@ export default function GinkgoHorn() {
     return L.join("\n");
   };
 
-  const buildJSON = () => JSON.stringify({
+  const buildJSON = (map) => JSON.stringify({
     tool: "ginkgo multicell horn",
     units: "mm, Hz, degrees",
     driver: { exitDiameter: exitDia, exitHalfAngle: exitAngle, temperature, speedOfSound: c },
@@ -816,11 +831,12 @@ export default function GinkgoHorn() {
     }),
   }, null, 1);
 
-  const buildCSV = () => {
-    // an export must not wait on the deferred measurement — compute it on the
-    // spot if the click beat the timeout
-    const clrNow = clearance || (map && map.rows.length && map.rows[0].sched[0].pts
-      ? G.ductClearance(map.rows) : null);
+  const buildCSV = (map) => {
+    // The deferred clearance belongs to the PREVIEW map; the CSV ships the
+    // export-resolution geometry, so its clearance is measured on that map
+    // here, at the click.
+    const clrNow = map && map.rows.length && map.rows[0].sched[0].pts
+      ? G.ductClearance(map.rows) : null;
     const head = [
       "cell", "i", "j", "kind", "area_mm2", "open_area_mm2", "L_long_mm", "L_short_mm",
       "aspect", "diameter_mm", "convex", "pw_floor_Hz", "min_curv_radius_mm", "curvature_flag",
@@ -856,7 +872,7 @@ export default function GinkgoHorn() {
     return [head, ...rows].join("\n");
   };
 
-  const buildSigmaCSV = () => {
+  const buildSigmaCSV = (map) => {
     if (!map) return "";
     const head = "station,s,axial_z_mm,developed_s_mm,section_area_mm2,flux_area_mm2,equivalent_diameter_mm";
     const rows = map.sigma.map((g, q) =>
@@ -2005,23 +2021,44 @@ export default function GinkgoHorn() {
       {/* EXPORTS */}
       <div style={{ ...card, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ ...secTitle, marginBottom: 0 }}>Export</span>
-        <button style={expBtn} onClick={() => dl(`${stem}.dxf`, buildDXF(), "application/dxf")}>DXF · one layer per station</button>
-        <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(), "application/json")}>JSON cell definition</button>
-        <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(), "text/csv")}>CSV · per cell</button>
-        <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(), "text/csv")}>ΣA(x) CSV</button>
+        <button style={expBtn} onClick={() => dl(`${stem}.dxf`, buildDXF(exportMap()), "application/dxf")}>DXF · one layer per station</button>
+        <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(exportMap()), "application/json")}>JSON cell definition</button>
+        <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(exportMap()), "text/csv")}>CSV · per cell</button>
+        <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(exportMap()), "text/csv")}>ΣA(x) CSV</button>
         <button style={expBtn} disabled={!map} onClick={() => {
-          const solids = G.ductSolids(throat, map, { t: thickness });
+          const solids = G.ductSolids(throat, exportMap(), { t: thickness });
           if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
         }}>STL · cell ducts</button>
+        <button style={expBtn} disabled={!map} onClick={() => {
+          const r = G.buildSTEP(throat, exportMap(), { t: thickness, name: stem });
+          if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
+          const integ = G.stepIntegrity(r.text);
+          const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+          setStepNote({
+            ok,
+            msg: `${r.checks.ducts} solids · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
+              ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
+          });
+          if (ok) dl(`${stem}.step`, r.text, "application/step");
+        }}>STEP · B-spline solids</button>
         <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center", marginLeft: 8 }}>
-          stations
+          export stations
           <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
             style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
         </label>
+        {stepNote && (
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: stepNote.ok ? C.series4 : C.series5, flexBasis: "100%" }}>
+            STEP: {stepNote.msg}
+          </span>
+        )}
         <span style={{ fontSize: 10, color: C.inkMuted, flex: "1 1 260px", lineHeight: 1.45 }}>
-          The STL is the one that needs no CAD work: it carries the {throat.N} ducts as closed solids, already inset by half the
-          divider thickness where the dividers are and tapering to nothing where they stop. Loft a blank from the throat circle to the
-          mouth and subtract them — what is left is the divider web. DXF is 2-D per plane, so only the throat layer will import as a sketch.
+          The STL carries the {throat.N} ducts as faceted closed solids — fine to print as-is or subtract from a lofted blank.
+          The <strong style={{ color: C.inkDim }}>STEP</strong> carries the same ducts as lofted B-spline solids — four wall faces split at the
+          section corners, interpolated through every sampled ring, plus two caps — which is the file to take into CAD when the ducts need
+          filleting, offsetting or joint cuts, because a kernel can boolean and feature real surfaces where it cannot a facet shell. The mouth
+          cap is a smooth fill of the mouth ring, not the aperture surface itself; it exists to close the solid. Exports build at the station
+          count set here; the on-screen preview runs at {PREVIEW_STATIONS} so the sliders stay responsive. DXF is 2-D per plane, so only the
+          throat layer will import as a sketch.
         </span>
       </div>
 
