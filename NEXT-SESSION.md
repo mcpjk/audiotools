@@ -1,9 +1,35 @@
 # Ginkgo Multicell Horn — immediate tasks
 
-Updated by the review-and-consolidation session. Read `CLAUDE.md` first; this
-file only says **what to do next and why**, not how the thing works. Every
-number quoted here is measured, and the measurement is recorded in `CLAUDE.md`
-under "Known findings worth not re-deriving".
+Updated by the housekeeping run-through session (2026-08-31). Read `CLAUDE.md`
+first; this file only says **what to do next and why**, not how the thing
+works. Every number quoted here is measured, and the measurement is recorded
+in `CLAUDE.md` under "Known findings worth not re-deriving".
+
+## Run-through result (2026-08-31)
+
+The whole tool was walked end to end and is healthy:
+
+- 337 closed-form checks pass; `npm run build` (palette check included) is
+  clean; all five tool pages plus the landing page mount in headless Chromium
+  with no console errors.
+- Interactive costs re-measured and consistent with the recorded figures:
+  mapping 136 ms at 64 stations (51 ms at 16), deferred clearance 534 ms,
+  3-D preview solids 20 ms — the deferral pattern is doing its job.
+- Housekeeping done in this session:
+  - **`turnLimitDeg` removed** from model and UI, with its `wallWidthAt`
+    input. It was already recorded as "useless as a threshold" and measured
+    89x over at the tool's own defaults, yet it still drove a warning banner,
+    a red metric and red table cells that could never go green — permanent
+    red that buried the real warnings. `turnMax` stays informational;
+    **`wallSpreadMax` is now a standing metric** (against λ/8), since it is
+    the recorded number to judge bends by and was previously only visible
+    with lengthening on.
+  - Dead code removed: the unused `Slider` component in `GinkgoHorn.jsx` and
+    the never-referenced `constraintCount` export in the model.
+- Housekeeping looked at and deliberately NOT done: many model exports are
+  only used internally (over-exported, not dead) — de-exporting is churn with
+  no behaviour change, skip it; the preview/export resolution decoupling
+  stays conditional (below).
 
 ## Where the tool stands
 
@@ -65,6 +91,26 @@ Decisions the owner has made and that should not be relitigated:
   state** and the sliders stay adjustable afterwards — a solve is a
   repeatable reference point, the runs are the experiment on top of it. The
   owner's working direction is arrival run long, divergence run short.
+
+## The plan, in order
+
+1. **Task A — convex mouth-cell edges** (below). The owner's stated next
+   direction; they will drive it. It is also the prerequisite for restoring
+   the evanescent-run/recombination analysis, so it unblocks physics, not
+   just geometry. Settle the union-vs-sum mouth-area question BEFORE touching
+   geometry.
+2. **Task B — STEP export** (below). Independent of A — it can run in a
+   parallel session without conflict, since it adds an exporter rather than
+   changing the geometry. If A lands first, the exporter should emit the
+   coped-joint geometry too, so doing B second wastes nothing.
+3. **Conditional optimisation — preview vs export resolution.** The mapping
+   is ~136 ms per slider tick at 64 stations (~7 fps on a drag). The fix is
+   known and recorded: build the live map at 16–24 stations and re-run at the
+   export setting only when an export button is pressed. Do it when the drag
+   starts to grate or when Task A makes the mapping dearer, not before — the
+   deferred clearance already keeps the worst cost off the interactive path.
+4. **Task C — per-cell bow choice** (below). Stays deferred until wavefront
+   manipulation beyond dL equalisation is wanted.
 
 ## Task A — convex mouth-cell edges, for coped knife-edge joints
 

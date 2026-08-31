@@ -603,7 +603,6 @@ export function setDOF(mesh, v) {
 }
 
 export const dofCount = (mesh) => mesh.dof.length;
-export const constraintCount = (mesh) => Math.max(mesh.cells.length - 1, 0);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SQUARE-TO-DISC SEEDS
@@ -1471,7 +1470,7 @@ export function mapThroatToMouth(throat, opts) {
     // Which area the expansion law is written on. "open" is the acoustically
     // meaningful one — see the note at the profile block.
     profileArea = "open",
-    stations = 24, wallWidthAt = 10, samples = 64, keepGeometry = false,
+    stations = 24, samples = 64, keepGeometry = false,
     // The signed clearance costs ~5x the rest of the mapping put together, so
     // a caller that wants a responsive readout can skip it here and run
     // ductClearance(rows) on its own schedule. Defaults ON: skipping a safety
@@ -2162,8 +2161,10 @@ export function mapThroatToMouth(throat, opts) {
     // ── HOW MUCH LONGER THE OUTER WALL RUNS THAN THE INNER ─────────────────
     // A duct of width w turning through angle dth puts w * dth more length on
     // its outer wall than its inner one, and that difference is phase error
-    // straight across the passage — the same quantity turnLimitDeg estimates
-    // from one nominal width, measured here on the real geometry instead.
+    // straight across the passage, measured here on the real geometry rather
+    // than estimated from one nominal width. (`turnLimitDeg` was that
+    // estimate; it read ~100x over budget on every geometry, with or without
+    // bows, so it was useless as a threshold and has been removed.)
     // w is the section's extent ALONG THE BEND NORMAL, so it is the width in
     // the plane the duct is actually turning in: bending across a section's
     // short dimension is a cheaper turn than bending across its long one,
@@ -2350,7 +2351,6 @@ export function mapThroatToMouth(throat, opts) {
     };
   }
 
-  const turnLimitDeg = ((lam / 8) / wallWidthAt) * R2D;
   return {
     clearance,
     profileT, profileArea,
@@ -2390,7 +2390,6 @@ export function mapThroatToMouth(throat, opts) {
     // this is the phase error across the passage and the one to read
     wallSpreadMax: Math.max(...rows.map((r) => r.wallSpread)),
     aimMax: Math.max(...rows.map((r) => r.aimErrDeg)),
-    turnLimitDeg,
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
     aimLimitDeg: (lam / (4 * (mouthWEff / nc))) * R2D,
     sigma, stations, sectionAt,

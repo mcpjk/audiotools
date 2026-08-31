@@ -388,8 +388,12 @@ exists.
   case — so the two are offered together and both numbers are shown.
   Both supersede `turnLimitDeg`, which estimates from one nominal width and
   reads ~100x over budget with or without bows, making it useless as a
-  threshold. Between the two, read `wallSpread` — see the lobe finding below
-  for why `bendWiden` misleads.
+  threshold. It is now REMOVED, with its `wallWidthAt` input: measured 89x
+  over at the tool's own defaults, so the warning keyed on it could never go
+  green and only buried the real warnings. `turnMax` stays as an
+  informational figure and `wallSpreadMax` is a standing metric in the UI,
+  judged against lambda/8. Between the two bow metrics, read `wallSpread` —
+  see the lobe finding below for why `bendWiden` misleads.
 - **MORE LOBES IS BETTER ON EVERY COUNT, and the integrated metric said the
   opposite.** This bullet previously claimed the reverse on the strength of
   `bendWiden`; that was wrong and the correction is the point. `bendWiden`
