@@ -370,7 +370,7 @@ export default function GinkgoHorn() {
 
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
-  const [exitAngle, setExitAngle] = useState(8);
+  const [exitAngle, setExitAngle] = useState(16.55);
   const [temperature, setTemperature] = useState(30);
   const [thickness, setThickness] = useState(0.4);
   const [process, setProcess] = useState("FDM");
@@ -388,7 +388,7 @@ export default function GinkgoHorn() {
   const [request, setRequest] = useState(null);    // p_requested, or null for nominal
 
   // ── mouth ──
-  const [depth, setDepth] = useState(150);
+  const [depth, setDepth] = useState(300);
   const [divergeLen, setDivergeLen] = useState(0);
   const [arriveLen, setArriveLen] = useState(0);
   // BEND TIGHTNESS IS FIXED, NOT DIALLED. The two Hermite tangent
@@ -411,9 +411,9 @@ export default function GinkgoHorn() {
   // either axis is a flat one.
   const mouthMode = "biradial";
   const [thetaH, setThetaH] = useState(90);
-  const [thetaV, setThetaV] = useState(40);
-  const [arcH, setArcH] = useState(480);
-  const [arcV, setArcV] = useState(213);
+  const [thetaV, setThetaV] = useState(0);
+  const [arcH, setArcH] = useState(560);
+  const [arcV, setArcV] = useState(250);
   const [dlSolve, setDlSolve] = useState(null);
   // ── per-cell path lengthening ──
   // Off by default: it is a correction to apply after depth has done what it

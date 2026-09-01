@@ -268,6 +268,24 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **THE TOOL'S DEFAULT GEOMETRY CHANGED ON 2026-09-01 (owner's numbers), and
+  every measurement in this file predating it was taken on the old one.**
+  Exit half-angle 8 -> 16.55 deg, mouth 90x40 deg / 480x213 mm -> 90x0 deg /
+  560x250 mm (a VERTICALLY FLAT mouth), axial depth 150 -> 300 mm. The new
+  set is better on every metric the tool reports, which is worth knowing
+  before reading an old number as a regression — measured at 6x3, T 0.7:
+                        old defaults      new defaults
+    dL                  64.20 mm          25.52 mm
+    fc                  643-913 Hz        457-496 Hz   (spread 41.9% -> 8.4%)
+    mouth area          996.8 cm2         1396.0 cm2
+    duct overlap        2.96 mm           0.00 mm
+  Depth 300 is the owner's round number, NOT the dL optimum, and the gap is
+  real rather than negligible: `solveDepthForMinDL` puts this mouth at
+  360.8 mm for dL 11.13 mm and fc 403-416 Hz (3.1% spread). Both are
+  legitimate — 300 is 60 mm shorter for 14 mm more dL — but quote depth 300
+  as a choice, never as the optimum. The exit half-angle does not enter the
+  throat partition at all (f1_min 14.74 kHz, 18 cells, unchanged); it sets
+  the launch cone only.
 - **T IS THE ONLY KNOB THAT CHANGES THE MIDDLE OF THE HORN, and it does not
   touch either end, the path, or the mouth.** Measured at 6x3, 90x40, arc
   480x213, depth 320, T = 0 / 0.5 / 1: Lmin 317.888464, Lmax 320.023368, dL
@@ -347,7 +365,7 @@ exists.
   m·c/2pi with m the bisection root of hypexR(L,1,m,T) = ratio: re-solving
   cell 0 from its own (ratio, L) reproduced the reported fc to every printed
   digit at both depth 150 and 425, and hypexR(L) returned the ratio to 6
-  decimals. It reads WIDE at the tool's default depth — 643-913 Hz at depth
+  decimals. It reads WIDE at a shallow depth — 643-913 Hz at depth
   150, 42% spread — and that is the recorded equal-area cost, not an error:
   the same geometry at depth 425 reads 329-342 Hz, 0.5% spread, because dL
   collapses there. **A wide fc range is a signal to move depth, not a bug.**
@@ -581,10 +599,10 @@ exists.
   winning direction and region both ways — short axis / [0.3, 0.95] — at
   wallSpread 5.37 mm / amplitude 13.8 mm locked to 1 lobe against 4.42 mm /
   7.0 mm free at 2, with overlap 1.92 mm either way. Verified identical in
-  node and in the browser. Note the DEFAULT depth of 150 mm is far from the
-  dL optimum and NO candidate qualifies there, locked or free — every one
-  overlaps 10-22 mm against the 2 mm floor. Solve the depth first; the bow
-  is a correction to apply after depth has done what it can.
+  node and in the browser. Note that at depth 150 — far from the dL optimum,
+  and the tool's default until 2026-09-01 — NO candidate qualifies, locked or
+  free: every one overlaps 10-22 mm against the 2 mm floor. Solve the depth
+  first; the bow is a correction to apply after depth has done what it can.
 - **COLUMN PARITY decides where the dividers sit, not how well the horn
   works.** Even n_cols forces a longitude line to u = 0, so a divider runs
   down the vertical centreline of the throat — through the exit's
@@ -877,6 +895,20 @@ exists.
   more. A single snake profile tessellated across the row would cover it,
   which is a far smaller build than a general per-cell equaliser. The curved
   case, by contrast, spreads its (much smaller) deficit over the outer ring.
+  **THAT ONE-ROW STRUCTURE IS A PROPERTY OF THE dL OPTIMUM, NOT OF THE FLAT
+  MOUTH**, and it is worth knowing before counting on the tessellated-snake
+  build. Re-measured at 6x3, Th_h 90, Th_v 0, arcH 560, arcV 250 — the
+  tool's defaults from 2026-09-01 — the deficit is one row ONLY at that
+  mouth's own optimum:
+    depth 360.8 (its dL optimum, dL 11.1 mm)  row 1: 11.1 9.5 9.3 9.3 9.5 11.1
+                                              rows 0,2: 0.0 0.0 0.3 0.3 0.0 0.0
+    depth 300 (the default, dL 25.5 mm)       row 1: 12.8 20.7 25.5 25.5 20.7 12.8
+                                              rows 0,2: 0.0 9.5 14.9 14.9 9.5 0.0
+  Away from the optimum the horizontal ordering has not yet collapsed, so
+  the deficit is 2-D and every cell but the four corners needs some: a
+  single row-wise profile would not cover it. Same lesson as the fc spread —
+  solve the depth first and the correction problem gets structurally
+  simpler, not merely smaller.
 - **Path length on the APEX-SPHERE mouth: the centre cell is always shortest.**
   SUPERSEDED for the biradial mouth by the note above — on that surface the
   ordering does flip with depth. Kept because it is still true of the legacy
