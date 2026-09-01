@@ -7,6 +7,38 @@ first; this file only says **what to do next and why**, not how the thing
 works. Every number quoted here is measured, and the measurement is recorded
 in `CLAUDE.md` under "Known findings worth not re-deriving".
 
+## Done in the 2026-09-01 UI session — second pass
+
+- **The f_c depth solve is gone from the UI** (owner: "does not return viable
+  horns anyway", and the loading limit lands well below the crossover points
+  that matter at these sizes). The model keeps `solveDepthForFc` and its
+  tests. "Solve axial depth for" now offers minimum ΔL alone.
+- **"Mouth area needed" removed** — it is the 1-D reference horn's aperture,
+  7.7x the mouth the coverage arcs actually specify. "Mouth you have" was
+  restated on its own terms (⌀ equivalent and radius ratio) rather than as a
+  fraction of a requirement no longer on screen.
+
+### OPEN — the same reference still drives two metrics
+
+`Minimum horn length` and `Path you have` are both keyed to
+`hypexReference`, and they now contradict the card they sit in. At the
+defaults, depth 320, target 500 Hz: the card prints "Path you have 318–320 mm
+— short of 393 mm by 75 mm" **in red**, while FLARE CUTOFF two rows down
+prints 437–440 Hz, already better than the 500 Hz asked for. The path a
+500 Hz cutoff actually needs with the real 997 cm² mouth is 280 mm, cleared
+by 38 mm.
+
+Three options, for the owner to pick:
+1. Remove both, and the `Cutoff f_c` input with them — it would then drive
+   nothing but "Flare constant m", which is just 2πf/c restated.
+2. Keep them but re-key `minLength` to the ACTUAL mouth:
+   `hypexLengthForRatio(profRatio, hypexMForFc(fc), T)` = 280 mm here. This
+   is the number the owner's own mental model asks for ("throat + mouth +
+   rate → length") and it makes "Path you have" a true pass/fail.
+3. Leave as is and treat the reference as advisory only.
+
+Option 2 is the recommendation: it keeps the comparison and makes it true.
+
 ## Done in the 2026-09-01 UI session
 
 - **The Hypex section's two readouts were AUDITED and are arithmetically
