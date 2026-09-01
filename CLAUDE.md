@@ -253,6 +253,64 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **T IS THE ONLY KNOB THAT CHANGES THE MIDDLE OF THE HORN, and it does not
+  touch either end, the path, or the mouth.** Measured at 6x3, 90x40, arc
+  480x213, depth 320, T = 0 / 0.5 / 1: Lmin 317.888464, Lmax 320.023368, dL
+  2.134904, mouth 996.769 cm² — IDENTICAL to six decimals at every T. Both
+  ends are pinned by construction (the cells tile at the throat and tile at
+  the mouth, so k = 1 there whatever T is) and the centreline comes from
+  depth, so T's whole job is the SHAPE of the area schedule in between.
+  Three consequences, all measured at depth 320:
+  1. **It sets the flare constant, so it sets the reported f_c** — 529-532 Hz
+     at T = 0 falling monotonically to 409-412 Hz at T = 1, a 23% span on an
+     unchanged body. cosh(mx) + T·sinh(mx) grows faster at higher T, so it
+     reaches the same ratio with a smaller m.
+  2. **It sets how the area is distributed along the path.** A(u)/A_throat at
+     the half-way station is 5.77 at T = 0 against 10.55 at T = 1 — i.e. only
+     4.3% of the total expansion is delivered by mid-path at T = 0, against
+     8.7% at T = 1. Low T holds the passage narrow and then opens hard.
+  3. **It sets the duct interpenetration, and that is the multicell-specific
+     part**: overlap 0.325 mm at T = 0, 0.901 at 0.4, 2.034 at 0.7, 2.518 at
+     T = 1 — an 8x span, monotone. Adjacent centrelines fan apart nearly
+     linearly while the profile grows convexly, and both are pinned equal at
+     the ends, so the convex curve lies BELOW the fan line in between; lower T
+     dips further and buys clearance. **T is therefore the cheapest lever on
+     interpenetration, and it is the same number as the loading choice — the
+     two cannot be separated.**
+  What T does NOT move: wallSpread is flat across the range (5.03 / 4.77 /
+  5.08 mm at T = 0 / 0.7 / 1, a shallow minimum near 0.7), so bend phase
+  error is not a reason to pick a T. And `kMax` reads EXACTLY 1.00000 at
+  every T while the geometry measures 0.3-2.5 mm of real overlap — the
+  documented swept-mode trap, restated here because a T sweep is exactly
+  where someone would reach for k.
+- **THE `f_c` DEPTH SOLVE WAS REMOVED FROM THE UI (owner's call), and the
+  reason is structural rather than a solver defect.** On the biradial mouth
+  the aperture is fixed by the coverage arcs, so depth moves NEITHER the
+  mouth area NOR the expansion ratio — verified: radius ratio 10.548288 at
+  depth 80, 333, 600 and 1100 alike, mouth 996.77 cm² throughout. Depth buys
+  path length and nothing else. So "solve depth for f_c" is only "how long
+  must the body be", and it answers with a horn away from the dL optimum by
+  construction: 275.8 mm for f_c 500 against 320.0 mm for minimum dL at the
+  defaults. The owner also reports the loading limit landing well below the
+  crossover points that matter at these sizes, so the target was never the
+  binding criterion in practice. `solveDepthForFc` SURVIVES IN THE MODEL with
+  its tests — it is the documented inverse of the profile and the thing to
+  reach for if the mouth ever becomes a free variable; it is the UI
+  affordance that was misleading.
+- **"MOUTH AREA NEEDED" DESCRIBED A HORN NOBODY HERE IS BUILDING**, and
+  "Minimum horn length" still does. Both come from `hypexReference`, the 1-D
+  reference horn at the TARGET cutoff, whose mouth is set by
+  max(lambda/pi, lambda/sin(Th/2)) — at 90 deg and 500 Hz that is 7654 cm²
+  against the 997 cm² the coverage arcs actually specify, 7.7x. The first was
+  removed. The second and its companion "Path you have" are still keyed to
+  it, and they read CONTRADICTORY at the defaults: at depth 320 the card
+  prints "Path you have 318-320 mm — short of 393 mm by 75 mm" in red while
+  FLARE CUTOFF prints 437-440 Hz, i.e. already better than the 500 Hz asked
+  for. The path a 500 Hz cutoff actually needs with THIS mouth is 280 mm,
+  cleared by 38 mm. **The 1-D reference and the coverage-specified aperture
+  are two different horns, and any metric that compares the built geometry
+  against the reference will mislead in this direction.**
+
 - **THE FLARE CUTOFF AND THE LOADING LIMIT READOUTS ARE ARITHMETICALLY
   CORRECT, and each carries a convention worth knowing before quoting it.**
   Audited against an independent re-solve, never against the tool's own

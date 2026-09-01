@@ -357,7 +357,6 @@ export default function GinkgoHorn() {
   const [thetaV, setThetaV] = useState(40);
   const [arcH, setArcH] = useState(480);
   const [arcV, setArcV] = useState(213);
-  const [fcSolve, setFcSolve] = useState(null);
   const [dlSolve, setDlSolve] = useState(null);
   // ── per-cell path lengthening ──
   // Off by default: it is a correction to apply after depth has done what it
@@ -521,7 +520,7 @@ export default function GinkgoHorn() {
   // a solver readout describes the geometry it was run against — clear it the
   // moment that geometry moves, or a stale "depth X → Y Hz" sits beside inputs
   // it no longer belongs to
-  useEffect(() => { setFcSolve(null); setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT, fcWanted]);
+  useEffect(() => { setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT]);
   // EVERY depth solve runs from the same reference state for the two straight
   // runs — divergence 0, arrival 0 — and resets the sliders to it. A solve is
   // then a repeatable reference point rather than a function of wherever the
@@ -1448,15 +1447,19 @@ export default function GinkgoHorn() {
               sub={`summed open area · ⌀${fmt(2 * href.rt, 1)} mm equivalent`} />
             <Metric label="Flare constant m" value={`${(href.m * 1000).toFixed(3)} /m`}
               sub={`f_c = mc/2π at ${fmt(c, 1)} m/s`} />
-            <Metric label="Mouth area needed" value={`${fmt(href.mouthArea / 100, 0)} cm²`}
-              sub={`⌀${fmt(href.dia, 0)} mm · ${href.governedBy} governs`} color={C.series3} />
+            {/* "Mouth area needed" was removed at the owner's call: it is the
+                aperture a 1-D reference horn would want at the target cutoff,
+                and at these coverage angles it runs several times the mouth
+                the coverage arcs actually specify — so it describes a horn
+                nobody here is building. "Mouth you have" therefore states the
+                aperture on its own terms rather than as a fraction of that
+                requirement, which would have been a ratio against a number no
+                longer on screen. */}
             <Metric label="Minimum horn length" value={`${fmt(href.minLength, 0)} mm`}
               sub={`expansion ratio ${fmt(href.ratio, 1)}×`} color={C.series3} />
             {map && <Metric label="Mouth you have" value={`${fmt(map.mouthAreaTotal / 100, 0)} cm²`}
-              sub={map.mouthAreaTotal >= href.mouthArea
-                ? `${fmt(map.mouthAreaTotal / href.mouthArea, 2)}× the requirement`
-                : `${fmt(100 * (1 - map.mouthAreaTotal / href.mouthArea), 0)}% under`}
-              color={map.mouthAreaTotal >= href.mouthArea ? C.series4 : C.series5} />}
+              sub={`⌀${fmt(2 * Math.sqrt(map.mouthAreaTotal / Math.PI), 0)} mm equivalent · ${fmt(Math.sqrt(map.mouthAreaTotal / throat.openTotal), 2)}× on radius`}
+              color={C.series3} />}
             {map && <Metric label="Path you have" value={`${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} mm`}
               sub={map.Lmin >= href.minLength
                 ? `clears the ${fmt(href.minLength, 0)} mm minimum`
@@ -1608,9 +1611,16 @@ export default function GinkgoHorn() {
               </span>
             </div>
 
-            {/* BOTH DEPTH SOLVES, TOGETHER. They compete for the same knob —
-                axial depth — so they belong side by side, not at opposite
-                ends of the page. */}
+            {/* ONE DEPTH SOLVE. The cutoff solve was removed at the owner's
+                call: it does not return a horn anyone would build. The reason
+                is structural — on the biradial mouth the aperture is fixed by
+                the coverage arcs, so depth moves NEITHER the mouth area nor
+                the expansion ratio, only the path length. Asking for a cutoff
+                is therefore only asking how long the body must be, and it
+                answers with a stubby or an over-long body carrying a
+                full-size mouth, always away from the dL optimum. The
+                inversion survives as `solveDepthForFc` in the model, with its
+                tests; it is the UI affordance that was misleading. */}
             <div style={{ marginTop: 8, padding: "7px 9px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 10, color: C.inkDim, letterSpacing: "0.03em" }}>SOLVE AXIAL DEPTH FOR</span>
@@ -1619,62 +1629,25 @@ export default function GinkgoHorn() {
                   setDlSolve(r);
                   if (r.ok) setDepth(Math.round(r.depth));
                 }} style={btn(false, C.series4)}>minimum ΔL</button>
-                <button onClick={() => {
-                  const r = G.solveDepthForFc(throat, solveRefOpts(), { fcTarget: fcWanted, T: profileT });
-                  setFcSolve(r);
-                  if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
-                }} style={btn(false, C.series3)}>f_c = {fmt(fcWanted, 0)} Hz</button>
                 <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted, marginLeft: "auto" }}>
                   now {fmt(depth, 0)} mm{depthEqualising ? ` · ΔL estimate ≈ ${fmt(depthEqualising, 0)} mm` : ""}
                 </span>
               </div>
-              {(dlSolve || fcSolve) && (
+              {dlSolve && (
                 <div style={{ marginTop: 5, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
-                  {dlSolve && <div>{dlSolve.ok
+                  {dlSolve.ok
                     ? <><span style={{ color: C.inkMuted }}>min ΔL → depth </span>
                         <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
                         <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></>
-                    : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}</div>}
-                  {fcSolve && <div>{fcSolve.ok
-                    ? <><span style={{ color: C.inkMuted }}>f_c → depth </span>
-                        <span style={{ color: C.series3 }}>{fmt(fcSolve.depth, 1)} mm</span>
-                        <span style={{ color: C.inkMuted }}> → {fmt(fcSolve.fcLo, 0)}–{fmt(fcSolve.fcHi, 0)} Hz across cells</span></>
-                    : <span style={{ color: C.series5 }}>f_c out of reach — {fcSolve.reason === "too low"
-                        ? `${fmt(fcSolve.bound, 0)} Hz is the floor at ${fcSolve.at} mm depth`
-                        : `${fmt(fcSolve.bound, 0)} Hz is the ceiling at ${fcSolve.at} mm depth — the cutoff has a real peak, see the notes`}</span>}</div>}
-                  {/* WHAT THE SOLVE ACTUALLY BUILT. The cutoff solve often
-                      answers with a horn nobody would make, and the reason is
-                      structural: on the biradial mouth the aperture is fixed
-                      by the coverage arcs, so depth cannot move the mouth area
-                      or the expansion ratio — it moves only the path length.
-                      Asking for a cutoff is therefore only asking how LONG the
-                      horn must be, and a high cutoff answers with a very short
-                      body carrying a full-size mouth. Shown so it is visible
-                      here rather than discovered in CAD. */}
-                  {fcSolve && fcSolve.ok && (
-                    <div style={{ marginTop: 3, paddingLeft: 8, borderLeft: `2px solid ${C.border}` }}>
-                      <div><span style={{ color: C.inkMuted }}>mouth </span>{fmt(fcSolve.mouthArea / 100, 0)} cm²
-                        <span style={{ color: C.inkMuted }}> · expansion ratio </span>{fmt(fcSolve.ratio, 2)}×
-                        <span style={{ color: C.inkMuted }}> — neither moves with depth, both are set by the arcs</span></div>
-                      <div><span style={{ color: C.inkMuted }}>duct length </span>{fmt(fcSolve.Lmin, 0)}–{fmt(fcSolve.Lmax, 0)} mm
-                        <span style={{ color: C.inkMuted }}> · ΔL </span>
-                        <span style={{ color: fcSolve.dLfrac <= 0.125 ? C.series4 : fcSolve.dLfrac <= 0.25 ? C.series1 : C.series5 }}>
-                          {fmt(fcSolve.dL, 1)} mm</span>
-                        <span style={{ color: C.inkMuted }}> = {fmt(fcSolve.dLfrac * 8, 1)}× the λ/8 budget</span></div>
-                      {dlSolve && dlSolve.ok && Math.abs(fcSolve.depth - dlSolve.depth) > 20 && (
-                        <div style={{ color: C.series5 }}>
-                          {fmt(Math.abs(fcSolve.depth - dlSolve.depth), 0)} mm away from the ΔL optimum at {fmt(dlSolve.depth, 0)} mm —
-                          this is the pick-two-of-three: the mouth and the cutoff are both fixed, so depth has nothing left to spend on ΔL.
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}
                 </div>
               )}
               <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 5, lineHeight: 1.45 }}>
                 Pick any <strong style={{ color: C.inkDim }}>two of three</strong> — f_c, mouth size, ΔL-optimal depth — never all three: the ΔL rule
-                ties depth to the mouth radius while the expansion law ties mouth area to path length. Both solves reset the straight runs to 0 first,
-                so each is a repeatable reference point.
+                ties depth to the mouth radius while the expansion law ties mouth area to path length. This solve takes the ΔL leg, which leaves f_c
+                to fall out of the geometry as a readout. It resets the straight runs to 0 first, so it is a repeatable reference point.
+                {" "}The mouth area and the expansion ratio do not move with depth at all — both are set by the coverage arcs — so depth buys path
+                length and nothing else.
               </div>
             </div>
 
