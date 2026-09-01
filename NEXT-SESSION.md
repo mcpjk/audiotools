@@ -87,6 +87,21 @@ appeared twice in this file by paste accident, now deduplicated.)
   so at a depth far from the ΔL optimum the metric stops discriminating —
   read amplitude and overlap there.
 
+## Done in the 2026-09-01 bow-solver session
+
+- **The bow solver no longer chooses the lobe count by default.** "lobes
+  locked at N" holds the count you set and searches direction x region around
+  it; one click frees it to try both. Left free it lands on 2 lobes almost
+  everywhere, because it ranks on wallSpread and wallSpread is a
+  fibre-length-at-the-mouth measure that cannot see a reversal happening in
+  the wide part of the passage. The measured cost of the lock is recorded in
+  `CLAUDE.md` under the enumeration finding (5.37 mm against 4.42 mm of wall
+  spread at 6x3, 90x40, depth 320, with half the bow amplitude).
+  **If this is worth pursuing**, the honest fix is a second ranked quantity
+  that charges a bend by the local section width — bendWiden is the obvious
+  candidate and is recorded as misleading on its own, so it would have to be
+  a constraint or a weighted pair, not a replacement objective.
+
 ## Done in the 2026-08-31 build session
 
 - **Task B — STEP export — is BUILT** (`buildSTEP` in the model, "STEP ·

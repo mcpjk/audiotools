@@ -553,6 +553,23 @@ exists.
   lowest wallSpread (short / 2 / [0, 0.7], 4.50 mm) is REJECTED at 4.54 mm
   of overlap. Note the winning region is "where the room is" — the gap
   profile predicted exactly that.
+  **THE LOBE COUNT IS HELD OUT OF THE SOLVE BY DEFAULT (`lobes locked`), and
+  that is a deliberate refusal to optimise on wallSpread alone.** Left free
+  the solver returns 2 lobes on essentially every geometry, because
+  wallSpread prefers more lobes — but wallSpread is the length each wall
+  fibre has run BY THE MOUTH, so a reversal cancels in that total whether or
+  not the wavefront recovered in between, and the extra hump sits further
+  down the passage where the section is wider. The count is therefore the
+  owner's, and the solver searches direction x region around it. The lock
+  costs about a fifth of the wallSpread and buys back HALF the amplitude:
+  measured at 6x3, 90x40, arc 480, depth 320 (the dL optimum there), same
+  winning direction and region both ways — short axis / [0.3, 0.95] — at
+  wallSpread 5.37 mm / amplitude 13.8 mm locked to 1 lobe against 4.42 mm /
+  7.0 mm free at 2, with overlap 1.92 mm either way. Verified identical in
+  node and in the browser. Note the DEFAULT depth of 150 mm is far from the
+  dL optimum and NO candidate qualifies there, locked or free — every one
+  overlaps 10-22 mm against the 2 mm floor. Solve the depth first; the bow
+  is a correction to apply after depth has done what it can.
 - **COLUMN PARITY decides where the dividers sit, not how well the horn
   works.** Even n_cols forces a longitude line to u = 0, so a divider runs
   down the vertical centreline of the throat — through the exit's
