@@ -18,6 +18,32 @@ in `CLAUDE.md` under "Known findings worth not re-deriving".
   restated on its own terms (⌀ equivalent and radius ratio) rather than as a
   fraction of a requirement no longer on screen.
 
+- **"Minimum horn length" re-keyed to the actual mouth** (owner's call,
+  option 2 of the three written up last pass) and renamed **"Path needed for
+  f_c"**. It now inverts the profile against the cell's own radius ratio
+  rather than the 1-D reference horn's aperture: 280 mm for 500 Hz at the
+  defaults, against 318–320 mm of path — green, and consistent with the
+  437–440 Hz that FLARE CUTOFF prints beside it. Previously it read "short of
+  393 mm by 75 mm" in red on that same geometry.
+  Verified by round trip against the FORWARD model: re-solving m from (ratio,
+  the reported length) returns the target cutoff to 3.4e-16 relative over
+  4 T × 3 fc × 18 cells. Verdicts checked across depth 150/200/320/500 and
+  targets 500/700 Hz — "clears" and "short" agree with the FLARE CUTOFF range
+  in every case.
+  The `Cutoff f_c` input therefore stays: it now drives a metric about the
+  horn being built, not only the reference figures.
+
+## Done in the 2026-09-01 UI session — second pass
+
+- **The f_c depth solve is gone from the UI** (owner: "does not return viable
+  horns anyway", and the loading limit lands well below the crossover points
+  that matter at these sizes). The model keeps `solveDepthForFc` and its
+  tests. "Solve axial depth for" now offers minimum ΔL alone.
+- **"Mouth area needed" removed** — it is the 1-D reference horn's aperture,
+  7.7x the mouth the coverage arcs actually specify. "Mouth you have" was
+  restated on its own terms (⌀ equivalent and radius ratio) rather than as a
+  fraction of a requirement no longer on screen.
+
 ### OPEN — the same reference still drives two metrics
 
 `Minimum horn length` and `Path you have` are both keyed to

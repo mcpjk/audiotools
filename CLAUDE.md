@@ -297,19 +297,33 @@ exists.
   its tests — it is the documented inverse of the profile and the thing to
   reach for if the mouth ever becomes a free variable; it is the UI
   affordance that was misleading.
-- **"MOUTH AREA NEEDED" DESCRIBED A HORN NOBODY HERE IS BUILDING**, and
-  "Minimum horn length" still does. Both come from `hypexReference`, the 1-D
-  reference horn at the TARGET cutoff, whose mouth is set by
-  max(lambda/pi, lambda/sin(Th/2)) — at 90 deg and 500 Hz that is 7654 cm²
-  against the 997 cm² the coverage arcs actually specify, 7.7x. The first was
-  removed. The second and its companion "Path you have" are still keyed to
-  it, and they read CONTRADICTORY at the defaults: at depth 320 the card
-  prints "Path you have 318-320 mm — short of 393 mm by 75 mm" in red while
-  FLARE CUTOFF prints 437-440 Hz, i.e. already better than the 500 Hz asked
-  for. The path a 500 Hz cutoff actually needs with THIS mouth is 280 mm,
-  cleared by 38 mm. **The 1-D reference and the coverage-specified aperture
-  are two different horns, and any metric that compares the built geometry
-  against the reference will mislead in this direction.**
+- **THE 1-D REFERENCE AND THE COVERAGE-SPECIFIED APERTURE ARE TWO DIFFERENT
+  HORNS, and every metric that compared the built geometry against the
+  reference misled in the same direction.** `hypexReference` sizes its mouth
+  by max(lambda/pi, lambda/sin(Th/2)) — at 90 deg and 500 Hz, 7654 cm²
+  against the 997 cm² the coverage arcs specify, 7.7x. Two metrics rode on
+  it. "Mouth area needed" was REMOVED. "Minimum horn length" was the length
+  to that mouth, and with its companion "Path you have" it read flatly
+  CONTRADICTORY: at depth 320 the card printed "short of 393 mm by 75 mm" in
+  red while FLARE CUTOFF two rows down printed 437-440 Hz, already better
+  than the 500 Hz asked for.
+  **It is now RE-KEYED to the mouth being built** and renamed "Path needed
+  for f_c": fc and T give m, and (m, T, the cell's OWN radius ratio) give the
+  length that cell needs, via `hypexLengthForRatio` — the same equation
+  `solveHypexM` solves for m, read for L. Measured at the defaults: 280 mm
+  for 500 Hz against 318-320 mm of path, cleared by 38 mm, green, and
+  consistent with the 437-440 Hz beside it. The round trip is EXACT — solving
+  m back from (ratio, the reported length) returns the target to 3.4e-16
+  relative over 4 T x 3 fc x 18 cells, checked against the forward model and
+  not against the metric's own bookkeeping.
+  It is computed PER CELL AND PAIRED PER CELL, because each cell solves its
+  own ratio and the cell with the shortest path need not be the one needing
+  least. The effect is small here (38.3 vs 38.4 mm against an unpaired
+  Lmin-vs-min comparison, since the ratios spread only 0.12%) but it costs
+  nothing and it is the comparison that is actually meant.
+  What still reads from the reference: the equivalent throat radius, the
+  target's flare constant, and the two diameters quoted in the prose — all
+  labelled reference figures, none of them a verdict on the built geometry.
 
 - **THE FLARE CUTOFF AND THE LOADING LIMIT READOUTS ARE ARITHMETICALLY
   CORRECT, and each carries a convention worth knowing before quoting it.**

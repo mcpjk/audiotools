@@ -655,6 +655,42 @@ export default function GinkgoHorn() {
     };
   }, [map, c, thetaH, thetaV]);
 
+  // ── THE PATH LENGTH THE TARGET CUTOFF ACTUALLY ASKS FOR ───────────────────
+  // Keyed to the mouth BEING BUILT, not to the 1-D reference horn's mouth.
+  // This is the profile inverted the other way round: fc and T give m, and
+  // (m, T, the cell's own radius ratio) give the length that cell needs to
+  // reach its own mouth area at that flare rate. It is the same equation
+  // `solveHypexM` solves for m, read for L instead, so the two agree by
+  // construction — feed back the length reported here and fc comes out at the
+  // target.
+  //
+  // It replaces `hypexReference.minLength`, which was the length to the
+  // REFERENCE mouth — max(lambda/pi, lambda/sin(Th/2)), 7654 cm2 at 90 deg and
+  // 500 Hz against the 997 cm2 the coverage arcs specify, 7.7x. That made the
+  // comparison below read "short of 393 mm by 75 mm" in red while FLARE CUTOFF
+  // two rows down printed 437-440 Hz, already better than the 500 Hz asked
+  // for. Two different horns, so the verdict was about the wrong one.
+  //
+  // PER CELL, and PAIRED per cell. Each cell solves its own ratio, so each has
+  // its own required length, and the cell with the shortest path is not
+  // necessarily the one that needs the least — comparing Lmin against the
+  // minimum requirement would be comparing two different cells.
+  const pathNeeded = useMemo(() => {
+    if (!map || !map.rows.length || profileT == null || !(fcWanted > 0)) return null;
+    const mTarget = G.hypexMForFc(fcWanted, c);
+    let lo = Infinity, hi = -Infinity, worst = -Infinity;
+    for (const r of map.rows) {
+      const need = G.hypexLengthForRatio(r.profRatio, mTarget, profileT);
+      // null when the ratio is <= 1 — no expansion left to deliver, so there
+      // is no length that reaches the target and the metric says nothing
+      if (need == null) return null;
+      if (need < lo) lo = need;
+      if (need > hi) hi = need;
+      if (need - r.Lpath > worst) worst = need - r.Lpath;   // > 0 = short
+    }
+    return { lo, hi, worst, clears: worst <= 0 };
+  }, [map, profileT, fcWanted, c]);
+
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
   }), [throat, thickness, R, c, fTarget, process]);
@@ -1447,24 +1483,28 @@ export default function GinkgoHorn() {
               sub={`summed open area · ⌀${fmt(2 * href.rt, 1)} mm equivalent`} />
             <Metric label="Flare constant m" value={`${(href.m * 1000).toFixed(3)} /m`}
               sub={`f_c = mc/2π at ${fmt(c, 1)} m/s`} />
-            {/* "Mouth area needed" was removed at the owner's call: it is the
-                aperture a 1-D reference horn would want at the target cutoff,
-                and at these coverage angles it runs several times the mouth
-                the coverage arcs actually specify — so it describes a horn
-                nobody here is building. "Mouth you have" therefore states the
-                aperture on its own terms rather than as a fraction of that
-                requirement, which would have been a ratio against a number no
-                longer on screen. */}
-            <Metric label="Minimum horn length" value={`${fmt(href.minLength, 0)} mm`}
-              sub={`expansion ratio ${fmt(href.ratio, 1)}×`} color={C.series3} />
+            {/* THROAT -> MOUTH -> THE LENGTH THAT PAIR NEEDS -> THE LENGTH YOU
+                HAVE. Read left to right that is the whole argument, and every
+                number in it now describes the horn being built. "Mouth area
+                needed" was removed at the owner's call — it was the 1-D
+                reference horn's aperture, several times the one the coverage
+                arcs specify — and the length metric beside it, which was the
+                length to THAT mouth, is re-keyed to this one. */}
             {map && <Metric label="Mouth you have" value={`${fmt(map.mouthAreaTotal / 100, 0)} cm²`}
               sub={`⌀${fmt(2 * Math.sqrt(map.mouthAreaTotal / Math.PI), 0)} mm equivalent · ${fmt(Math.sqrt(map.mouthAreaTotal / throat.openTotal), 2)}× on radius`}
               color={C.series3} />}
+            {pathNeeded && <Metric label="Path needed for f_c"
+              value={pathNeeded.hi - pathNeeded.lo < 0.5
+                ? `${fmt(pathNeeded.lo, 0)} mm`
+                : `${fmt(pathNeeded.lo, 0)}–${fmt(pathNeeded.hi, 0)} mm`}
+              sub={`${fmt(fcWanted, 0)} Hz at T = ${fmt(profileT, 2)}, with this mouth`} color={C.series3} />}
             {map && <Metric label="Path you have" value={`${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} mm`}
-              sub={map.Lmin >= href.minLength
-                ? `clears the ${fmt(href.minLength, 0)} mm minimum`
-                : `short of ${fmt(href.minLength, 0)} mm by ${fmt(href.minLength - map.Lmin, 0)} mm`}
-              color={map.Lmin >= href.minLength ? C.series4 : C.series5} />}
+              sub={!pathNeeded
+                ? "centreline length, throat to mouth"
+                : pathNeeded.clears
+                  ? `every cell clears it, the worst by ${fmt(-pathNeeded.worst, 0)} mm`
+                  : `worst cell short by ${fmt(pathNeeded.worst, 0)} mm`}
+              color={!pathNeeded ? C.series3 : pathNeeded.clears ? C.series4 : C.series5} />}
           </div>
         )}
         {/* FLARE and LOADING live here, with f_c. PATTERN is per axis and
@@ -1496,8 +1536,11 @@ export default function GinkgoHorn() {
           Two criteria compete for the mouth size: <em>loading</em> wants a mouth circumference of about λ at cutoff (⌀{fmt(href ? href.diaLoading : 0, 0)} mm here),
           and <em>directivity</em> wants λ/sin(Θ/2) (⌀{fmt(href ? href.diaDirectivity : 0, 0)} mm). The larger binds. Note the direction:
           <strong style={{ color: C.inkDim }}> wider coverage needs a smaller mouth</strong>, so it is the narrow-pattern horn that comes out enormous.
-          {" "}These are <strong style={{ color: C.inkDim }}>reference</strong> figures, not constraints — the mouth below comes from the coverage and
-          cap geometry, and these say how far short of the 1-D requirement it falls.
+          {" "}These two diameters are <strong style={{ color: C.inkDim }}>reference</strong> figures, not constraints: the mouth here comes from the
+          coverage arcs, and <strong style={{ color: C.inkDim }}>Path needed for f_c is keyed to that mouth</strong> — the length each cell needs to
+          reach its own aperture at the target flare rate — not to the reference horn's much larger one. It is the profile read backwards: the tool
+          normally solves m from (ratio, length) and reports f_c, and this solves length from (ratio, f_c) instead, so feeding the number back
+          returns the cutoff you asked for.
         </div>
       </div>
 
