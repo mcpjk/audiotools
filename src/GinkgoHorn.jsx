@@ -485,6 +485,20 @@ export default function GinkgoHorn() {
   const [optState, setOptState] = useState(null);
   const [running, setRunning] = useState(false);
 
+  // ── coped joints ──
+  // Bulge each interior mouth-cell edge into its neighbour so the ducts meet
+  // at knife edges before the mouth. Off by default: it is a joinery feature
+  // and it raises f_c — the double-count readout beside it says by how much.
+  const [bulgeOn, setBulgeOn] = useState(false);
+  const [bulgeAmp, setBulgeAmp] = useState(4);
+  // ── duct separation ──
+  // The solved per-cell displacement field that clears defect overlap and
+  // thin slivers. A solver RESULT, not a setting: it was solved against one
+  // geometry, so it is cleared the moment that geometry moves.
+  const [sepSolve, setSepSolve] = useState(null);
+  const [sepBusy, setSepBusy] = useState(false);
+  const [sepFloor, setSepFloor] = useState(0.5);
+
   const [hover, setHover] = useState(null);
   const [hoverSide, setHoverSide] = useState("right");
   const [showLabels, setShowLabels] = useState(true);
@@ -588,6 +602,10 @@ export default function GinkgoHorn() {
   // moment that geometry moves, or a stale "depth X → Y Hz" sits beside inputs
   // it no longer belongs to
   useEffect(() => { setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT]);
+  // a separation field was solved against ONE geometry — any input that moves
+  // the ducts it was clearing invalidates it
+  useEffect(() => { setSepSolve(null); },
+    [thetaH, thetaV, arcH, arcV, profileT, depth, nc, nr, family, exitDia, thickness, bulgeOn, bulgeAmp]);
   // EVERY depth solve runs from the same reference state for the two straight
   // runs — divergence 0, arrival 0 — and resets the sliders to it. A solve is
   // then a repeatable reference point rather than a function of wherever the
@@ -602,7 +620,10 @@ export default function GinkgoHorn() {
   const solveRefOpts = () => {
     setDivergeLen(RUN_DEFAULTS.divergeLen);
     setArriveLen(RUN_DEFAULTS.arriveLen);
-    return { ...mapOpts, ...RUN_DEFAULTS, lengthen: null };
+    // the solves run on the BARE geometry: no lengthening and no separation
+    // field — a field solved for one depth is meaningless at another, and
+    // the sepSolve state is cleared the moment depth moves anyway
+    return { ...mapOpts, ...RUN_DEFAULTS, lengthen: null, separate: null };
   };
   // THE DEPTH THAT EQUALISES PATH LENGTH. When the mouth's curvature centre
   // lands on the throat the mouth IS a sphere about the throat, so every cell
@@ -632,10 +653,15 @@ export default function GinkgoHorn() {
     tightThroat: tight, tightMouth: tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
     lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo } : null,
+    bulge: bulgeOn ? { amp: bulgeAmp } : null,
+    separate: sepSolve && sepSolve.amps
+      ? { amps: sepSolve.amps, uStart: sepSolve.uStart, uEnd: sepSolve.uEnd, lobes: sepSolve.lobes }
+      : null,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     thetaH, thetaV, arcH, arcV,
     fTarget, thickness, profileArea,
-    lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes]);
+    lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes,
+    bulgeOn, bulgeAmp, sepSolve]);
 
   // The clearance is skipped HERE and measured in the deferred effect below:
   // it costs ~5x the rest of the mapping (measured ~100 ms against ~20), and
@@ -651,9 +677,12 @@ export default function GinkgoHorn() {
   const [clr, setClr] = useState(null);
   useEffect(() => {
     if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setClr(null); return; }
-    const id = setTimeout(() => setClr({ of: map, value: G.ductClearance(map.rows) }), 30);
+    const id = setTimeout(() => setClr({
+      of: map,
+      value: G.ductClearance(map.rows, { jointAware: !!map.bulge, thinBand: sepFloor }),
+    }), 30);
     return () => clearTimeout(id);
-  }, [map]);
+  }, [map, sepFloor]);
   const clearance = clr && clr.of === map ? clr.value : null;
 
   // What path length would deliver the cutoff you asked for? m is solved from
@@ -841,6 +870,10 @@ export default function GinkgoHorn() {
       w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${clearance && clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(clearance.overlap, 4)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s).` : ""}`);
     if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
       w.push(`The narrowest duct-to-duct gap is ${fmt(clearance.minMid, 4)} mm at station ${clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
+    if (map && map.bulge && clearance && clearance.joint && clearance.joint.engaged < clearance.joint.pairs)
+      w.push(`The coped joints are on but only ${clearance.joint.engaged} of ${clearance.joint.pairs} neighbour pairs actually meet — the bulge is too small to reach across the gap on the rest, so those edges end blunt, not coped. Raise the bulge amplitude, or lower T to shrink the gap the profile opens.`);
+    if (map && clearance && clearance.thin && clearance.thin.count > 0 && !(clearance.overlap > 1e-3))
+      w.push(`${clearance.thin.count} spot(s) between ducts carry a wall sliver thinner than ${fmt(sepFloor, 1)} mm (worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at}) — separate ducts that close will not print as two walls. Solve the separation in stage 6, or let them merge by raising the bulge.`);
     if (map && map.lengthen && map.lengthen.shortfall > 0.1)
       w.push(`Path lengthening hit its amplitude cap: the worst cell is still ${fmt(map.lengthen.shortfall, 1)} mm short of the ${fmt(map.lengthen.target, 1)} mm target. More lobes reach the same length at 1/n the amplitude — raise the lobe count rather than accepting the shortfall.`);
     // Only one fc when dL is small — past a few percent the horn does not have
@@ -856,7 +889,7 @@ export default function GinkgoHorn() {
     if (shown.family !== "hgrid")
       w.push(`An O-grid throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
     return w;
-  }, [solve, throat, shown, thickness, fab, map, clearance, profileT, fTarget]);
+  }, [solve, throat, shown, thickness, fab, map, clearance, profileT, fTarget, sepFloor]);
 
   // ── exports ────────────────────────────────────────────────────────────────
   const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
@@ -932,6 +965,14 @@ export default function GinkgoHorn() {
       sagitta: { h: map.biradial.sagH, v: map.biradial.sagV },
       chord: { w: map.mouthWEff, h: map.mouthHEff },
       axialDepth: depth, mouthAreaTotal: map.mouthAreaTotal,
+      copedJoints: map.bulge ? {
+        bulgeAmpMm: map.bulge.amp,
+        doubleCountPercent: +map.bulge.doubleCountPct.toFixed(3),
+        note: "mouthAreaTotal is the union (= the tiled aperture); per-cell mouth areas are the bulged outlines the expansion law lands on",
+      } : null,
+      separation: map.separate ? {
+        ampMaxMm: +map.separate.ampMax.toFixed(3), cells: map.separate.cells,
+      } : null,
     } : null,
     cells: throat.cells.map((cc) => {
       const r = map && map.rows.find((x) => x.id === cc.id);
@@ -969,6 +1010,8 @@ export default function GinkgoHorn() {
       "profile_T", "hypex_m_per_mm", "fc_Hz", "expansion_ratio", "k_min", "k_max", "min_gap_mm",
       // lateral bow amplitude from path lengthening; empty when it is off
       "bow_amp_mm",
+      // separation displacement, empty when no field is applied
+      "sep_amp_mm",
     ].join(",");
     const rows = throat.cells.map((cc) => {
       const r = map && map.rows.find((x) => x.id === cc.id);
@@ -990,6 +1033,7 @@ export default function GinkgoHorn() {
         clrNow && clrNow.perCell.has(cc.id) && profileT != null
           ? clrNow.perCell.get(cc.id).toFixed(4) : "",
         map && map.lengthen && r ? r.snakeAmp.toFixed(3) : "",
+        map && map.separate && r ? r.sepAmp.toFixed(3) : "",
       ].join(",");
     });
     return [head, ...rows].join("\n");
@@ -1104,7 +1148,10 @@ export default function GinkgoHorn() {
     const els = [];
     map.rows.forEach((r) => {
       const cc = throat.cells.find((x) => x.id === r.id);
-      const p = r.mouthCorners.map((q) => [q[0], q[1]]);
+      // with the joints on, the quad of corners is no longer the outline —
+      // draw the real bulged ring so the overlaps are visible where they are
+      const ring = map.bulge && r.sched[r.sched.length - 1].pts;
+      const p = ring ? ring.map((q) => [q[0], q[1]]) : r.mouthCorners.map((q) => [q[0], q[1]]);
       els.push(<path key={`m${r.id}`} d={pathOf(p)} fill={cellFill(cc)}
         fillOpacity={hover === r.id ? 0.85 : 0.5} stroke={C.inkDim} strokeWidth={sw * 1.4}
         onMouseEnter={hoverEnter(r.id)} onMouseLeave={() => setHover(null)}
@@ -1726,13 +1773,121 @@ export default function GinkgoHorn() {
           <strong style={{ color: C.inkDim }}> wall spread</strong> in the verdict pane, never by gross turning. Sections are swept in
           specified planes{map && map.sweptRollMax != null ? ` — imposed roll ${fmt(map.sweptRollMax, 1)}°, landing to ${map.sweptAimMax.toExponential(0)}°` : ""}.
         </div>
+
+        {/* ── DUCT SEPARATION ─────────────────────────────────────────────
+            The other use of the same lever: displace centrelines to clear
+            interpenetration and thin slivers, with the amplitudes SOLVED
+            against the measured clearance rather than dialled. */}
+        <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ ...secTitle, marginBottom: 0 }}>Duct separation</span>
+            <span style={{ fontSize: 10, color: C.inkMuted }}>min gap</span>
+            <input type="number" value={sepFloor} min={0.1} max={5} step={0.1}
+              onChange={(e) => setSepFloor(Math.max(0.1, parseFloat(e.target.value) || 0.5))}
+              style={{ ...sInput, width: 58, padding: "3px 5px", fontSize: 11 }} />
+            <span style={{ fontSize: 10, color: C.inkMuted }}>mm</span>
+            <button disabled={sepBusy} onClick={() => {
+              setSepBusy(true);
+              setTimeout(() => {
+                const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
+                  { floor: sepFloor, mode: "uniform" });
+                setSepSolve(r);
+                setSepBusy(false);
+              }, 30);
+            }} style={{ ...btn(false, C.series4), opacity: sepBusy ? 0.4 : 1 }}>
+              {sepBusy ? "solving…" : "solve · quick spread"}</button>
+            <button disabled={sepBusy} onClick={() => {
+              setSepBusy(true);
+              setTimeout(() => {
+                const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
+                  { floor: sepFloor, mode: "nudge", maxIter: 20 });
+                setSepSolve(r);
+                setSepBusy(false);
+              }, 30);
+            }} style={{ ...btn(false, C.series3), opacity: sepBusy ? 0.4 : 1 }}>
+              {sepBusy ? "solving…" : "solve · per-duct nudge"}</button>
+            {sepSolve && sepSolve.amps && (
+              <button onClick={() => setSepSolve(null)} style={btn(false, C.series5)}>clear</button>
+            )}
+          </div>
+          {sepSolve && (
+            <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+              {sepSolve.already
+                ? <span style={{ color: C.series4 }}>nothing to solve — the worst gap is already {fmt(sepSolve.gapBefore, 2)} mm</span>
+                : <>
+                    <span style={{ color: sepSolve.ok ? C.series4 : C.series1 }}>
+                      {sepSolve.mode === "uniform" ? "quick spread" : "per-duct nudge"}: worst gap {fmt(sepSolve.gapBefore, 2)} → {fmt(sepSolve.gapAfter, 2)} mm
+                    </span>
+                    <span style={{ color: C.inkMuted }}>
+                      {" "}· amplitude up to {fmt(sepSolve.ampMax, 1)} mm over [{fmt(sepSolve.uStart, 2)}, {fmt(sepSolve.uEnd, 2)}] of the path
+                      {" "}· ΔL {fmt(sepSolve.dLBefore, 2)} → {fmt(sepSolve.dL, 2)} mm
+                      {" "}· {sepSolve.iters != null ? `${sepSolve.iters} rounds` : `${sepSolve.evals} evaluations`}
+                    </span>
+                    {!sepSolve.ok && <div style={{ color: C.series5 }}>{sepSolve.reason}</div>}
+                  </>}
+            </div>
+          )}
+          <div style={{ ...hintStyle, marginTop: 6 }}>
+            The centrelines are displaced with the same windowed bow the lengthening uses, but with the amplitudes
+            <strong style={{ color: C.inkDim }}> solved against the measured clearance</strong>, and the window placed where the trouble is.
+            Ducts touching or merging is a joint; a gap between 0 and the minimum above is a <strong style={{ color: C.inkDim }}>sliver of
+            wall too thin to print</strong>, and this is the lever that clears both it and real interpenetration.
+            {" "}<em>Quick spread</em> pushes every duct outward by one shared amount — cheap, one knob, and it honestly reports when that
+            single knob cannot fix the geometry. <em>Per-duct nudge</em> resolves each over-packed row and column as a contact chain and
+            moves every duct individually — a few seconds, and the field keeps both mirrors by construction. Both leave the throat face and
+            the mouth tiling untouched, and lengthening re-equalises the separated paths if it is on.
+          </div>
+        </div>
       </Stage>
 
-      <Stage n={7} title="Coped joints — planned (Task A)" why="bulge the mouth tiles; ducts meet at knife edges before the mouth" ghost>
-        <div style={{ ...hintStyle, opacity: 0.7 }}>
-          The next build: each mouth cell's shared edges bulge outward so neighbouring ducts overlap and meet at curved knife edges, like
-          coped pipe joints. Bulge amplitude and the double-counted-area readout will live here; the knife-edge stations, engagement depth
-          and the restored recombination analysis will join the verdict pane.
+      <Stage n={7} title="Coped joints" why="bulge the mouth tiles; ducts overlap before the mouth and meet at knife edges">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setBulgeOn(!bulgeOn)} style={btn(bulgeOn, C.series1)}>
+            {bulgeOn ? "joints on" : "off — tiled mouth"}
+          </button>
+          <span style={{ fontSize: 10, color: C.inkMuted, opacity: bulgeOn ? 1 : 0.5 }}>bulge amplitude</span>
+          <input type="range" min={0.5} max={15} step={0.5} value={bulgeAmp} disabled={!bulgeOn}
+            onChange={(e) => setBulgeAmp(parseFloat(e.target.value))}
+            style={{ width: 130, accentColor: C.series1, opacity: bulgeOn ? 1 : 0.4 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim, opacity: bulgeOn ? 1 : 0.5 }}>{fmt(bulgeAmp, 1)} mm</span>
+          {bulgeOn && map && map.bulge && (
+            <span style={{ fontFamily: C.mono, fontSize: 11, marginLeft: 8 }}>
+              <span style={{ color: C.inkMuted }}>double-counted </span>
+              <span style={{ color: C.series1 }}>{fmt(map.bulge.doubleCountPct, 2)}%</span>
+              <span style={{ color: C.inkMuted }}> of the per-cell sum · union {fmt(map.mouthAreaTotal / 100, 0)} cm² unchanged</span>
+            </span>
+          )}
+        </div>
+        {bulgeOn && map && (
+          <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+            {!clearance ? <Solving label="measuring the joints" /> : clearance.joint && <>
+              <span><span style={{ color: C.inkMuted }}>joints formed </span>
+                <span style={{ color: clearance.joint.engaged === clearance.joint.pairs ? C.series4 : C.series1 }}>
+                  {clearance.joint.engaged} / {clearance.joint.pairs}</span>
+                <span style={{ color: C.inkMuted }}> neighbour pairs</span></span>
+              {clearance.joint.engaged > 0 && <>
+                <span><span style={{ color: C.inkMuted }}>knife edges from </span>
+                  <span style={{ color: C.ink }}>{fmt(100 * clearance.joint.knifeMin / clearance.joint.stations, 0)}%</span>
+                  <span style={{ color: C.inkMuted }}> of the path</span></span>
+                <span><span style={{ color: C.inkMuted }}>engagement up to </span>
+                  <span style={{ color: C.ink }}>{fmt(clearance.joint.engageMax, 1)} mm</span></span>
+              </>}
+            </>}
+            <span><span style={{ color: C.inkMuted }}>bulged-outline area spread </span>
+              <span style={{ color: C.ink }}>{fmt(map.mouthAreaSpreadBulged, 2)}%</span>
+              <span style={{ color: C.inkMuted }}> · union shares {fmt(map.mouthAreaSpread, 4)}%</span></span>
+          </div>
+        )}
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          Each mouth cell's <strong style={{ color: C.inkDim }}>interior</strong> edges bow outward into the neighbour with a sine lobe —
+          zero at the corners, so corner-maps-to-corner and the STEP topology survive — and the swept loft carries the bulge back down the
+          whole path, so neighbouring ducts overlap increasingly toward the mouth and meet at curved knife edges, like coped pipe joints.
+          A boolean union of the exported solids in CAD <em>produces</em> those knife edges.
+          The rim never bulges, so the radiating aperture, the loading limit and the pattern limits do not move at all: the readout above
+          shows how much the naive per-cell sum would double-count. What <strong style={{ color: C.inkDim }}>does</strong> move is f_c —
+          each cell's expansion law now lands on its bulged outline, so the flare cutoff reads higher by roughly the double-count over
+          twice the log of the radius ratio. Overlap inside a joint run is <strong style={{ color: C.inkDim }}>engagement</strong>, not a
+          defect: the clearance readouts and warnings count only what happens before the knife edges.
         </div>
       </Stage>
 
@@ -1998,6 +2153,16 @@ export default function GinkgoHorn() {
                   : `narrowest gap at station ${clearance.minMidAt} · widest ${fmt(clearance.max, 1)} mm`}
               color={!clearance ? C.inkMuted : clearance.overlap > 0 || clearance.minMid < 1e-3 ? C.series5 : C.series4} />
           )}
+          {map && profileT != null && (
+            <Metric label="Thin walls"
+              value={!clearance || !clearance.thin ? "measuring…"
+                : clearance.thin.count === 0 ? "none" : `${clearance.thin.count} spots`}
+              sub={!clearance || !clearance.thin ? `gaps under ${fmt(sepFloor, 1)} mm, before the joints`
+                : clearance.thin.count === 0
+                  ? `no duct gap under ${fmt(sepFloor, 1)} mm outside the joints`
+                  : `slivers under ${fmt(sepFloor, 1)} mm · worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at} — solve separation (stage 6)`}
+              color={!clearance || !clearance.thin ? C.inkMuted : clearance.thin.count === 0 ? C.series4 : C.series1} />
+          )}
           <Metric label="Shell" value={`⌀ ${fmt(fab.dShell, 2)} mm`}
             sub={`+${fmt(fab.oversize, 2)} mm on ⌀${fmt(exitDia, 1)} to give the blocked area back`} />
           <Metric label="Divider blockage" value={`${fmt(throat.blockage * 100, 1)}%`}
@@ -2022,10 +2187,25 @@ export default function GinkgoHorn() {
           </>
         )}
 
-        <div style={{ ...vGroup, opacity: 0.55 }}>Coped joints — appears with stage 7</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 7, opacity: 0.55 }}>
-          <Metric label="Double-counted area" value="—" sub="sum vs union of bulged tiles" />
-          <Metric label="Knife edges" value="—" sub="first-touch station per pair · engagement depth" />
+        <div style={{ ...vGroup, opacity: map && map.bulge ? 1 : 0.55 }}>
+          Coped joints{map && map.bulge ? "" : " — off, see stage 7"}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 7, opacity: map && map.bulge ? 1 : 0.55 }}>
+          {map && map.bulge ? <>
+            <Metric label="Double-counted area" value={`${fmt(map.bulge.doubleCountPct, 1)}%`}
+              sub={`of the per-cell sum · the union stays ${fmt(map.mouthAreaTotal / 100, 0)} cm²`} color={C.series1} />
+            <Metric label="Joints"
+              value={!clearance || !clearance.joint ? "measuring…"
+                : `${clearance.joint.engaged} / ${clearance.joint.pairs}`}
+              sub={!clearance || !clearance.joint ? "deferred off the render pass"
+                : clearance.joint.engaged
+                  ? `knife edges from ${fmt(100 * clearance.joint.knifeMin / clearance.joint.stations, 0)}% of the path · up to ${fmt(clearance.joint.engageMax, 1)} mm deep`
+                  : "no pair engages — raise the bulge amplitude"}
+              color={!clearance || !clearance.joint ? C.inkMuted
+                : clearance.joint.engaged === clearance.joint.pairs ? C.series4 : C.series1} />
+          </> : <>
+            <Metric label="Double-counted area" value="—" sub="sum vs union of bulged tiles" />
+            <Metric label="Knife edges" value="—" sub="first-touch station per pair · engagement depth" />
+          </>}
         </div>
       </div>
     </div>

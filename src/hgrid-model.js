@@ -1493,6 +1493,34 @@ export function mapThroatToMouth(throat, opts) {
     // boundary point cannot follow two different paths, so the feature is
     // structurally unavailable there, not merely unimplemented.
     lengthen = null,
+    // ── COPED-JOINT BULGE ───────────────────────────────────────────────────
+    // { amp } in mm, or null. Bulges every INTERIOR shared edge of each mouth
+    // cell outward into its neighbour with a sine lobe — zero at the corners,
+    // so corner-maps-to-corner and the STEP curved-box topology survive — and
+    // the swept loft carries the bulge back down the whole path, since the
+    // interior sections interpolate the two end rings. Neighbouring ducts
+    // then overlap before the mouth and meet at curved knife edges, like
+    // coped pipe joints. The bulge lives in (u, v) GRID space, so the
+    // outlines stay exactly on the aperture surface and normal arrival is
+    // untouched; the mm amplitude is converted per edge through the measured
+    // local metric. Mirror-symmetric by construction (one amplitude, sine
+    // lobes), which is what keeps the union of the bulged cells equal to the
+    // tiled aperture: each lobe lies inside the neighbour, so overlaps are
+    // exactly the lobes and union = sum - overlaps = the tiled total.
+    // Swept only: in flow mode neighbours share boundary points, and a shared
+    // point cannot be given two different bulged targets.
+    bulge = null,
+    // ── SEPARATION FIELD ────────────────────────────────────────────────────
+    // { amps, uStart, uEnd, lobes } or null. amps maps cell id to a lateral
+    // displacement — { amp, dx, dy } for an explicit direction or
+    // { amp, radial: true } for the cell's own outward ray — applied to the
+    // centreline with the same sin^2 window the length-equalising bow uses,
+    // but with the amplitude SPECIFIED rather than solved for length. This is
+    // the centreline-manipulation lever that moves ducts apart where the
+    // clearance is negative; `solveSeparation` chooses the amplitudes.
+    // Applied BEFORE the equalising bow, so lengthening (if on) re-equalises
+    // the separated paths. Swept only, like every per-cell path feature.
+    separate = null,
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
   // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
@@ -1730,6 +1758,52 @@ export function mapThroatToMouth(throat, opts) {
     const sArr = [0];
     for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr.push(L); }
 
+    // ── apply this cell's separation displacement, if any ──────────────────
+    // Same window mathematics as the snake below (sin^2 support, zero value
+    // and slope at its ends, straight runs excised), amplitude fixed. Kept as
+    // its own block rather than folded into the snake because the two answer
+    // different questions: the snake solves an amplitude for LENGTH, this
+    // applies a chosen amplitude for CLEARANCE, and they compose — a
+    // separated path is just the base path the snake then equalises.
+    let sepAmp = 0;
+    if (separate && sectionMode === "swept" && separate.amps) {
+      const ent = separate.amps[cellRec.id];
+      if (ent && ent.amp > 1e-9) {
+        let D = null;
+        if (ent.radial) {
+          const mid = pts[Math.round(M / 2)];
+          const rr = Math.hypot(mid[0], mid[1]);
+          if (rr > 1e-6) D = v3(mid[0] / rr, mid[1] / rr, 0);
+        } else {
+          const n = Math.hypot(ent.dx || 0, ent.dy || 0);
+          if (n > 1e-9) D = v3(ent.dx / n, ent.dy / n, 0);
+        }
+        if (D) {
+          const L0 = L;
+          const sLobes = separate.lobes ?? 1;
+          const u0 = Math.max(separate.uStart ?? 0, divergeLen > 0 ? divergeLen / L0 : 0);
+          const u1 = Math.min(separate.uEnd ?? 1, arriveLen > 0 ? 1 - arriveLen / L0 : 1);
+          const span = u1 - u0;
+          if (span > 1e-6) {
+            for (let q = 0; q <= M; q++) {
+              const u = sArr[q] / L0;
+              if (u < u0 || u > u1) continue;
+              const w = Math.sin(sLobes * Math.PI * ((u - u0) / span)) ** 2;
+              const tq = tans[q];
+              let d = s3(D, m3(tq, dot3(D, tq)));
+              if (!(nrm3(d) > 1e-6)) continue;
+              pts[q] = a3(pts[q], m3(un3(d), ent.amp * w));
+            }
+            for (let q = 0; q <= M; q++)
+              tans[q] = un3(s3(pts[Math.min(M, q + 1)], pts[Math.max(0, q - 1)]));
+            L = 0;
+            for (let q = 0; q < M; q++) { L += nrm3(s3(pts[q + 1], pts[q])); sArr[q + 1] = L; }
+            sepAmp = ent.amp;
+          }
+        }
+      }
+    }
+
     // bow this cell out to the target length, if it is short and snaking is on
     let snakeAmp = 0, snakeShort = 0, snakeOnAxis = false, snakeSpan = 0;
     if (snake && snake.target - L > snake.tol) {
@@ -1866,6 +1940,40 @@ export function mapThroatToMouth(throat, opts) {
         mouthUV.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u]);
       }
     }
+    // The bulge, applied in (u, v) before anything reads mouthUV. The
+    // unbulged outline is kept: its area is this cell's share of the UNION,
+    // which is what the aperture-total figures must keep reading — summing
+    // bulged outlines double-counts every overlap lens.
+    const bulgeOn = bulge && sectionMode === "swept" && bulge.amp > 1e-9 ? bulge : null;
+    const mouthUVTiled = bulgeOn ? mouthUV.map((p) => p.slice()) : null;
+    if (bulgeOn) {
+      const sides = [
+        { out: [0, -1], interior: j > 0 },
+        { out: [1, 0], interior: i + 1 < nc },
+        { out: [0, 1], interior: j + 1 < nr },
+        { out: [-1, 0], interior: i > 0 },
+      ];
+      for (let e = 0; e < 4; e++) {
+        const sd = sides[e];
+        if (!sd.interior) continue;   // a rim edge never bulges — the aperture total is invariant
+        // mm per (u, v) unit along the outward direction, measured at the
+        // edge midpoint — numeric, so every mouth mode gets its exact metric
+        const mid = mouthUV[e * nMs + (nMs >> 1)];
+        const h = 1e-3;
+        const Pa = mouthAt(mid[0], mid[1]);
+        const Pb = mouthAt(mid[0] + sd.out[0] * h, mid[1] + sd.out[1] * h);
+        const metric = nrm3(s3(Pb, Pa)) / h;
+        // the lobe must stay strictly inside the neighbour or the union
+        // identity (and the knife edge) is lost — clamp, and report it
+        const du = Math.min(bulgeOn.amp / Math.max(metric, 1e-9), 0.45);
+        for (let q = 0; q < nMs; q++) {
+          const w = du * Math.sin(Math.PI * (q / nMs));
+          mouthUV[e * nMs + q][0] += sd.out[0] * w;
+          mouthUV[e * nMs + q][1] += sd.out[1] * w;
+        }
+      }
+    }
+
     // Corner MUST map to corner. The mouth outline above is laid down a side at
     // a time, nMs points each, so its four corners sit at 0, nMs, 2nMs, 3nMs.
     // Resampling the throat outline round the whole loop by arc length instead
@@ -2262,8 +2370,14 @@ export function mapThroatToMouth(throat, opts) {
       Lpath: L, turnDeg: turn * R2D, twistDeg: twist, aimErrDeg: aimErr,
       mouthCentroid: mc, mouthCorners: corners, mouthNormal: nSurf,
       mouthArea: sched[stations].area,
+      // this cell's share of the UNION: the unbulged outline's area. Equal to
+      // mouthArea when no bulge is on; under bulge, mouthArea (the bulged
+      // outline the expansion law lands on) exceeds it by this cell's lobes.
+      mouthAreaTiled: bulgeOn
+        ? polyArea3(mouthUVTiled.map((q) => mouthAt(q[0], q[1])))
+        : sched[stations].area,
       sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll, bendWiden, wallSpread,
-      snakeAmp, snakeShort, snakeOnAxis, snakeSpan,
+      snakeAmp, snakeShort, snakeOnAxis, snakeSpan, sepAmp,
       profRatioGross,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
       // range says how far the profile pulled the section in from the tiling
@@ -2364,6 +2478,10 @@ export function mapThroatToMouth(throat, opts) {
       // ducts sitting on the axis, which a radial bow cannot move symmetrically
       onAxis: rows.reduce((n, r) => n + (r.snakeOnAxis ? 1 : 0), 0),
     } : null,
+    separate: separate && sectionMode === "swept" && separate.amps ? {
+      ampMax: Math.max(0, ...rows.map((r) => r.sepAmp)),
+      cells: rows.reduce((n, r) => n + (r.sepAmp > 1e-9 ? 1 : 0), 0),
+    } : null,
     ratioSpreadGross: spreadOf(rows.map((r) => r.profRatioGross || 1)),
     profFcMin: profileT != null ? Math.min(...rows.map((r) => r.profFc)) : null,
     profFcMax: profileT != null ? Math.max(...rows.map((r) => r.profFc)) : null,
@@ -2393,7 +2511,21 @@ export function mapThroatToMouth(throat, opts) {
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
     aimLimitDeg: (lam / (4 * (mouthWEff / nc))) * R2D,
     sigma, stations, sectionAt,
-    mouthAreaTotal: rows.reduce((a, r) => a + r.mouthArea, 0),
+    // the UNION — what radiates, and what the loading limit must key on.
+    // Under interior-edge symmetric bulges the union IS the tiled total, so
+    // it is summed from the unbulged shares; summing bulged outlines would
+    // double-count every overlap lens and silently flatter the loading.
+    mouthAreaTotal: rows.reduce((a, r) => a + r.mouthAreaTiled, 0),
+    // the naive per-cell SUM, and the double-count the owner asked to see
+    mouthAreaSum: rows.reduce((a, r) => a + r.mouthArea, 0),
+    bulge: bulge && sectionMode === "swept" && bulge.amp > 1e-9 ? {
+      amp: bulge.amp,
+      doubleCountPct: (() => {
+        const sum = rows.reduce((a, r) => a + r.mouthArea, 0);
+        const tot = rows.reduce((a, r) => a + r.mouthAreaTiled, 0);
+        return sum > 0 ? ((sum - tot) / sum) * 100 : 0;
+      })(),
+    } : null,
     mouthMode, thetaH: bi || arc ? thetaH : null, thetaV: bi || arc ? thetaV : null,
     mouthWEff, mouthHEff, flattenEff: arc ? 1 : flatten,
     biradial: bi ? { rH: bi.rH, rV: bi.rV, arcH: bi.arcH, arcV: bi.arcV, sagH: bi.sagH, sagV: bi.sagV } : null,
@@ -2403,7 +2535,12 @@ export function mapThroatToMouth(throat, opts) {
       ? Math.max(...rows.map((r) => Math.abs(r.sweptRoll.phi1Deg))) : null,
     sweptAimMax: rows[0].sweptRoll
       ? Math.max(...rows.map((r) => Math.max(r.sweptRoll.residThroatDeg, r.sweptRoll.residMouthDeg))) : null,
-    mouthAreaSpread: spreadOf(rows.map((r) => r.mouthArea)),
+    // spread of the union shares — the equal-area statement, which symmetric
+    // bulges do not disturb. The bulged-outline spread is structurally
+    // nonzero (an interior cell bulges 4 edges, an edge cell 3, a corner 2)
+    // and is reported separately for the law's bookkeeping.
+    mouthAreaSpread: spreadOf(rows.map((r) => r.mouthAreaTiled)),
+    mouthAreaSpreadBulged: spreadOf(rows.map((r) => r.mouthArea)),
     ratioSpread: spreadOf(rows.map((r) => r.profRatio || 1)),
     fcDecomp,
   };
@@ -2438,7 +2575,19 @@ export function mapThroatToMouth(throat, opts) {
 // exist). Standalone so a caller can run it off its own schedule — it costs
 // ~5x the rest of the mapping, and a UI dragging a slider wants the schedule
 // numbers live and this one a beat behind, not everything at 8 fps.
-export function ductClearance(rows) {
+// Options:
+//   jointAware — coped joints make overlap near the mouth THE FEATURE, so the
+//     defect statistics must not count it. A pair's JOINT RUN is the maximal
+//     contiguous run of stations ending at the mouth over which the pair is
+//     in contact; its first station is the pair's KNIFE-EDGE station. Overlap
+//     inside a joint run is reported as engagement; overlap anywhere else is
+//     still the defect it always was. Without a bulge the mouth tiles, so the
+//     joint run degenerates to the mouth station alone and every statistic
+//     reduces exactly to the un-aware form.
+//   thinBand — a gap that is positive but smaller than this is a sliver of
+//     wall too thin to print: not merged, not clear. Counted over the defect
+//     region only, because inside a joint run the walls are meant to merge.
+export function ductClearance(rows, { jointAware = false, thinBand = 0 } = {}) {
   if (!rows.length || !rows[0].sched[0].pts) return null;
   const stations = rows[0].sched.length - 1;
   // neighbouring pairs straight from the (i, j) index — grid adjacency is the
@@ -2517,28 +2666,73 @@ export function ductClearance(rows) {
     }
     return worst;
   };
+  // first pass: every pair's signed gap at every station, kept, because the
+  // joint classification needs the runs and the solver needs the per-pair map
+  const gaps = pairs.map(() => new Array(stations + 1).fill(Infinity));
+  for (let q = 0; q <= stations; q++) {
+    const fr = new Map(rows.map((r) => [r.id, frame(r.sched[q].pts)]));
+    for (let pi = 0; pi < pairs.length; pi++) {
+      const [A, B] = pairs[pi];
+      const pa = A.sched[q].pts, pb = B.sched[q].pts;
+      // both directions: either duct can be the one poking into the other
+      gaps[pi][q] = Math.min(signedGap(pa, pb, fr.get(B.id)), signedGap(pb, pa, fr.get(A.id)));
+    }
+  }
+  // each pair's joint run: walk back from the mouth while in contact. With
+  // no bulge the tiling puts the mouth station itself at gap 0 and the
+  // station before it clear, so the run is just the mouth — which the
+  // interior statistics already exclude, and the two forms coincide.
+  const contactTol = 1e-6;
+  const jointStart = pairs.map((_, pi) => {
+    if (!jointAware) return stations;
+    let q0 = stations;
+    while (q0 > 1 && gaps[pi][q0 - 1] <= contactTol) q0--;
+    return q0;
+  });
+  // second pass: reduce, with each pair's joint run excluded from the defect
+  // statistics and folded into the engagement figures instead
   const perStation = [];
   const perCell = new Map(rows.map((r) => [r.id, Infinity]));
   let worst = Infinity, worstAt = 0, worstMid = Infinity, worstMidAt = 1;
-  for (let q = 0; q <= stations; q++) {
-    const interior = q > 0 && q < stations;
-    let mn = Infinity;
-    const fr = new Map(rows.map((r) => [r.id, frame(r.sched[q].pts)]));
-    for (const [A, B] of pairs) {
-      const pa = A.sched[q].pts, pb = B.sched[q].pts;
-      // both directions: either duct can be the one poking into the other
-      const d = Math.min(signedGap(pa, pb, fr.get(B.id)), signedGap(pb, pa, fr.get(A.id)));
-      mn = Math.min(mn, d);
-      // a cell's own gap is how close it comes to ANY neighbour, and only
-      // the interior counts — see below for why the ends are excluded
-      if (interior) {
-        perCell.set(A.id, Math.min(perCell.get(A.id), d));
-        perCell.set(B.id, Math.min(perCell.get(B.id), d));
+  let engageMax = 0, knifeMin = Infinity, knifeMax = -Infinity, engaged = 0;
+  let thinCount = 0, thinWorst = Infinity, thinAt = null;
+  for (let pi = 0; pi < pairs.length; pi++) {
+    const [A, B] = pairs[pi];
+    if (jointAware && jointStart[pi] < stations) {
+      engaged++;
+      knifeMin = Math.min(knifeMin, jointStart[pi]);
+      knifeMax = Math.max(knifeMax, jointStart[pi]);
+      for (let q = jointStart[pi]; q <= stations; q++)
+        engageMax = Math.max(engageMax, -gaps[pi][q]);
+    }
+    for (let q = 1; q < stations; q++) {
+      if (q >= jointStart[pi]) continue;   // joint region: engagement, not defect
+      const d = gaps[pi][q];
+      perCell.set(A.id, Math.min(perCell.get(A.id), d));
+      perCell.set(B.id, Math.min(perCell.get(B.id), d));
+      if (d < worstMid) { worstMid = d; worstMidAt = q; }
+      if (thinBand > 0 && d > contactTol && d < thinBand) {
+        thinCount++;
+        if (d < thinWorst) { thinWorst = d; thinAt = q; }
       }
     }
+  }
+  for (let q = 0; q <= stations; q++) {
+    let mn = Infinity;
+    for (let pi = 0; pi < pairs.length; pi++) mn = Math.min(mn, gaps[pi][q]);
     perStation.push(mn);
     if (mn < worst) { worst = mn; worstAt = q; }
-    if (interior && mn < worstMid) { worstMid = mn; worstMidAt = q; }
+  }
+  // per-station DEFECT minimum, for anything that needs to know WHERE the
+  // trouble is with the joint runs already excluded — the separation solver
+  // reads this to place its window
+  const perStationDefect = [];
+  for (let q = 0; q <= stations; q++) {
+    let mn = Infinity;
+    if (q > 0 && q < stations)
+      for (let pi = 0; pi < pairs.length; pi++)
+        if (q < jointStart[pi]) mn = Math.min(mn, gaps[pi][q]);
+    perStationDefect.push(mn);
   }
   // `min` is pinned at 0 by the two ends WHATEVER the profile does, because
   // the cells tile the disc at the throat and tile the rectangle at the
@@ -2552,15 +2746,30 @@ export function ductClearance(rows) {
   // number, or 0 when the ducts are merely touching or apart. It is the
   // number that replaces the k <= 1 shrink argument once sections stop
   // coming from one shared flow, and the two must agree while both hold.
-  const interior = perStation.slice(1, stations);
   return {
-    perStation, min: worst, minAt: worstAt,
+    perStation, perStationDefect, min: worst, minAt: worstAt,
     minMid: worstMid, minMidAt: worstMidAt,
     overlap: worstMid < 0 ? -worstMid : 0,
     overlapAt: worstMid < 0 ? worstMidAt : null,
-    overlapStations: interior.reduce((n, d) => n + (d < -1e-9 ? 1 : 0), 0),
+    overlapStations: perStationDefect.slice(1, stations).reduce((n, d) => n + (d < -1e-9 ? 1 : 0), 0),
     max: Math.max(...perStation), maxAt: perStation.indexOf(Math.max(...perStation)),
     perCell, pairs: pairs.length,
+    // worst DEFECT gap per pair and where — what the separation solver pushes on
+    pairWorst: pairs.map(([A, B], pi) => {
+      let d = Infinity, at = null;
+      for (let q = 1; q < Math.min(stations, jointStart[pi]); q++)
+        if (gaps[pi][q] < d) { d = gaps[pi][q]; at = q; }
+      return { a: A.id, b: B.id, gap: d, at };
+    }),
+    joint: jointAware ? {
+      engaged, pairs: pairs.length,
+      knifeMin: engaged ? knifeMin : null, knifeMax: engaged ? knifeMax : null,
+      engageMax, stations,
+    } : null,
+    thin: thinBand > 0 ? {
+      band: thinBand, count: thinCount,
+      worst: thinCount ? thinWorst : null, at: thinCount ? thinAt : null,
+    } : null,
   };
 }
 
@@ -2619,7 +2828,9 @@ export function solveBow(throat, opts, cfg = {}) {
   // the ones that could win
   cands.sort((a, b) => a.wallSpread - b.wallSpread);
   for (const cd of cands.slice(0, measure)) {
-    const cl = ductClearance(cd.rows);
+    // joint-aware when a bulge is on, or every candidate would fail the
+    // overlap floor on engagement that is the point of the joints
+    const cl = ductClearance(cd.rows, { jointAware: !!opts.bulge });
     cd.overlap = cl ? cl.overlap : null;
     cd.minMid = cl ? cl.minMid : null;
   }
@@ -2636,6 +2847,260 @@ export function solveBow(throat, opts, cfg = {}) {
     reason: best ? null
       : measured.every((cd) => cd.shortfall >= 0.1) ? "no candidate reached the target length"
       : `every candidate measured overlaps more than the ${overlapMax} mm floor`,
+  };
+}
+
+// ── SOLVING THE DUCT SEPARATION ─────────────────────────────────────────────
+// Moves centrelines apart until the worst DEFECT gap — interpenetration and
+// thin slivers outside any coped-joint run — clears a floor. Two modes, cheap
+// to thorough, both built on the same separation field and both MEASURED
+// through the forward model and the signed clearance, never estimated:
+//
+//   "uniform"  every duct spreads outward along its own radial ray by ONE
+//              shared amplitude, bisected on the measured gap. The cheapest
+//              field that is mirror-symmetric by construction; on-axis ducts
+//              have no ray and stay put — their room is made by the
+//              neighbours moving away. ~12-20 map+clearance evaluations.
+//
+//   "nudge"    iterative per-pair contact resolution: each pair below the
+//              floor pushes its two ducts apart along the line between their
+//              section centroids at the worst station, half each, scaled by
+//              1/window so the displacement lands where the deficit is. The
+//              pushes accumulate as VECTORS per cell, which is what keeps the
+//              field mirror-covariant — mirrored pairs push mirrored amounts,
+//              and an on-axis duct's sideways components cancel, leaving only
+//              the in-plane push it is allowed. Targeted, so it moves less
+//              material than the uniform spread; several rounds of
+//              map+clearance, so a few times dearer.
+//
+// The window is placed where the trouble is: the defect stations below the
+// floor, padded, clamped clear of the pinned ends — displacement is zero at
+// the throat and the mouth whatever happens, so the mating face and the
+// mouth tiling survive by construction, not by luck.
+//
+// The floor doubles as the thin-wall criterion: a gap that is positive but
+// under the printable minimum is a sliver, and pushing to `floor` clears it.
+// The other legitimate resolution — letting the ducts MERGE — is the coped
+// joint, which is a mouth-region feature; this solver only pushes apart.
+export function solveSeparation(throat, opts, cfg = {}) {
+  const {
+    floor = 0.5, mode = "uniform", maxIter = 16, ampCap = 40, lobes = 1, tol = 0.05,
+    // under-relaxation: a full-deficit push overshoots, because every push
+    // steals room from the pair behind it — measured oscillating between
+    // -5 and -1.3 mm at relax 1 on the very first case tried
+    relax = 0.5,
+  } = cfg;
+  const build = (separate) => mapThroatToMouth(throat, {
+    ...opts, separate, keepGeometry: true, computeClearance: false,
+  });
+  const base = build(null);
+  if (!base || !base.rows.length || !base.rows[0].sched[0].pts)
+    return { ok: false, reason: "no geometry to solve on" };
+  const jointAware = !!base.bulge;
+  const measure = (m) => ductClearance(m.rows, { jointAware });
+  const clBase = measure(base);
+  const gapOf = (cl) => cl.minMid;   // defect-scoped signed worst gap
+  const gap0 = gapOf(clBase);
+  if (gap0 >= floor)
+    return { ok: true, already: true, mode, gapBefore: gap0, gapAfter: gap0, amps: null, evals: 1 };
+
+  // the window, from where the trouble actually is
+  const S = clBase.perStationDefect.length - 1;
+  let qa = Infinity, qb = -Infinity;
+  clBase.perStationDefect.forEach((d, q) => {
+    if (d < floor) { qa = Math.min(qa, q); qb = Math.max(qb, q); }
+  });
+  const uStart = Math.max(0.02, qa / S - 0.12);
+  const uEnd = Math.min(0.98, qb / S + 0.15);
+
+  let evals = 1;
+  const trace = [];
+
+  if (mode === "uniform") {
+    // one shared radial amplitude, SCANNED rather than bisected: the gap is
+    // not monotone in the spread — measured improving to about 2.4 mm of
+    // amplitude and then worsening, because near the throat the ducts almost
+    // tile, so past a point every duct is pushed into its other neighbours
+    // and the bent paths tilt sections into new contacts. So the mode is a
+    // coarse log scan for the best amplitude plus one local refinement, and
+    // it reports the best it found whether or not that clears the floor —
+    // this field simply cannot fix every defect, and "nudge" is the mode
+    // that can move ducts individually.
+    const ampsFor = (a) => {
+      const amps = {};
+      for (const cc of throat.cells) amps[cc.id] = { radial: true, amp: a };
+      return amps;
+    };
+    const gapAt = (a) => {
+      if (a <= 1e-9) return { g: gap0, m: base, a: 0 };
+      evals++;
+      const m = build({ amps: ampsFor(a), uStart, uEnd, lobes });
+      const g = gapOf(measure(m));
+      trace.push({ amp: +a.toFixed(3), gap: +g.toFixed(4) });
+      return { g, m, a };
+    };
+    let bestU = { g: gap0, m: base, a: 0 };
+    const scan = [0.5, 1, 2, 4, 8, 16, Math.min(32, ampCap), ampCap];
+    for (const a of scan) {
+      const r = gapAt(a);
+      if (r.g > bestU.g) bestU = r;
+      if (r.g >= floor) break;
+    }
+    // golden-ish local refinement around the best scanned amplitude
+    let lo = Math.max(0, bestU.a / 2), hi2 = Math.min(ampCap, Math.max(bestU.a * 2, 1));
+    for (let it = 0; it < 6; it++) {
+      const m1 = lo + (hi2 - lo) * 0.382, m2 = lo + (hi2 - lo) * 0.618;
+      const r1 = gapAt(m1), r2 = gapAt(m2);
+      if (r1.g > bestU.g) bestU = r1;
+      if (r2.g > bestU.g) bestU = r2;
+      if (r1.g >= r2.g) hi2 = m2; else lo = m1;
+    }
+    const okU = bestU.g >= floor - tol;
+    return {
+      ok: okU, mode, amps: bestU.a > 0 ? ampsFor(bestU.a) : null, uStart, uEnd, lobes,
+      gapBefore: gap0, gapAfter: bestU.g, ampMax: bestU.a,
+      dL: bestU.m.dL, dLBefore: base.dL, evals, trace,
+      reason: okU ? null
+        : `the best one-knob spread (${bestU.a.toFixed(1)} mm) leaves the worst gap at ${bestU.g.toFixed(2)} mm — try "nudge"`,
+    };
+  }
+
+  // mode "nudge" — chain-resolved contact iteration. The measured failure
+  // mode of naive pairwise pushes is the CHAIN: a whole row of ducts is
+  // over-packed near the throat, so every pair pushes apart, every push
+  // steals the next pair's room, and the iteration diffuses outward like
+  // Jacobi — measured stuck between -0.6 and -1.9 mm after 16 rounds. A
+  // 1-D contact chain has an exact minimal solution: walk the row, add up
+  // the deficits, and displace each cell by the mean-centred cumulative sum
+  // — the ends move out, the middle barely moves, and every pair opens by
+  // exactly its deficit. Rows and columns are chained independently; the
+  // cumulative fields are mirror-antisymmetric over mirror-symmetric
+  // deficits, so the mirrors survive by construction. The chain is written
+  // on the deficits at each pair's own worst station and divided by the
+  // window there, then applied with relaxation and re-MEASURED — the chain
+  // argument is 1-D and the geometry is not, so the measurement, not the
+  // argument, decides convergence.
+  const byIJ = new Map(base.rows.map((r) => [`${r.i},${r.j}`, r.id]));
+  const dims = base.rows.reduce((d, r) => ({
+    nc: Math.max(d.nc, r.i + 1), nr: Math.max(d.nr, r.j + 1),
+  }), { nc: 0, nr: 0 });
+  const acc = {};
+  for (const cc of throat.cells) acc[cc.id] = [0, 0];
+  const span = uEnd - uStart;
+  const winAt = (u) => {
+    if (u < uStart || u > uEnd) return 0;
+    return Math.sin(lobes * Math.PI * ((u - uStart) / span)) ** 2;
+  };
+  const ampsFromAcc = () => {
+    const amps = {};
+    for (const id in acc) {
+      const [x, y] = acc[id];
+      const n = Math.hypot(x, y);
+      if (n > 1e-9) amps[id] = { dx: x / n, dy: y / n, amp: n };
+    }
+    return amps;
+  };
+  let m = base, cl = clBase, iters = 0;
+  // the best configuration seen, because the iteration can flip-flop right
+  // at the threshold while chasing the last marginal pair — the answer is
+  // the best state visited, not the last one
+  let best = { gap: gap0, acc: null, dL: base.dL };
+  for (let it = 0; it < maxIter; it++) {
+    const relaxNow = relax;
+    // per-pair deficit and push direction at that pair's own worst station
+    const pairInfo = new Map();
+    for (const pw of cl.pairWorst) {
+      if (!(pw.gap < floor) || pw.at == null) continue;
+      const A = m.rows.find((r) => r.id === pw.a), B = m.rows.find((r) => r.id === pw.b);
+      const ca = A.sched[pw.at].centroid, cb = B.sched[pw.at].centroid;
+      const ex = cb[0] - ca[0], ey = cb[1] - ca[1];
+      const en = Math.hypot(ex, ey);
+      if (!(en > 1e-9)) continue;
+      const S2 = A.sched.length - 1;
+      const w = Math.max(winAt(pw.at / S2), 0.33);
+      pairInfo.set(`${A.i},${A.j}|${B.i},${B.j}`, {
+        deficit: (floor - pw.gap) / w, e: [ex / en, ey / en],
+      });
+    }
+    if (!pairInfo.size) break;
+    // chain solve along each row (i-direction) and each column (j-direction)
+    // rows: chains of nc cells at fixed j, pairs keyed A=(k,j) B=(k+1,j)
+    for (let j = 0; j < dims.nr; j++) {
+      const d = [], dirs = [];
+      for (let k = 0; k < dims.nc - 1; k++) {
+        const info = pairInfo.get(`${k},${j}|${k + 1},${j}`);
+        d.push(info ? info.deficit : 0);
+        dirs.push(info ? info.e : null);
+      }
+      if (!d.some((x) => x > 0)) continue;
+      const cum = [0];
+      for (let k = 0; k < dims.nc - 1; k++) cum.push(cum[k] + d[k]);
+      const mean = cum.reduce((a, b) => a + b, 0) / dims.nc;
+      for (let k = 0; k < dims.nc; k++) {
+        const x = (cum[k] - mean) * relaxNow;
+        if (Math.abs(x) < 1e-12) continue;
+        const eA = dirs[k - 1] || null, eB = dirs[k] || null;
+        let ex = 0, ey = 0;
+        if (eA) { ex += eA[0]; ey += eA[1]; }
+        if (eB) { ex += eB[0]; ey += eB[1]; }
+        const en = Math.hypot(ex, ey);
+        if (!(en > 1e-9)) continue;
+        const id = byIJ.get(`${k},${j}`);
+        acc[id][0] += (ex / en) * x; acc[id][1] += (ey / en) * x;
+      }
+    }
+    // columns: chains of nr cells at fixed i
+    for (let i2 = 0; i2 < dims.nc; i2++) {
+      const d = [], dirs = [];
+      for (let k = 0; k < dims.nr - 1; k++) {
+        const info = pairInfo.get(`${i2},${k}|${i2},${k + 1}`);
+        d.push(info ? info.deficit : 0);
+        dirs.push(info ? info.e : null);
+      }
+      if (!d.some((x) => x > 0)) continue;
+      const cum = [0];
+      for (let k = 0; k < dims.nr - 1; k++) cum.push(cum[k] + d[k]);
+      const mean = cum.reduce((a, b) => a + b, 0) / dims.nr;
+      for (let k = 0; k < dims.nr; k++) {
+        const x = (cum[k] - mean) * relaxNow;
+        if (Math.abs(x) < 1e-12) continue;
+        const eA = dirs[k - 1] || null, eB = dirs[k] || null;
+        let ex = 0, ey = 0;
+        if (eA) { ex += eA[0]; ey += eA[1]; }
+        if (eB) { ex += eB[0]; ey += eB[1]; }
+        const en = Math.hypot(ex, ey);
+        if (!(en > 1e-9)) continue;
+        const id = byIJ.get(`${i2},${k}`);
+        acc[id][0] += (ex / en) * x; acc[id][1] += (ey / en) * x;
+      }
+    }
+    for (const id in acc) {
+      const n = Math.hypot(acc[id][0], acc[id][1]);
+      if (n > ampCap) { acc[id][0] *= ampCap / n; acc[id][1] *= ampCap / n; }
+    }
+    evals++;
+    iters++;
+    m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
+    cl = measure(m);
+    const ampNow = Math.max(0, ...Object.values(ampsFromAcc()).map((e) => e.amp));
+    trace.push({ iter: iters, gap: +gapOf(cl).toFixed(4), ampMax: +ampNow.toFixed(2) });
+    if (gapOf(cl) > best.gap)
+      best = { gap: gapOf(cl), acc: Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, v.slice()])), dL: m.dL };
+    if (gapOf(cl) >= floor - tol) break;
+  }
+  // hand back the best configuration, rebuilt if the last step was not it
+  if (best.acc && best.gap > gapOf(cl)) {
+    for (const id in best.acc) acc[id] = best.acc[id];
+    m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
+    cl = measure(m);
+  }
+  const amps = ampsFromAcc();
+  const ampMax = Math.max(0, ...Object.values(amps).map((e) => e.amp));
+  const gA = gapOf(cl);
+  return {
+    ok: gA >= floor - tol, mode, amps: Object.keys(amps).length ? amps : null, uStart, uEnd, lobes,
+    gapBefore: gap0, gapAfter: gA, ampMax, iters, dL: m.dL, dLBefore: base.dL, evals, trace,
+    reason: gA >= floor - tol ? null : `after ${iters} rounds the worst gap is still ${gA.toFixed(2)} mm`,
   };
 }
 

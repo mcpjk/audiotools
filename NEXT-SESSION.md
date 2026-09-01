@@ -1,5 +1,32 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-01 joints & separation session
+
+- **Task A — COPED JOINTS — IS BUILT** (stage 7, live). `bulge: { amp }` in
+  the model; interior edges only, sine lobes, corners pinned, union
+  invariant, fc landing on the bulged outline, joint-aware clearance with
+  knife-edge stations and engagement depth, defect statistics scoped to
+  before the knife edges (warnings, solveBow floor and the verdict tiles
+  all read the defect scope). Mouth plan draws the bulged outlines. 14 new
+  checks. See the three new CLAUDE.md findings before touching any of it.
+- **THE DUCT SEPARATION SOLVER IS BUILT** (stage 6, "Duct separation").
+  A per-cell windowed displacement field (`separate`) plus
+  `solveSeparation` with two modes: "uniform" (one radial amplitude,
+  scanned — honest about its measured non-monotone limit) and "nudge"
+  (chain-resolved contact iteration; cleared the recorded 2 mm
+  interpenetration to +0.16 mm with dL preserved). The floor input doubles
+  as the thin-wall band: gaps in (0, floor) are unprintable slivers,
+  counted in the clearance pass and warned on. 12 new checks; suite at 376.
+- **Still open from Task A, deliberately:** the divider inset still tapers
+  to zero at the MOUTH, not at each edge's knife station — the inset is
+  0.2 mm against 5-10 mm of engagement, so the joint geometry dominates,
+  but re-keying the taper per edge is the honest finish. The evanescent-run
+  / recombination analysis (`f1End`, `decayLen`, `runNeeded`) now has the
+  real station it was waiting for (the knife edge) and should be restored
+  keyed to `clearance.joint`. And the owner should sanity-check a bulged
+  STEP export in CAD — a boolean union of the ducts should PRODUCE the
+  knife edges.
+
 ## Done in the 2026-09-01 layout session
 
 - **The tool is now a TWO-PANE layout and the single scrolling column is
@@ -164,7 +191,7 @@ appeared twice in this file by paste accident, now deduplicated.)
 
 The whole tool was walked end to end and is healthy:
 
-- 337 closed-form checks passed as of that session (350 now, with the STEP
+- 337 closed-form checks passed as of that session (376 now, after the STEP, joints and separation
   checks); `npm run build` (palette check included) is clean; all five tool
   pages plus the landing page mount in headless Chromium with no console
   errors.
@@ -189,7 +216,7 @@ The whole tool was walked end to end and is healthy:
 
 ## Where the tool stands
 
-Built and tested (350 checks in `scripts/test-hgrid.mjs`, all against closed
+Built and tested (376 checks in `scripts/test-hgrid.mjs`, all against closed
 forms):
 
 - Equal-area throat partition — H-grid, plus the O-grid as the equal-N
@@ -251,21 +278,15 @@ Decisions the owner has made and that should not be relitigated:
 
 ## The plan, in order
 
-1. **Task A — convex mouth-cell edges** (below). The owner's stated next
-   direction; they will drive it. It is also the prerequisite for restoring
-   the evanescent-run/recombination analysis, so it unblocks physics, not
-   just geometry. The union-vs-sum question is now SETTLED (union, with the
-   double-counted percentage reported) — see the decision note in Task A.
-2. **Task B — STEP export: owner validation round trips.** The writer is
-   built and self-checked; what remains is real CAD feedback. When Task A
-   lands, the exporter must carry the coped-joint geometry too — the
-   knife-edge intersection curves become real edges, which is a topology
-   change to the curved-box B-rep, not just new surface data.
-3. **Task C — per-cell bow choice** (below). Stays deferred until wavefront
-   manipulation beyond dL equalisation is wanted.
-
-(The preview/export resolution decoupling that was item 3 here is done —
-see "Done in the 2026-08-31 build session".)
+1. **Owner validation**: the coped joints and the separation solver in the
+   browser, and a bulged STEP file through CAD (boolean union should yield
+   the knife edges).
+2. **Finish Task A's tail**: per-edge inset taper to the knife station, and
+   the restored evanescent-run analysis keyed to `clearance.joint` (the
+   wall-end station exists again).
+3. **Task B — STEP validation round trips** (unchanged, still pending CAD
+   feedback).
+4. **Task C — per-cell bow choice** (below). Stays deferred.
 
 ## Task A — convex mouth-cell edges, for coped knife-edge joints
 
@@ -577,7 +598,7 @@ a bend, which is why the preview sits at 24, not 16.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 350 closed-form checks; a physics change without a
+npm run test:hgrid     # 376 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors
