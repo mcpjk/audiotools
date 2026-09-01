@@ -235,10 +235,21 @@ function DuctPreview({ ducts, dim }) {
     }
   };
 
+  // THE POINTER HANDLERS ARE BOUND ONCE (the listener effect below has no
+  // deps, deliberately — rebinding them on every geometry change would drop a
+  // drag in progress), so everything they reach must be read at CALL time and
+  // not captured at mount. `draw` closes over `geom`, so a handler holding the
+  // first render's copy repainted the FIRST geometry: the preview tracked the
+  // sliders correctly until it was touched, and then the very first drag or
+  // scroll silently reverted it to the horn as it stood when the tool opened,
+  // where it stayed for every later frame. The ref is the indirection that
+  // keeps one binding and the current draw.
+  const drawRef = useRef(draw);
+  useEffect(() => { drawRef.current = draw; });
   const requestDraw = () => {
     if (raf.current) return;
     raf.current = true;
-    requestAnimationFrame(() => { raf.current = false; draw(); });
+    requestAnimationFrame(() => { raf.current = false; drawRef.current(); });
   };
   useEffect(() => { requestDraw(); }, [geom]);
 
@@ -599,10 +610,20 @@ export default function GinkgoHorn() {
   // The 1-D Hypex horn this multicell is standing in for: same acoustic throat,
   // same law, same cutoff. Advisory — it says what the cutoff demands, and the
   // geometry below says what you have.
+  // The coverage angle here decides diaDirectivity = lambda/sin(Th/2), so it
+  // has to be the angle the aperture is actually being asked for. It used to
+  // read `mouthMode === "arc" ? thetaH : 90`, and mouthMode is a constant
+  // "biradial" since the apex went away — so the ternary was dead and the
+  // reference horn was pinned at 90 deg whatever the slider said. Measured at
+  // the default throat, fc 500, T 0.7: Th_h 60 wants 15308 cm2 over 432 mm and
+  // was shown 7654 cm2 over 393 mm (2x under); Th_h 120 wants 5103 cm2 and was
+  // shown the same 7654 (1.5x over). Only the HORIZONTAL angle is used: this
+  // is a single-axis 1-D reference, and the per-axis pattern question is
+  // answered separately beside the arcs that set it.
   const href = useMemo(() => G.hypexReference({
     throatArea: throat.openTotal, fc: fcWanted, T: profileT, c,
-    coverageDeg: mouthMode === "arc" ? thetaH : 90,
-  }), [throat, fcWanted, profileT, c, mouthMode, thetaH]);
+    coverageDeg: thetaH,
+  }), [throat, fcWanted, profileT, c, thetaH]);
 
   // ── THE THREE LIMITS, WHICH ARE THREE DIFFERENT QUESTIONS ─────────────────
   // f_c is the FLARE constant, m·c/2π — how fast the passage expands, and
@@ -968,7 +989,14 @@ export default function GinkgoHorn() {
     if (!map) return <div style={{ fontSize: 11, color: C.inkMuted, padding: 20 }}>
       Cell-for-cell mapping needs a rectangular index at both ends, which only the H-grid has.
     </div>;
-    const padx = mouthW * 0.06, pady = mouthH * 0.12;
+    // The chord extents are DIMENSIONED ON THE DRAWING rather than printed as
+    // a line of text beside it: the two numbers describe the rectangle already
+    // on screen, so a reader should not have to match "432.2 x 208.7" back to
+    // an outline by eye. The padding is sized from the label rather than as a
+    // fixed fraction, so the witness lines and their text always have room at
+    // any aspect ratio.
+    const fs = Math.min(mouthW, mouthH) * 0.075;
+    const padx = mouthW * 0.05 + fs * 2.6, pady = mouthH * 0.05 + fs * 2.6;
     const vb = `${-mouthW / 2 - padx} ${-mouthH / 2 - pady} ${mouthW + 2 * padx} ${mouthH + 2 * pady}`;
     const sw = mouthW * 0.0016;
     const els = [];
@@ -986,6 +1014,32 @@ export default function GinkgoHorn() {
     });
     els.push(<rect key="outline" x={-mouthW / 2} y={-mouthH / 2} width={mouthW} height={mouthH}
       fill="none" stroke={C.accent} strokeWidth={sw * 2.4} />);
+
+    // ── CHORD DIMENSIONS ────────────────────────────────────────────────────
+    // Drafting convention: a witness tick at each end, a dimension line
+    // between them, the figure sitting above the line. These are the CHORD
+    // extents — the straight-line width and height of the aperture — not arc
+    // lengths, which are the inputs a few rows up and are already stated
+    // there.
+    const wY = mouthH / 2 + fs * 1.1;    // dimension line below the outline
+    const hX = -mouthW / 2 - fs * 1.1;   // and to the left of it
+    const tick = fs * 0.38;
+    els.push(<g key="dims" stroke={C.accent} strokeWidth={sw * 1.5} fill="none"
+      opacity={0.75} style={{ pointerEvents: "none" }}>
+      <line x1={-mouthW / 2} y1={wY - tick} x2={-mouthW / 2} y2={wY + tick} />
+      <line x1={mouthW / 2} y1={wY - tick} x2={mouthW / 2} y2={wY + tick} />
+      <line x1={-mouthW / 2} y1={wY} x2={mouthW / 2} y2={wY} />
+      <line x1={hX - tick} y1={-mouthH / 2} x2={hX + tick} y2={-mouthH / 2} />
+      <line x1={hX - tick} y1={mouthH / 2} x2={hX + tick} y2={mouthH / 2} />
+      <line x1={hX} y1={-mouthH / 2} x2={hX} y2={mouthH / 2} />
+    </g>);
+    els.push(<text key="dimw" x={0} y={wY} dy={-fs * 0.38} fill={C.accent} fontSize={fs}
+      fontFamily={C.mono} textAnchor="middle" style={{ pointerEvents: "none" }}>
+      {fmt(map.mouthWEff, 1)} mm</text>);
+    els.push(<text key="dimh" x={hX} y={0} dy={-fs * 0.38} fill={C.accent} fontSize={fs}
+      fontFamily={C.mono} textAnchor="middle" transform={`rotate(-90 ${hX} 0)`}
+      style={{ pointerEvents: "none" }}>{fmt(map.mouthHEff, 1)} mm</text>);
+
     return <svg viewBox={vb} width="100%" style={{ display: "block", maxHeight: 300 }}>{els}</svg>;
   };
 
@@ -1485,10 +1539,6 @@ export default function GinkgoHorn() {
                   {isFinite(map.biradial.rH) ? `${fmt(map.biradial.rH, 0)}` : "flat"} h ·{" "}
                   {isFinite(map.biradial.rV) ? `${fmt(map.biradial.rV, 0)}` : "flat"} v</span>
                 <span style={{ color: C.inkMuted }}> mm</span></span>
-              <span><span style={{ color: C.inkMuted }}>chord </span>
-                <span style={{ color: C.ink }}>{fmt(map.mouthWEff, 1)} × {fmt(map.mouthHEff, 1)} mm</span></span>
-              <span><span style={{ color: C.inkMuted }}>sagitta </span>
-                <span style={{ color: C.ink }}>{fmt(map.biradial.sagH, 1)} / {fmt(map.biradial.sagV, 1)} mm</span></span>
               <span><span style={{ color: C.inkMuted }}>area </span>
                 <span style={{ color: C.ink }}>{fmt(map.mouthAreaTotal / 100, 0)} cm²</span>
                 <span style={{ color: C.inkMuted }}> · per-cell spread </span>
@@ -1780,7 +1830,14 @@ export default function GinkgoHorn() {
                 onChange={(e) => setBowTo(Math.max(parseFloat(e.target.value), bowFrom + 0.1))}
                 style={{ width: 110, accentColor: C.series1 }} />
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowTo.toFixed(2)}</span>
-              {[["throat half", 0, 0.5], ["divider region", 0, 0.35]].map(([l, a, b]) => (
+              {/* Presets all start at the throat and differ only in how far
+                  down the path they run. "divider region" is gone with the
+                  station it named: the inset now tapers linearly to zero at
+                  the mouth, so there is no fraction of the path at which the
+                  dividers stop and nothing for [0, 0.35] to have meant. The
+                  fractions replacing it say exactly what they are. */}
+              {[["throat half", 0, 0.5], ["throat third", 0, 1 / 3],
+                ["throat quarter", 0, 0.25], ["throat fifth", 0, 0.2]].map(([l, a, b]) => (
                 <button key={l} onClick={() => { setBowFrom(a); setBowTo(b); }} disabled={!lengthenOn}
                   style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
               ))}

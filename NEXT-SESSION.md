@@ -1,10 +1,56 @@
 # Ginkgo Multicell Horn — immediate tasks
 
-Updated by the build session of 2026-08-31 (STEP export + preview/export
-decoupling, after the same day's housekeeping run-through). Read `CLAUDE.md`
+Updated by the UI session of 2026-09-01 (Hypex readout audit + mouth
+dimensions + duct-preview bug), on top of the 2026-08-31 build session (STEP
+export + preview/export decoupling). Read `CLAUDE.md`
 first; this file only says **what to do next and why**, not how the thing
 works. Every number quoted here is measured, and the measurement is recorded
 in `CLAUDE.md` under "Known findings worth not re-deriving".
+
+## Done in the 2026-09-01 UI session
+
+- **The Hypex section's two readouts were AUDITED and are arithmetically
+  right**, verified against an independent re-solve rather than against the
+  tool's own output — see the two new CLAUDE.md findings for what each one
+  actually measures and where its convention flatters. FLARE CUTOFF and
+  LOADING LIMIT are unchanged.
+- **A real bug in the same card was FIXED**: `hypexReference` was called with
+  `coverageDeg: mouthMode === "arc" ? thetaH : 90`, and `mouthMode` has been
+  the constant `"biradial"` since the apex went away — so the ternary was dead
+  and the reference horn was pinned at 90 deg whatever Θh said. "Mouth area
+  needed", "Minimum horn length", `governedBy` and the ⌀ figures in the prose
+  all rode on it. Now reads `thetaH`; measured in the browser at the default
+  throat, fc 500, T 0.7: 15308 cm² / 432 mm at Θh 60, 7654 / 393 at 90, 5103 /
+  371 at 120, against a flat 7654 / 393 before.
+- **Mouth chord is DIMENSIONED ON THE DRAWING** rather than printed beside it
+  — witness ticks, dimension line, figure above it, in the drafting
+  convention — and the sagitta readouts are gone (the curvature they measured
+  is carried exactly by the STEP export). The `chord` and `sagitta` fields
+  stay in the JSON export; only the on-screen text went.
+- **The duct-solids preview reverted to the opening geometry on the first
+  mouse touch.** Fixed — see the new CLAUDE.md finding. The test that proves
+  it is a ZERO-pixel drag: the view is untouched, so the only thing that can
+  move the image is which geometry the redraw reaches for. Against the
+  unfixed build the canvas hash returned exactly to the opening hash; against
+  the fix it stays on the current one.
+- **Bow-region presets reworked**: "divider region" removed (it named a
+  station that no longer exists — the inset tapers to zero at the mouth),
+  replaced by throat third / quarter / fifth alongside throat half. Measured
+  at 6x3, 90x40, arc 480x213, 1 lobe, radial:
+
+        depth 425      amplitude   wallSpread   overlap
+        throat half      46.8 mm     17.44 mm    0.73 mm
+        throat third     33.6        15.79       4.04
+        throat quarter   28.5        15.19       3.83
+        throat fifth     25.6        15.16       3.82
+
+  Tighter is a smaller bow AND less wall spread, and it costs clearance —
+  because all four are anchored at the throat, which is exactly where the gap
+  profile is already negative. The card's own prose says this; the numbers
+  now back it. At depth 150 wallSpread saturates at 35.04 mm for third,
+  quarter and fifth alike while amplitude keeps falling (51.7 / 47.4 / 45.1),
+  so at a depth far from the ΔL optimum the metric stops discriminating —
+  read amplitude and overlap there.
 
 ## Done in the 2026-08-31 build session
 
