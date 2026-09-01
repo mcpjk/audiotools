@@ -15,7 +15,8 @@ import * as G from "./hgrid-model.js";
 // stage, because a drawing belongs beside the inputs that shape it.
 //
 // The RIGHT pane is PINNED: the horn's name and solve status, the warnings, a
-// tabbed viewport (3-D ducts / horizontal section / cell table), and a verdict
+// tabbed viewport (3-D solids — the air ducts or the horn's shell blanks —
+// / horizontal section / cell table), and a verdict
 // strip that scrolls independently underneath. Those verdicts — flare cutoff,
 // loading limit, pattern per axis, f1, dL, wall spread, and the physical form
 // — are what you judge a candidate horn by, so they stay on screen whatever
@@ -473,6 +474,16 @@ export default function GinkgoHorn() {
   // setting: it is pinned to PREVIEW_STATIONS below, so this number is spent
   // only when an export button is pressed.
   const [stations, setStations] = useState(64);
+  // ── horn shell ──
+  // Wall thickness for the shell STEP kit and the "horn" 3-D view. This is
+  // the OUTER skin and the mid-path tube walls; the dividers between
+  // passages near the throat stay at the layout t — the blanks reach at
+  // least the tiling outline, and the cutters carve the passages back, so
+  // the boolean sets the divider, never 2x this number.
+  const [shellWall, setShellWall] = useState(3);
+  // What the 3-D viewport shows: the air (ducts) or the material (shell
+  // blanks — the outer form; the boolean result needs CAD).
+  const [solidsMode, setSolidsMode] = useState("ducts");
   // The live mapping at 64 stations cost ~136 ms per slider tick (~7 fps on
   // a drag); at 24 it is ~60 ms, and every readout that matters on a drag —
   // path lengths, dL, fc — comes from the centreline sampling, which is a
@@ -1086,10 +1097,12 @@ export default function GinkgoHorn() {
   const cellFill = (cc) => rampAt(fHi > fLo ? (cc.f1 - fLo) / (fHi - fLo) : 0.5);
   const pathOf = (poly) => "M" + poly.map(([x, y]) => `${x.toFixed(3)},${(-y).toFixed(3)}`).join(" L") + " Z";
 
-  // ── the duct solids for the 3-D preview, built off the render pass ────────
+  // ── the solids for the 3-D preview, built off the render pass ─────────────
   // ductSections applies the same inset the STL export applies, so what the
-  // preview shows IS the exported geometry. Every 2nd boundary point is kept —
-  // plenty for the eye, and it halves the fill work per frame.
+  // preview shows IS the exported geometry; in "shell" mode the rings are the
+  // shell BLANKS from the shell kit instead — the horn's outer form (the
+  // boolean result of the kit needs CAD, not a preview). Every 2nd boundary
+  // point is kept — plenty for the eye, and it halves the fill work per frame.
   const [solids3d, setSolids3d] = useState(null);
   useEffect(() => {
     if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setSolids3d(null); return; }
@@ -1098,18 +1111,21 @@ export default function GinkgoHorn() {
       for (const cc of throat.cells) {
         const r = map.rows.find((x) => x.id === cc.id);
         if (!r) continue;
-        const secs = G.ductSections(cc, r, { t: thickness });
+        const secs = solidsMode === "shell"
+          ? G.shellSections(cc, r, { t: thickness, wall: shellWall })
+          : G.ductSections(cc, r, { t: thickness });
         if (!secs) continue;
         ducts.push({
           id: cc.id, color: cellFill(cc),
           rings: secs.map((s) => s.pts.filter((_, k) => k % 2 === 0)),
         });
       }
-      setSolids3d({ of: map, ducts });
+      setSolids3d({ of: map, mode: solidsMode, wall: shellWall, ducts });
     }, 80);
     return () => clearTimeout(id);
-  }, [map]);
-  const solidsStale = !solids3d || solids3d.of !== map;
+  }, [map, solidsMode, shellWall]);
+  const solidsStale = !solids3d || solids3d.of !== map || solids3d.mode !== solidsMode
+    || (solidsMode === "shell" && solids3d.wall !== shellWall);
 
   const throatSVG = () => {
     const pad = R * 0.18;
@@ -1932,6 +1948,23 @@ export default function GinkgoHorn() {
             });
             if (ok) dl(`${stem}.step`, r.text, "application/step");
           }}>STEP · B-spline solids</button>
+          <button style={expBtn} disabled={!map} onClick={() => {
+            const r = G.buildShellSTEP(throat, exportMap(), { t: thickness, wall: shellWall, name: `${stem}_shell` });
+            if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
+            const integ = G.stepIntegrity(r.text);
+            const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+            setStepNote({
+              ok,
+              msg: `shell kit: ${r.checks.ducts} solids (${r.checks.ducts / 2} blanks + ${r.checks.ducts / 2} cutters) · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
+                ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
+            });
+            if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
+          }}>STEP · horn shell kit</button>
+          <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
+            shell wall (mm)
+            <input type="number" value={shellWall} min={0.5} max={20} step={0.5} onChange={(e) => setShellWall(Math.max(0.5, Math.min(20, parseFloat(e.target.value) || 3)))}
+              style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
+          </label>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             export stations
             <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
@@ -1945,8 +1978,14 @@ export default function GinkgoHorn() {
         )}
         <div style={{ ...hintStyle, marginTop: 6 }}>
           The STL carries the {throat.N} ducts as faceted closed solids; the <strong style={{ color: C.inkDim }}>STEP</strong> carries the
-          same ducts as lofted B-spline solids — the file for CAD when the ducts need filleting, offsetting or joint cuts. DXF is 2-D per
-          plane, so only the throat layer imports as a sketch.
+          same ducts as lofted B-spline solids — the file for CAD when the ducts need filleting, offsetting or joint cuts. The{" "}
+          <strong style={{ color: C.inkDim }}>shell kit</strong> is the physical horn: per cell, a shell <em>blank</em> (the duct pushed
+          outward by the shell wall) and a duct <em>cutter</em> (the passage, extended past both end faces). In CAD: union the blanks,
+          subtract the cutters — the boolean produces the throat dividers, the coped knife edges and the outer skin, because the material's
+          topology changes along the path and no single loft can carry it. Dividers between passages keep the layout's{" "}
+          {fmt(thickness, 1)} mm wall near the throat; the shell wall sets the outer skin and the mid-path tubes. The mouth's outer rim edge
+          on the boolean result is the edge to round over (fillet) against edge diffraction. DXF is 2-D per plane, so only the throat layer
+          imports as a sketch.
         </div>
       </Stage>
 
@@ -2040,7 +2079,13 @@ export default function GinkgoHorn() {
         {view === "ducts" && (
           <div>
             <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", padding: "0 4px 4px" }}>
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>drag to orbit · scroll to zoom · what the STL and STEP export</span>
+              <button onClick={() => setSolidsMode("ducts")} style={btn(solidsMode === "ducts", C.series2)}>ducts — the air</button>
+              <button onClick={() => setSolidsMode("shell")} style={btn(solidsMode === "shell", C.series2)}>horn — shell blanks</button>
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+                {solidsMode === "shell"
+                  ? `blanks at ${fmt(shellWall, 1)} mm wall · what the shell kit exports, before the CAD boolean`
+                  : "drag to orbit · scroll to zoom · what the STL and STEP export"}
+              </span>
               {solidsStale && <Solving label="building solids" />}
             </div>
             {solids3d

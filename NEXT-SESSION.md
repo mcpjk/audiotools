@@ -1,5 +1,72 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-01 shell session
+
+- **Task D — HORN SHELL STEP EXPORT — IS BUILT** (owner's request, this
+  session). One AP214 file, TWO solids per cell: a shell BLANK (the duct's
+  station rings pushed outward by a "shell wall" input — the same mitred
+  offset machinery as the divider inset, opposite sign) and a duct CUTTER
+  (the passage extended 3 mm past both end faces). The stated recipe —
+  UNION the blanks, SUBTRACT the cutters, in CAD — produces the throat
+  dividers, the coped knife edges and the outer skin, because the
+  material's topology changes along the path (one block at the throat,
+  separate tubes mid-path, knife edges at the mouth) and no single loft
+  can carry that. See the new CLAUDE.md finding for the two guarantees the
+  construction rests on (the max() that keeps adjacent blanks meeting
+  through the divider region, and the cutter extension that stops the
+  cap-fill ambiguity leaving a membrane over the passage). 18 new checks,
+  suite at 394 — the offset closed forms (exact (10+2d)² square, exact
+  round-trip), containment, ring simplicity, the exact prism identity for
+  the extension, and the emitted file's integrity.
+- **The 3-D viewport now offers "ducts — the air" and "horn — shell
+  blanks"** (owner's request). The horn view is the blanks at the chosen
+  wall — the outer form; the boolean result needs CAD, and the hint says
+  so. Same deferred build pattern as the duct solids; toggling rebuilds in
+  the same ~20 ms class.
+- **What remains is OWNER VALIDATION IN CAD**, same as Task B's round
+  trips: import the shell kit (36 bodies), union the 18 blanks, subtract
+  the 18 cutters, and check (1) the boolean succeeds, (2) the throat face
+  is flat with t-thick dividers between passages, (3) mid-path shows
+  separate tubes at the shell wall, merging where ducts run close, (4) the
+  mouth's shared walls come out as knife edges (with bulge on, the coped
+  edges), and (5) section the result anywhere and confirm no internal
+  voids. If the subtraction leaves a membrane over any passage mouth, that
+  is the cutter extension being outrun by an unusually curved cap — raise
+  `ext` in `buildShellSTEP` (model option, default 3 mm) and report the
+  geometry.
+
+## Task E — mouth flare / rim roundover (owner proposal, ASSESSED — geometry deliberately not chosen yet)
+
+The owner asks (maybe) for a flare around the combined mouth aperture,
+against edge diffraction at the outer rim. **Assessment: the idea is
+valid — rim termination treatment is standard practice, and the mechanism
+is real — but its benefit is set almost entirely by the SIZE of the
+roundover relative to wavelength, and this tool computes no radiated
+field, so it can state geometry and the sizing rule, never verify the
+acoustic result. Validation is ABEC/BEM territory.**
+
+- Mechanism: the rim is an abrupt impedance discontinuity. Part of the
+  wave reflects back down the horn (throat-impedance and response ripple)
+  and the edge re-radiates (diffraction) — pattern and response
+  irregularity concentrated where the mouth is small in wavelengths.
+  Rounding spreads the discontinuity over the roundover's arc.
+- Sizing rule of thumb: benefit starts roughly where the roundover radius
+  is ~λ/4 and grows from there — f ≳ c/(4r). r = 20 mm helps above
+  ~4.3 kHz, 50 mm above ~1.7 kHz, 200 mm above ~430 Hz. A cosmetic radius
+  does nothing at the frequencies where this horn's ripple lives; a
+  useful one at low frequency is a large piece of geometry. (Literature
+  to consult, not verified here: Kolbrek & Dunker's mouth-termination
+  chapter; Geddes' waveguide mouth radius; the Le Cléac'h 180° roll-back.)
+- **The cheapest correct path already exists as of this session**: the
+  shell kit's boolean result carries the mouth's outer rim as a real
+  B-rep edge, and a CAD fillet on that edge IS the roundover — sizable,
+  variable, no tool geometry needed. Build in-tool flare geometry only if
+  the owner wants it parametric in the tool or bigger than a fillet can
+  express (an exponential lip, a 180° roll-back) — that would be a rim
+  extension surface grown off the blank rim sides, a bounded build.
+- Also worth deciding first: freestanding vs in-baffle mounting changes
+  the rim termination as much as a small roundover does.
+
 ## Done in the 2026-09-01 joints & separation session
 
 - **Task A — COPED JOINTS — IS BUILT** (stage 7, live). `bulge: { amp }` in
@@ -298,8 +365,12 @@ Decisions the owner has made and that should not be relitigated:
 ## The plan, in order
 
 1. **Owner validation**: the coped joints and the separation solver in the
-   browser, and a bulged STEP file through CAD (boolean union should yield
-   the knife edges).
+   browser, a bulged STEP file through CAD (boolean union should yield
+   the knife edges), and the SHELL KIT through CAD (union blanks, subtract
+   cutters — the checklist in the shell-session section above).
+1b. **Task E decision** (owner): whether the rim roundover is a CAD fillet
+   on the shell kit's rim edge (available now) or an in-tool parametric
+   flare (a build). The assessment above says what each buys.
 2. **Finish Task A's tail**: per-edge inset taper to the knife station, and
    the restored evanescent-run analysis keyed to `clearance.joint` (the
    wall-end station exists again).

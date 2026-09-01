@@ -2388,5 +2388,154 @@ head("Duct separation (field and solver)");
     `defect ${nb.gapBefore.toFixed(2)} -> ${nb.gapAfter.toFixed(2)} mm, ${cb.joint.engaged}/${cb.joint.pairs} joints`);
 }
 
+head("Horn shell export (blanks + cutters)");
+{
+  // ── the offset closed forms first ─────────────────────────────────────────
+  // Mitred outward offset of a 10 mm square by d: every side line moves out
+  // by d and the corners are line intersections, so the result is exactly the
+  // (10+2d) square. Interior run points sit on straight (collinear) segments
+  // and take the pure-displacement branch; corners take the mitre branch —
+  // this exercises both.
+  const n4 = 3, sq = [];
+  const cs = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
+  for (let s = 0; s < 4; s++) {
+    const A = cs[s], B = cs[(s + 1) % 4];
+    for (let i = 0; i < n4; i++) sq.push([A[0] + (B[0] - A[0]) * (i / n4), A[1] + (B[1] - A[1]) * (i / n4)]);
+  }
+  const outset = M.insetPolygon(sq, [-1.5, -1.5, -1.5, -1.5]);
+  check("mitred outset of a 10 mm square: exact (10+2d)^2", M.polyArea2(outset), 169, 1e-9, "mm2");
+  // Offset out then in by the same d puts every side line back where it was,
+  // and the vertices are intersections of those same lines — so the round
+  // trip is EXACT, not approximate. This is the invertibility the shell
+  // construction rests on.
+  const back = M.insetPolygon(outset, [1.5, 1.5, 1.5, 1.5]);
+  let rt = 0;
+  for (let k = 0; k < sq.length; k++) rt = Math.max(rt, Math.hypot(back[k][0] - sq[k][0], back[k][1] - sq[k][1]));
+  check("outset then inset round-trips the square exactly", rt, 0, 1e-9, "mm");
+
+  // ── the real geometry ─────────────────────────────────────────────────────
+  const t = 0.4, wall = 3, ext = 3, ST = 24;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  const map = M.mapThroatToMouth(th, {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    sectionMode: "swept", stations: ST, depth: 320, profileT: 0.7,
+    keepGeometry: true, computeClearance: false,
+  });
+
+  // point-in-polygon in the ring's own best-fit plane, for containment
+  const inside2 = (poly, p) => {
+    let w = 0;
+    for (let k = 0; k < poly.length; k++) {
+      const a = poly[k], b = poly[(k + 1) % poly.length];
+      if (a[1] <= p[1]) { if (b[1] > p[1] && (b[0] - a[0]) * (p[1] - a[1]) - (p[0] - a[0]) * (b[1] - a[1]) > 0) w++; }
+      else if (b[1] <= p[1] && (b[0] - a[0]) * (p[1] - a[1]) - (p[0] - a[0]) * (b[1] - a[1]) < 0) w--;
+    }
+    return w !== 0;
+  };
+  const project = (pts) => pts.map((p) => [p[0], p[1]]); // used only at the planar throat
+
+  let capZmax = 0, offErr = 0, containFail = 0, crossFail = 0, blanksBigger = true;
+  const ductVols = [], blankVols = [];
+  for (const cell of th.cells) {
+    const rowR = map.rows.find((r) => r.id === cell.id);
+    const duct = M.ductSections(cell, rowR, { t });
+    const blank = M.shellSections(cell, rowR, { t, wall });
+    // the blank's throat ring stays exactly planar in z = 0
+    for (const p of blank[0].pts) capZmax = Math.max(capZmax, Math.abs(p[2]));
+    // at the throat every blank segment lies on the offset LINE of its gross
+    // segment: rim sides at wall, shared sides at wall - t/2 (taper = 1).
+    // Line distance, measured at segment midpoints — exact, not approximate.
+    const gross = rowR.sched[0].pts, bl = blank[0].pts;
+    const N = gross.length, nPer = N / 4;
+    const rim = cell.rimSide || [false, false, false, false];
+    for (let k = 0; k < N; k++) {
+      const a = gross[k], b = gross[(k + 1) % N];
+      const m = [(bl[k][0] + bl[(k + 1) % N][0]) / 2, (bl[k][1] + bl[(k + 1) % N][1]) / 2];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const dist = Math.abs(((b[0] - a[0]) * (m[1] - a[1]) - (m[0] - a[0]) * (b[1] - a[1])) / L);
+      const wantD = rim[Math.floor(k / nPer)] ? wall : wall - t / 2;
+      offErr = Math.max(offErr, Math.abs(dist - wantD));
+    }
+    // containment and simplicity at every station: each duct point inside its
+    // blank ring (tested at the planar throat; elsewhere by area ordering and
+    // by the blank ring never self-intersecting)
+    for (const p of project(duct[0].pts)) if (!inside2(project(bl), p)) containFail++;
+    for (let q = 0; q < duct.length; q++) {
+      if (blank[q].area <= duct[q].area) blanksBigger = false;
+      const P = blank[q].pts, n = P.length;
+      for (let i = 0; i < n; i++)
+        for (let j = i + 2; j < n; j++) {
+          if (i === 0 && j === n - 1) continue;
+          const A = P[i], B = P[(i + 1) % n], Cc = P[j], D = P[(j + 1) % n];
+          const d1 = (B[0] - A[0]) * (Cc[1] - A[1]) - (B[1] - A[1]) * (Cc[0] - A[0]);
+          const d2 = (B[0] - A[0]) * (D[1] - A[1]) - (B[1] - A[1]) * (D[0] - A[0]);
+          const d3 = (D[0] - Cc[0]) * (A[1] - Cc[1]) - (D[1] - Cc[1]) * (A[0] - Cc[0]);
+          const d4 = (D[0] - Cc[0]) * (B[1] - Cc[1]) - (D[1] - Cc[1]) * (B[0] - Cc[0]);
+          if (d1 * d2 < 0 && d3 * d4 < 0) crossFail++;
+        }
+    }
+    const dmesh = M.ductMesh(duct), bmesh = M.ductMesh(blank);
+    ductVols.push(Math.abs(M.meshVolume(dmesh.verts, dmesh.tris)));
+    blankVols.push(Math.abs(M.meshVolume(bmesh.verts, bmesh.tris)));
+  }
+  check("blank throat rings exactly planar in z = 0", capZmax, 0, 1e-9, "mm");
+  check("throat outset lands on the offset lines exactly", offErr, 0, 1e-9, "mm");
+  checkTrue("every duct point sits inside its blank at the throat", containFail === 0, `${containFail} outside`);
+  checkTrue("blank ring area exceeds duct ring area at every station", blanksBigger, "");
+  checkTrue("no blank ring self-intersects (x-y projection)", crossFail === 0, `${crossFail} crossings`);
+  checkTrue("every blank holds more volume than its duct",
+    blankVols.every((v, i) => v > ductVols[i]), "");
+
+  // ── the cutter extension is a pair of exact prisms ────────────────────────
+  // A ring translated along its own unit vector-area normal spans a prism of
+  // volume |A_vec|·ext, whatever surface caps it — vector area is set by the
+  // boundary alone. So extending a duct adds exactly ext·(|A_throat|+|A_mouth|).
+  {
+    const cell = th.cells[7];
+    const rowR = map.rows.find((r) => r.id === cell.id);
+    const duct = M.ductSections(cell, rowR, { t });
+    const extd = M.extendSections(duct, ext);
+    const dm = M.ductMesh(duct), em = M.ductMesh(extd);
+    const v0 = Math.abs(M.meshVolume(dm.verts, dm.tris));
+    const v1 = Math.abs(M.meshVolume(em.verts, em.tris));
+    const want = ext * (M.polyArea3(duct[0].pts) + M.polyArea3(duct[duct.length - 1].pts));
+    check("extension volume = ext x (|A_throat| + |A_mouth|)", (v1 - v0) / want, 1, 1e-9);
+    // and the prepended throat ring is planar in z = -ext, exactly
+    let z = 0;
+    for (const p of extd[0].pts) z = Math.max(z, Math.abs(p[2] + ext));
+    check("cutter throat ring planar in z = -ext", z, 0, 1e-9, "mm");
+  }
+
+  // ── the emitted file ──────────────────────────────────────────────────────
+  const out = M.buildShellSTEP(th, map, { t, wall, ext, name: "shelltest" });
+  checkTrue("two solids per cell: 18 blanks + 18 cutters", out.checks.ducts === 36, `${out.checks.ducts} solids`);
+  check("shell surfaces pass through every sampled ring point", out.checks.residual, 0, 1e-9, "mm");
+  checkTrue("every edge used exactly twice, opposite senses", out.checks.edgePairing, "");
+  check("throat caps planar in their own planes (0 and -ext)", out.checks.capPlanarZ, 0, 1e-9, "mm");
+  const integ = M.stepIntegrity(out.text);
+  checkTrue("every referenced entity is defined", integ.ok,
+    `${integ.entities} entities, ${integ.missing} missing`);
+  checkTrue("36 solids in one AP214 representation, labelled by role",
+    (out.text.match(/MANIFOLD_SOLID_BREP/g) || []).length === 36
+    && (out.text.match(/'shell blank /g) || []).length === 18
+    && (out.text.match(/'duct cutter /g) || []).length === 18, "");
+  // solids alternate blank, cutter — the blank must out-hold the plain duct,
+  // and the cutter is the duct plus its two end prisms
+  let volOK = true;
+  for (let i = 0; i < 18; i++) {
+    const blank = out.checks.volumes[2 * i].mesh, cutter = out.checks.volumes[2 * i + 1].mesh;
+    if (!(blank > ductVols[i] && Math.abs(cutter - ductVols[i]) / ductVols[i] < 0.2)) volOK = false;
+  }
+  checkTrue("emitted volumes: blank > duct, cutter = duct + end prisms", volOK, "");
+  // shellSolids (the preview's source) agrees with what the file carries
+  const ss = M.shellSolids(th, map, { t, wall });
+  checkTrue("shellSolids meshes every blank manifold",
+    ss.length === 18 && ss.every((sd) => sd.manifold.ok), "");
+}
+
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

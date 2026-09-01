@@ -4792,6 +4792,102 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
   return out;
 }
 
+// ── HORN SHELL — blanks and cutters ────────────────────────────────────────
+//
+// The duct sections above are the AIR — the open passage the wave travels
+// through. The physical horn is the material AROUND that air, and no single
+// lofted solid can express it: near the throat the material is a connected
+// block threaded by 18 passages, mid-path it splits into separate tubes
+// (the classic multicell bundle), and at the mouth the walls taper to the
+// knife edges the coped joints make. That topology CHANGES along the path,
+// which is exactly what a CAD kernel's booleans exist to resolve and what a
+// loft cannot. So the shell export emits two solids per cell and states the
+// recipe: UNION the blanks, SUBTRACT the cutters, and the dividers, the
+// knife edges and the outer skin all fall out of the boolean.
+//
+// A BLANK is the duct's own station rings pushed OUTWARD — the same mitred
+// offset machinery as the divider inset, run with the opposite sign. Per
+// side the outset from the gross ring is:
+//   rim side      wall                     (the horn's outer skin)
+//   shared side   max(wall - t/2·taper, 0)
+// so blank outset + divider inset compose to max(wall, t/2·taper) of
+// material beyond the open passage on shared sides. The max() is the
+// guarantee that adjacent blanks always MEET through the divider region:
+// each blank reaches at least the gross (tiling) outline, and the union can
+// never be left with an internal sliver of missing material between two
+// walls. Where the profile separates the ducts mid-path the blanks separate
+// too, each carrying its own wall — that IS the multicell bundle — and
+// where the gap is under 2·wall they overlap and the union merges them into
+// one web. The wall between two PASSAGES is set by the layout t near the
+// throat and by the local duct gap elsewhere, never by 2·wall: the cutters
+// carve the passages back out of whatever the blanks put there.
+//
+// A CUTTER is the duct sections EXTENDED a few mm past both end faces —
+// standard CAD practice for a boolean tool. Without the extension the
+// cutter's end cap and the blank's end cap are two different fills of
+// nearly the same ring (the cap-fill ambiguity finding), and subtracting
+// one from the other leaves a membrane over the passage wherever the
+// blank's fill lies in front. The throat extension is exact: the ring is
+// planar in z = 0, so its vector-area normal is exactly -z and the
+// prepended ring is planar in z = -ext. The mouth extension follows the
+// mouth ring's own vector-area normal. ext must exceed the cap-fill sag
+// difference between the blank's cap and the duct's (order 1 mm on these
+// mouths); the default of 3 mm clears it with margin.
+//
+// The blanks' throat faces are all planar in z = 0, so after the boolean
+// the driver mating face is flat and carries the t-thick dividers between
+// passages; at the mouth the passages tile (the inset has tapered to
+// nothing), so every shared wall is cut to a knife edge and only the rim
+// margin survives as the mouth's end face — the outer rim termination,
+// which is also the edge a CAD fillet would round over against diffraction.
+export function shellSections(cellRec, row, { t = 0, wall = 3 } = {}) {
+  const Q = row.sched.length - 1;
+  const rim = cellRec.rimSide || [false, false, false, false];
+  const out = [];
+  for (let q = 0; q <= Q; q++) {
+    const st = row.sched[q];
+    if (!st.pts) return null;
+    const taper = 1 - st.s;
+    const d = rim.map((isRim) => -(isRim ? wall : Math.max(wall - (t / 2) * taper, 0)));
+    const pts = insetSection3(st.pts, d);
+    out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
+  }
+  return out;
+}
+
+// Extend a duct's sections past both end faces by translating a copy of each
+// end ring along that ring's own outward vector-area normal. The added
+// volume is exactly |A_vec|·ext per end — a translated ring spans a prism —
+// which is what the test asserts.
+export function extendSections(sections, ext = 3) {
+  const Q = sections.length - 1;
+  const cen = (pts) => {
+    const c = [0, 0, 0];
+    for (const p of pts) { c[0] += p[0] / pts.length; c[1] += p[1] / pts.length; c[2] += p[2] / pts.length; }
+    return c;
+  };
+  const ringNormal = (pts, toward) => {
+    let ax = 0, ay = 0, az = 0;
+    for (let k = 0; k < pts.length; k++) {
+      const a = pts[k], b = pts[(k + 1) % pts.length];
+      ax += a[1] * b[2] - a[2] * b[1];
+      ay += a[2] * b[0] - a[0] * b[2];
+      az += a[0] * b[1] - a[1] * b[0];
+    }
+    const L = Math.hypot(ax, ay, az) || 1;
+    let n = [ax / L, ay / L, az / L];
+    if (n[0] * toward[0] + n[1] * toward[1] + n[2] * toward[2] < 0) n = [-n[0], -n[1], -n[2]];
+    return n;
+  };
+  const c0 = cen(sections[0].pts), c1 = cen(sections[1].pts);
+  const cQ = cen(sections[Q].pts), cQ1 = cen(sections[Q - 1].pts);
+  const nT = ringNormal(sections[0].pts, [c0[0] - c1[0], c0[1] - c1[1], c0[2] - c1[2]]);
+  const nM = ringNormal(sections[Q].pts, [cQ[0] - cQ1[0], cQ[1] - cQ1[1], cQ[2] - cQ1[2]]);
+  const shift = (pts, n) => pts.map((p) => [p[0] + n[0] * ext, p[1] + n[1] * ext, p[2] + n[2] * ext]);
+  const clone = (sec, n) => ({ s: sec.s, area: sec.area, pts: shift(sec.pts, n), origin: sec.origin });
+  return [clone(sections[0], nT), ...sections, clone(sections[Q], nM)];
+}
+
 // Signed volume of a closed triangle soup, by the divergence theorem. Positive
 // when every facet winds counter-clockwise seen from outside.
 export function meshVolume(verts, tris) {
@@ -4911,6 +5007,27 @@ export function ductSolids(throat, map, opts = {}) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
     const sections = ductSections(cellRec, row, opts);
+    if (!sections) return null;
+    const mesh = ductMesh(sections);
+    out.push({
+      id: cellRec.id, label: cellRec.label, sections, ...mesh,
+      volume: meshVolume(mesh.verts, mesh.tris),
+      manifold: meshManifold(mesh.tris),
+    });
+  }
+  return out;
+}
+
+// Every shell blank, meshed and checked — the outer form of the horn, for the
+// 3-D preview. Same structure as ductSolids so the two are interchangeable
+// downstream.
+export function shellSolids(throat, map, opts = {}) {
+  if (!map) return null;
+  const out = [];
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const sections = shellSections(cellRec, row, opts);
     if (!sections) return null;
     const mesh = ductMesh(sections);
     out.push({
@@ -5344,12 +5461,14 @@ function stepReal(x) {
   return s.includes(".") ? s : s + ".";
 }
 
-// Emit one file: every duct as a MANIFOLD_SOLID_BREP in a single
-// ADVANCED_BREP_SHAPE_REPRESENTATION, so CAD imports one part with one body
-// per duct. Returns { text, checks } — the checks are computed on the same
-// structures that were emitted, not re-derived.
-export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
-  if (!map) return null;
+// Emit one file: every solid in solidsSpec as a MANIFOLD_SOLID_BREP in a
+// single ADVANCED_BREP_SHAPE_REPRESENTATION, so CAD imports one part with one
+// body per solid. Each spec is { label, sections, capZ }: capZ is the plane
+// the solid's throat cap is expected to sit in (checked, not assumed), or
+// null to skip that check. Returns { text, checks } — the checks are computed
+// on the same structures that were emitted, not re-derived. buildSTEP and
+// buildShellSTEP below are the two callers.
+function stepEmit({ name, desc, fileDesc, solidsSpec }) {
   const E = [];
   let nid = 0;
   const add = (txt) => { E.push(`#${++nid}=${txt};`); return nid; };
@@ -5359,7 +5478,7 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
   const appCtx = add(`APPLICATION_CONTEXT('automotive design')`);
   add(`APPLICATION_PROTOCOL_DEFINITION('draft international standard','automotive_design',1998,#${appCtx})`);
   const prodCtx = add(`PRODUCT_CONTEXT('',#${appCtx},'mechanical')`);
-  const prod = add(`PRODUCT('${name}','ginkgo multicell horn ducts','',(#${prodCtx}))`);
+  const prod = add(`PRODUCT('${name}','${desc}','',(#${prodCtx}))`);
   add(`PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#${prod}))`);
   const pdf = add(`PRODUCT_DEFINITION_FORMATION('','',#${prod})`);
   const pdCtx = add(`PRODUCT_DEFINITION_CONTEXT('part definition',#${appCtx},'design')`);
@@ -5396,17 +5515,15 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
   const solids = [];
   const checks = { ducts: 0, residual: 0, edgePairing: true, capPlanarZ: 0, volumes: [] };
 
-  for (const cellRec of throat.cells) {
-    const row = map.rows.find((r) => r.id === cellRec.id);
-    if (!row) continue;
-    const sections = ductSections(cellRec, row, { t });
-    if (!sections) return null;
+  for (const spec of solidsSpec) {
+    const sections = spec.sections;
     const brep = ductBrep(sections);
     if (!brep) return null;
     const { nu, nv, uKnots, vKnots, walls, cornerCols, capThroat, capMouth } = brep;
     checks.ducts++;
     checks.residual = Math.max(checks.residual, brepResidual(brep, sections));
-    for (const col of capThroat) for (const p of col) checks.capPlanarZ = Math.max(checks.capPlanarZ, Math.abs(p[2]));
+    if (spec.capZ != null)
+      for (const col of capThroat) for (const p of col) checks.capPlanarZ = Math.max(checks.capPlanarZ, Math.abs(p[2] - spec.capZ));
     const dm = ductMesh(sections);
     checks.volumes.push({ brep: brepVolume(brep, sections), mesh: Math.abs(meshVolume(dm.verts, dm.tris)) });
 
@@ -5494,7 +5611,7 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
       if (e.uses.length !== 2 || e.uses[0] === e.uses[1]) checks.edgePairing = false;
 
     const shell = add(`CLOSED_SHELL('',(${faces.map((i) => "#" + i).join(",")}))`);
-    solids.push(add(`MANIFOLD_SOLID_BREP('duct ${cellRec.label}',#${shell})`));
+    solids.push(add(`MANIFOLD_SOLID_BREP('${spec.label}',#${shell})`));
   }
 
   const rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${place},${solids.map((i) => "#" + i).join(",")}),#${geoCtx})`);
@@ -5504,7 +5621,7 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
   const text = [
     "ISO-10303-21;",
     "HEADER;",
-    `FILE_DESCRIPTION(('ginkgo multicell horn ducts, lofted B-spline solids'),'2;1');`,
+    `FILE_DESCRIPTION(('${fileDesc}'),'2;1');`,
     `FILE_NAME('${name}.step','${stamp}',(''),(''),'audiotools ginkgo','','');`,
     "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));",
     "ENDSEC;",
@@ -5515,6 +5632,49 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
     "",
   ].join("\n");
   return { text, checks };
+}
+
+// The air: every duct as one solid. What this file has always emitted.
+export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
+  if (!map) return null;
+  const solidsSpec = [];
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const sections = ductSections(cellRec, row, { t });
+    if (!sections) return null;
+    solidsSpec.push({ label: `duct ${cellRec.label}`, sections, capZ: 0 });
+  }
+  return stepEmit({
+    name, solidsSpec,
+    desc: "ginkgo multicell horn ducts",
+    fileDesc: "ginkgo multicell horn ducts, lofted B-spline solids",
+  });
+}
+
+// The material: two solids per cell — a shell BLANK (the duct rings pushed
+// outward by the wall) and a duct CUTTER (the duct extended past both end
+// faces). The recipe is stated in the shell-sections comment above: UNION
+// the blanks, SUBTRACT the cutters, and the boolean produces the dividers,
+// the knife edges and the outer skin. No single loft can carry that solid,
+// because its topology changes along the path.
+export function buildShellSTEP(throat, map, { t = 0, wall = 3, ext = 3, name = "ginkgo_horn_shell" } = {}) {
+  if (!map) return null;
+  const solidsSpec = [];
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const blank = shellSections(cellRec, row, { t, wall });
+    const duct = ductSections(cellRec, row, { t });
+    if (!blank || !duct) return null;
+    solidsSpec.push({ label: `shell blank ${cellRec.label}`, sections: blank, capZ: 0 });
+    solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, ext), capZ: -ext });
+  }
+  return stepEmit({
+    name, solidsSpec,
+    desc: "ginkgo multicell horn shell kit: union blanks, subtract cutters",
+    fileDesc: "ginkgo multicell horn shell kit, lofted B-spline solids; union the blanks and subtract the cutters",
+  });
 }
 
 // Referential integrity of an emitted file: every #id referenced in the DATA
