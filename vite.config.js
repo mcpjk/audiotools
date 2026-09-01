@@ -21,6 +21,9 @@ export default defineConfig({
         directivity: resolve(here, "directivity-match.html"),
         aperture: resolve(here, "aperture-wavefield.html"),
         ginkgo: resolve(here, "ginkgo-horn.html"),
+        // the SAME tool in the two-pane cockpit layout, kept as a separate
+        // page so the owner can compare the two before choosing one
+        ginkgoCockpit: resolve(here, "ginkgo-cockpit.html"),
       },
     },
   },

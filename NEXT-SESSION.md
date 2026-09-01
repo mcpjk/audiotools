@@ -1,5 +1,25 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## The cockpit layout comparison (2026-09-01) — awaiting the owner's pick
+
+`ginkgo-cockpit.html` is the SAME tool in the proposed two-pane layout,
+built as a deliberate duplicate (`src/GinkgoCockpit.jsx`) so the owner can
+compare it against the classic page before committing. Left pane scrolls:
+eight numbered stages in design chronology (driver → throat partition →
+coverage & mouth → expansion law → depth & path → path lengthening → a
+ghost slot for the coped joints → export), with the throat and mouth
+diagrams inside their own stages at the owner's call. Right pane is pinned:
+horn header, warnings, a tabbed viewport (3-D ducts / horizontal section /
+path lengths / cell table), and an independently scrolling verdict strip
+(acoustic behaviour · physical form · routing). Below ~1020 px it stacks
+back to one column.
+
+Rules while both pages exist (also in CLAUDE.md): the classic page is
+canonical; everything above `return (` is copied verbatim between the two
+files and any numeric/behaviour change lands in BOTH; layout changes belong
+to the cockpit alone. When the owner picks, the loser is DELETED — this
+duplication is a comparison rig, not a permanent fork.
+
 Updated by the UI session of 2026-09-01 (Hypex readout audit + mouth
 dimensions + duct-preview bug), on top of the 2026-08-31 build session (STEP
 export + preview/export decoupling). Read `CLAUDE.md`
