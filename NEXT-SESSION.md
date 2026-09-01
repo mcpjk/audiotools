@@ -1,12 +1,93 @@
 # Ginkgo Multicell Horn — immediate tasks
 
-Updated by the build session of 2026-08-31 (STEP export + preview/export
-decoupling, after the same day's housekeeping run-through). Read `CLAUDE.md`
+Updated by the UI session of 2026-09-01 (Hypex readout audit + mouth
+dimensions + duct-preview bug), on top of the 2026-08-31 build session (STEP
+export + preview/export decoupling). Read `CLAUDE.md`
 first; this file only says **what to do next and why**, not how the thing
 works. Every number quoted here is measured, and the measurement is recorded
 in `CLAUDE.md` under "Known findings worth not re-deriving".
 
-## Done in the 2026-09-01 session
+## Done in the 2026-09-01 UI session — second pass
+
+- **The f_c depth solve is gone from the UI** (owner: "does not return viable
+  horns anyway", and the loading limit lands well below the crossover points
+  that matter at these sizes). The model keeps `solveDepthForFc` and its
+  tests. "Solve axial depth for" now offers minimum ΔL alone.
+- **"Mouth area needed" removed** — it is the 1-D reference horn's aperture,
+  7.7x the mouth the coverage arcs actually specify. "Mouth you have" was
+  restated on its own terms (⌀ equivalent and radius ratio) rather than as a
+  fraction of a requirement no longer on screen.
+
+- **"Minimum horn length" re-keyed to the actual mouth** (owner's call,
+  option 2 of the three written up last pass) and renamed **"Path needed for
+  f_c"**. It now inverts the profile against the cell's own radius ratio
+  rather than the 1-D reference horn's aperture: 280 mm for 500 Hz at the
+  defaults, against 318–320 mm of path — green, and consistent with the
+  437–440 Hz that FLARE CUTOFF prints beside it. Previously it read "short of
+  393 mm by 75 mm" in red on that same geometry.
+  Verified by round trip against the FORWARD model: re-solving m from (ratio,
+  the reported length) returns the target cutoff to 3.4e-16 relative over
+  4 T × 3 fc × 18 cells. Verdicts checked across depth 150/200/320/500 and
+  targets 500/700 Hz — "clears" and "short" agree with the FLARE CUTOFF range
+  in every case.
+  The `Cutoff f_c` input therefore stays: it now drives a metric about the
+  horn being built, not only the reference figures.
+
+### RESOLVED — the reference-keyed length metric
+
+(This block described `Minimum horn length` / `Path you have` still being
+keyed to `hypexReference` and contradicting the FLARE CUTOFF beside them,
+and offered three options. The owner picked option 2 and the second-pass
+session implemented it — "Path needed for f_c" above is the result. Kept
+as one line so the option list is not re-litigated; this section also
+appeared twice in this file by paste accident, now deduplicated.)
+
+## Done in the 2026-09-01 UI session
+
+- **The Hypex section's two readouts were AUDITED and are arithmetically
+  right**, verified against an independent re-solve rather than against the
+  tool's own output — see the two new CLAUDE.md findings for what each one
+  actually measures and where its convention flatters. FLARE CUTOFF and
+  LOADING LIMIT are unchanged.
+- **A real bug in the same card was FIXED**: `hypexReference` was called with
+  `coverageDeg: mouthMode === "arc" ? thetaH : 90`, and `mouthMode` has been
+  the constant `"biradial"` since the apex went away — so the ternary was dead
+  and the reference horn was pinned at 90 deg whatever Θh said. "Mouth area
+  needed", "Minimum horn length", `governedBy` and the ⌀ figures in the prose
+  all rode on it. Now reads `thetaH`; measured in the browser at the default
+  throat, fc 500, T 0.7: 15308 cm² / 432 mm at Θh 60, 7654 / 393 at 90, 5103 /
+  371 at 120, against a flat 7654 / 393 before.
+- **Mouth chord is DIMENSIONED ON THE DRAWING** rather than printed beside it
+  — witness ticks, dimension line, figure above it, in the drafting
+  convention — and the sagitta readouts are gone (the curvature they measured
+  is carried exactly by the STEP export). The `chord` and `sagitta` fields
+  stay in the JSON export; only the on-screen text went.
+- **The duct-solids preview reverted to the opening geometry on the first
+  mouse touch.** Fixed — see the new CLAUDE.md finding. The test that proves
+  it is a ZERO-pixel drag: the view is untouched, so the only thing that can
+  move the image is which geometry the redraw reaches for. Against the
+  unfixed build the canvas hash returned exactly to the opening hash; against
+  the fix it stays on the current one.
+- **Bow-region presets reworked**: "divider region" removed (it named a
+  station that no longer exists — the inset tapers to zero at the mouth),
+  replaced by throat third / quarter / fifth alongside throat half. Measured
+  at 6x3, 90x40, arc 480x213, 1 lobe, radial:
+
+        depth 425      amplitude   wallSpread   overlap
+        throat half      46.8 mm     17.44 mm    0.73 mm
+        throat third     33.6        15.79       4.04
+        throat quarter   28.5        15.19       3.83
+        throat fifth     25.6        15.16       3.82
+
+  Tighter is a smaller bow AND less wall spread, and it costs clearance —
+  because all four are anchored at the throat, which is exactly where the gap
+  profile is already negative. The card's own prose says this; the numbers
+  now back it. At depth 150 wallSpread saturates at 35.04 mm for third,
+  quarter and fifth alike while amplitude keeps falling (51.7 / 47.4 / 45.1),
+  so at a depth far from the ΔL optimum the metric stops discriminating —
+  read amplitude and overlap there.
+
+## Done in the 2026-09-01 bow-solver session
 
 - **The bow solver no longer chooses the lobe count by default.** "lobes
   locked at N" holds the count you set and searches direction x region around
@@ -210,6 +291,111 @@ number the owner asked to see. Verify the identity numerically once the
 bulges exist (union via sampling or clipping vs the tiled total), and
 treat any residual as a bug in the bulge construction — a bulge crossing
 the rim, or an asymmetric exchange.
+
+**DECIDED (owner, 2026-09-01): the bulge is applied to the MOUTH TILES and
+each throat cell lofts to its bulged outline** — the whole-path alternative,
+not a last-few-stations blend. The owner named both; the whole-path form
+was chosen and it is also the one this architecture can express: the
+profile SCALES the flowed/swept sections between two end outlines, it does
+not reshape them, so a station-local bulge would need a second
+station-dependent outline-blend mechanism — the same family as the
+reframing constructions that caused the 2.8-5.8 mm interpenetration, and
+the same mistake as `dividerEndFrac`: a station-based feature whose station
+the geometry does not define. Under the whole-path form the knife-edge
+station EMERGES (it is where neighbouring sections first touch) instead of
+being imposed. Note one refinement to the intuition: `m` is re-solved per
+cell against the bulged ratio, so the extra expansion is redistributed over
+the whole path by the Hypex shape — k = 1 still lands at both ends, on the
+bulged outline — and the "virtual reduction near the mouth" exists ONLY in
+the union bookkeeping: no per-cell schedule ever decreases, the SUM of
+sections simply overstates the physical union passage past the first knife
+edge.
+
+**Construction constraints (so the invariants survive):** bulge each shared
+INTERIOR edge in (u,v) parameter space of the aperture — the outlines stay
+on the biradial surface, so normal arrival and `aimErr = 0` survive — with
+zero displacement at the corners (corner-maps-to-corner and the STEP
+curved-box topology both survive) and mirror-symmetric amplitudes (the
+union identity above needs the symmetric exchange). Rim edges never bulge.
+The mouth rings then share only their CORNERS with neighbours, not their
+edge points — the mouth-tiling test (2.6e-14 mm point-sharing today)
+becomes a corners-plus-overlap test, which is a test-suite change to make
+deliberately, not a regression to be "fixed".
+
+**READOUT IMPACT AUDIT (2026-09-01, against the current UI).** Everything
+below `throat` that reads per-cell mouth area moves; group them before
+reordering the UI:
+
+*Move, and should (they describe the duct now being built):*
+- `profRatio`, `profM`, `profFc` → FLARE CUTOFF range, the fc spread +
+  `fcDecomp` + its 3% warning, hover fc, table fc/k columns, CSV columns.
+  Direction: bulge RAISES the ratio, so fc reads HIGHER. Estimated shift
+  ~beta / (2 ln rho) with beta the per-cell double-count fraction and rho
+  the radius ratio — order 1% of fc per 5% of bulge at the default rho ~10
+  — so the double-count percentage readout doubles as the fc-shift
+  predictor. MEASURE it when built; do not trust this estimate past its
+  order of magnitude.
+- "Path needed for f_c" (`pathNeeded`) — keyed to `profRatio`, so it asks
+  for slightly more length under bulge. Same order as fc.
+- `fcDecomp` gains a third term: the bulged-area share differs BY CELL
+  CLASS (an interior cell bulges 4 edges, an edge cell 3, a corner cell 2),
+  so a "from bulge" component appears next to length and ratio, and the
+  "equal-area horn = equal-fc horn at the dL optimum" identity picks up a
+  bulge-sized residual. Either decompose it or expect the spread warning to
+  fire and mislead.
+- `mouthAreaSpread` — spread of bulged outline areas is structurally
+  nonzero for the same lobes-per-cell reason. Decide what it reports:
+  union-shares (stays ~0, proves equal output share — recommended headline)
+  with the bulged-outline spread beside it (it is what the law consumes).
+
+*Must NOT move (aperture-total figures — compute them on the UNION, which
+equals the tiled total under the identity above):*
+- `mouthAreaTotal` is today a SUM over `r.mouthArea`; under bulge that
+  double-counts. Keep it the tiled/union total. Riding on it: "Mouth you
+  have", LOADING LIMIT (dEq), the JSON export figure. If left as a sum,
+  loading would silently read better than reality.
+- PATTERN HOLDS DOWN TO (per-axis chords) — unchanged, bulges are interior.
+- dL, path lengths, the depth solve — aim targets are cell centres and
+  symmetric bulges leave centroids ~unchanged; verify once, then expect
+  these readouts still.
+
+*Change MEANING and need re-scoping (the big one):*
+- `clearance.overlap` currently means "defect". Under bulge, overlap past
+  the knife-edge station is THE FEATURE. Split the measurement at the
+  per-pair knife-edge station (first touch, already detectable with the
+  clearance machinery's per-pair distances): before it, overlap keeps its
+  red warning; after it, it becomes "joint engagement", reported not
+  warned. THREE consumers need the split: the interpenetration warning, the
+  narrowest-gap warning, and `solveBow`'s overlap-floor constraint — left
+  unscoped, every bow candidate fails its floor the moment bulge is on.
+- The divider inset taper (full at throat -> zero at mouth) keys on "the
+  mouth tiles". With bulge the walls end at each edge's knife-edge station:
+  taper to zero THERE, per edge. This is exactly the station whose absence
+  removed `dividerEndFrac` — it exists again, so restore the evanescent-run
+  analysis (`f1End`, `decayLen`, `runNeeded`, `straightAvail`) keyed to it.
+- ΣA(x) CSV — the summed schedule overstates the union passage past the
+  first knife edge. Add a union (or overlap-corrected) column there, or the
+  Hornresp/ABEC hand-off silently inherits the double-count.
+
+*New readouts Task A owes the UI:*
+- double-counted area as % of sum (the owner's ask), per cell and total;
+- knife-edge station per neighbour pair (and earliest overall);
+- wall-end station per edge + the restored recombination analysis;
+- joint engagement depth (intended overlap), separate from defect overlap.
+
+**UI RE-ORDERING PROPOSAL** (for the owner to approve in the Task A
+session): the bulge amplitude control and the double-count % belong in the
+MOUTH card — bulge is a property of the mouth tiles, and the % sits beside
+the per-cell spread it complicates. The Hypex card keeps FLARE CUTOFF /
+LOADING LIMIT unchanged in position, with the fc figures now computed on
+the bulged geometry and the double-count % echoed there as the fc-shift
+context. The "Per-cell realisation" block splits in two: "duct separation"
+(pre-joint clearance, keeps its warnings) and a new "coped joints" block
+(knife-edge stations, engagement depth, wall-end stations, evanescent-run
+analysis) — the joint block sits AFTER separation because it only exists
+once the ducts meet. Exports gain the union column in ΣA and keep per-duct
+solids as-is: interpenetrating duct solids are exactly what CAD wants,
+because a boolean union of them PRODUCES the coped knife edges.
 
 ## Task B — STEP export
 

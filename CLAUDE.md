@@ -253,6 +253,134 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **T IS THE ONLY KNOB THAT CHANGES THE MIDDLE OF THE HORN, and it does not
+  touch either end, the path, or the mouth.** Measured at 6x3, 90x40, arc
+  480x213, depth 320, T = 0 / 0.5 / 1: Lmin 317.888464, Lmax 320.023368, dL
+  2.134904, mouth 996.769 cm² — IDENTICAL to six decimals at every T. Both
+  ends are pinned by construction (the cells tile at the throat and tile at
+  the mouth, so k = 1 there whatever T is) and the centreline comes from
+  depth, so T's whole job is the SHAPE of the area schedule in between.
+  Three consequences, all measured at depth 320:
+  1. **It sets the flare constant, so it sets the reported f_c** — 529-532 Hz
+     at T = 0 falling monotonically to 409-412 Hz at T = 1, a 23% span on an
+     unchanged body. cosh(mx) + T·sinh(mx) grows faster at higher T, so it
+     reaches the same ratio with a smaller m.
+  2. **It sets how the area is distributed along the path.** A(u)/A_throat at
+     the half-way station is 5.77 at T = 0 against 10.55 at T = 1 — i.e. only
+     4.3% of the total expansion is delivered by mid-path at T = 0, against
+     8.7% at T = 1. Low T holds the passage narrow and then opens hard.
+  3. **It sets the duct interpenetration, and that is the multicell-specific
+     part**: overlap 0.325 mm at T = 0, 0.901 at 0.4, 2.034 at 0.7, 2.518 at
+     T = 1 — an 8x span, monotone. Adjacent centrelines fan apart nearly
+     linearly while the profile grows convexly, and both are pinned equal at
+     the ends, so the convex curve lies BELOW the fan line in between; lower T
+     dips further and buys clearance. **T is therefore the cheapest lever on
+     interpenetration, and it is the same number as the loading choice — the
+     two cannot be separated.**
+  What T does NOT move: wallSpread is flat across the range (5.03 / 4.77 /
+  5.08 mm at T = 0 / 0.7 / 1, a shallow minimum near 0.7), so bend phase
+  error is not a reason to pick a T. And `kMax` reads EXACTLY 1.00000 at
+  every T while the geometry measures 0.3-2.5 mm of real overlap — the
+  documented swept-mode trap, restated here because a T sweep is exactly
+  where someone would reach for k.
+- **THE `f_c` DEPTH SOLVE WAS REMOVED FROM THE UI (owner's call), and the
+  reason is structural rather than a solver defect.** On the biradial mouth
+  the aperture is fixed by the coverage arcs, so depth moves NEITHER the
+  mouth area NOR the expansion ratio — verified: radius ratio 10.548288 at
+  depth 80, 333, 600 and 1100 alike, mouth 996.77 cm² throughout. Depth buys
+  path length and nothing else. So "solve depth for f_c" is only "how long
+  must the body be", and it answers with a horn away from the dL optimum by
+  construction: 275.8 mm for f_c 500 against 320.0 mm for minimum dL at the
+  defaults. The owner also reports the loading limit landing well below the
+  crossover points that matter at these sizes, so the target was never the
+  binding criterion in practice. `solveDepthForFc` SURVIVES IN THE MODEL with
+  its tests — it is the documented inverse of the profile and the thing to
+  reach for if the mouth ever becomes a free variable; it is the UI
+  affordance that was misleading.
+- **THE 1-D REFERENCE AND THE COVERAGE-SPECIFIED APERTURE ARE TWO DIFFERENT
+  HORNS, and every metric that compared the built geometry against the
+  reference misled in the same direction.** `hypexReference` sizes its mouth
+  by max(lambda/pi, lambda/sin(Th/2)) — at 90 deg and 500 Hz, 7654 cm²
+  against the 997 cm² the coverage arcs specify, 7.7x. Two metrics rode on
+  it. "Mouth area needed" was REMOVED. "Minimum horn length" was the length
+  to that mouth, and with its companion "Path you have" it read flatly
+  CONTRADICTORY: at depth 320 the card printed "short of 393 mm by 75 mm" in
+  red while FLARE CUTOFF two rows down printed 437-440 Hz, already better
+  than the 500 Hz asked for.
+  **It is now RE-KEYED to the mouth being built** and renamed "Path needed
+  for f_c": fc and T give m, and (m, T, the cell's OWN radius ratio) give the
+  length that cell needs, via `hypexLengthForRatio` — the same equation
+  `solveHypexM` solves for m, read for L. Measured at the defaults: 280 mm
+  for 500 Hz against 318-320 mm of path, cleared by 38 mm, green, and
+  consistent with the 437-440 Hz beside it. The round trip is EXACT — solving
+  m back from (ratio, the reported length) returns the target to 3.4e-16
+  relative over 4 T x 3 fc x 18 cells, checked against the forward model and
+  not against the metric's own bookkeeping.
+  It is computed PER CELL AND PAIRED PER CELL, because each cell solves its
+  own ratio and the cell with the shortest path need not be the one needing
+  least. The effect is small here (38.3 vs 38.4 mm against an unpaired
+  Lmin-vs-min comparison, since the ratios spread only 0.12%) but it costs
+  nothing and it is the comparison that is actually meant.
+  What still reads from the reference: the equivalent throat radius, the
+  target's flare constant, and the two diameters quoted in the prose — all
+  labelled reference figures, none of them a verdict on the built geometry.
+
+- **THE FLARE CUTOFF AND THE LOADING LIMIT READOUTS ARE ARITHMETICALLY
+  CORRECT, and each carries a convention worth knowing before quoting it.**
+  Audited against an independent re-solve, never against the tool's own
+  output. FLARE CUTOFF prints `profFcMin-profFcMax`, the per-cell fc =
+  m·c/2pi with m the bisection root of hypexR(L,1,m,T) = ratio: re-solving
+  cell 0 from its own (ratio, L) reproduced the reported fc to every printed
+  digit at both depth 150 and 425, and hypexR(L) returned the ratio to 6
+  decimals. It reads WIDE at the tool's default depth — 643-913 Hz at depth
+  150, 42% spread — and that is the recorded equal-area cost, not an error:
+  the same geometry at depth 425 reads 329-342 Hz, 0.5% spread, because dL
+  collapses there. **A wide fc range is a signal to move depth, not a bug.**
+  LOADING LIMIT is c/(pi·dEq) with dEq the equivalent diameter of
+  `mouthAreaTotal` — and `mouthAreaTotal` is the SUMMED CELL AREA ON THE
+  CURVED CAP, not the projected aperture. So the criterion is stated on a
+  surface larger than the hole the wave leaves through, and it always
+  flatters: measured 996.8 cm² of surface against a 901.9 cm² chord
+  rectangle at 90x40 (1.105x), giving 312 Hz where the projection gives 328;
+  at 120x90 it is 1.192x, 173 Hz against 189. Two further conventions ride
+  in it: it is an equivalent-AREA circle, so a genuinely rectangular mouth's
+  own perimeter says something else again (1281.7 mm -> 272 Hz at the
+  defaults), and dEq has no per-axis form at all, which is why PATTERN is
+  reported separately per axis. All of this is the standard 1-D convention
+  and matches the horn tool; it is recorded because "312 Hz" is otherwise
+  read as a property of the aperture rather than of the cap.
+- **A DEAD TERNARY PINNED THE REFERENCE HORN AT 90 DEG.** `hypexReference`
+  was called with `coverageDeg: mouthMode === "arc" ? thetaH : 90`, written
+  while "arc" was a live mouth mode. `mouthMode` has been the constant
+  `"biradial"` since the apex was removed, so the condition was permanently
+  false and Th_h never reached the reference. It fed diaDirectivity =
+  lambda/sin(Th/2) and through it "Mouth area needed", "Minimum horn
+  length", `governedBy` and the two diameters quoted in the card's prose.
+  Measured at the default throat, fc 500, T 0.7: Th_h 60 wants 15308 cm² over
+  432 mm and was shown 7654 cm² over 393 mm — 2x under; Th_h 120 wants 5103
+  and was shown the same 7654 — 1.5x over. Fixed to read `thetaH`. **The
+  general lesson is that removing a mode leaves its ternaries behind as
+  branches that always take one side**, and the compiler cannot see it —
+  grep for the other removed mode names when one is retired.
+- **A HANDLER BOUND ONCE CANNOT CLOSE OVER RENDER STATE, and in `DuctPreview`
+  that silently reverted the 3-D preview to the geometry it opened with.**
+  The pointer listeners are attached in a `useEffect` with no deps —
+  deliberately, since rebinding them on every geometry change would drop a
+  drag in progress — so they captured the FIRST render's `requestDraw`, which
+  captured the first render's `draw`, which closed over the first `geom`. The
+  preview tracked the sliders correctly right up until it was touched, and
+  then the first drag or scroll repainted the ORIGINAL horn and every later
+  frame stayed there. Fixed with a `drawRef` updated in a bare effect
+  (declared BEFORE the `[geom]` effect, so it is current when that one
+  fires), and `requestDraw` calling `drawRef.current()`.
+  **The test is a ZERO-pixel drag**: mousedown, mousemove with dx = dy = 0,
+  mouseup. The view is untouched, so the only thing that can move the image
+  is which geometry the redraw reached for, and a canvas-pixel hash then
+  decides it outright. Verified in both directions — against the unfixed
+  build the hash returned to exactly the opening hash, against the fix it
+  stayed on the current one, and a real 40x12 drag still moved it. A test
+  that dragged by a real distance could not have told the two apart.
+
 - **BEND TIGHTNESS IS PINNED AT 0.5, and the minimum is NOT the safe end.**
   The two Hermite tangent magnitudes are the cubic's only remaining freedom
   and the measured optimum barely moves: wallSpread bottoms at 0.45-0.55 on

@@ -235,10 +235,21 @@ function DuctPreview({ ducts, dim }) {
     }
   };
 
+  // THE POINTER HANDLERS ARE BOUND ONCE (the listener effect below has no
+  // deps, deliberately — rebinding them on every geometry change would drop a
+  // drag in progress), so everything they reach must be read at CALL time and
+  // not captured at mount. `draw` closes over `geom`, so a handler holding the
+  // first render's copy repainted the FIRST geometry: the preview tracked the
+  // sliders correctly until it was touched, and then the very first drag or
+  // scroll silently reverted it to the horn as it stood when the tool opened,
+  // where it stayed for every later frame. The ref is the indirection that
+  // keeps one binding and the current draw.
+  const drawRef = useRef(draw);
+  useEffect(() => { drawRef.current = draw; });
   const requestDraw = () => {
     if (raf.current) return;
     raf.current = true;
-    requestAnimationFrame(() => { raf.current = false; draw(); });
+    requestAnimationFrame(() => { raf.current = false; drawRef.current(); });
   };
   useEffect(() => { requestDraw(); }, [geom]);
 
@@ -346,7 +357,6 @@ export default function GinkgoHorn() {
   const [thetaV, setThetaV] = useState(40);
   const [arcH, setArcH] = useState(480);
   const [arcV, setArcV] = useState(213);
-  const [fcSolve, setFcSolve] = useState(null);
   const [dlSolve, setDlSolve] = useState(null);
   // ── per-cell path lengthening ──
   // Off by default: it is a correction to apply after depth has done what it
@@ -520,7 +530,7 @@ export default function GinkgoHorn() {
   // a solver readout describes the geometry it was run against — clear it the
   // moment that geometry moves, or a stale "depth X → Y Hz" sits beside inputs
   // it no longer belongs to
-  useEffect(() => { setFcSolve(null); setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT, fcWanted]);
+  useEffect(() => { setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT]);
   // EVERY depth solve runs from the same reference state for the two straight
   // runs — divergence 0, arrival 0 — and resets the sliders to it. A solve is
   // then a repeatable reference point rather than a function of wherever the
@@ -609,10 +619,20 @@ export default function GinkgoHorn() {
   // The 1-D Hypex horn this multicell is standing in for: same acoustic throat,
   // same law, same cutoff. Advisory — it says what the cutoff demands, and the
   // geometry below says what you have.
+  // The coverage angle here decides diaDirectivity = lambda/sin(Th/2), so it
+  // has to be the angle the aperture is actually being asked for. It used to
+  // read `mouthMode === "arc" ? thetaH : 90`, and mouthMode is a constant
+  // "biradial" since the apex went away — so the ternary was dead and the
+  // reference horn was pinned at 90 deg whatever the slider said. Measured at
+  // the default throat, fc 500, T 0.7: Th_h 60 wants 15308 cm2 over 432 mm and
+  // was shown 7654 cm2 over 393 mm (2x under); Th_h 120 wants 5103 cm2 and was
+  // shown the same 7654 (1.5x over). Only the HORIZONTAL angle is used: this
+  // is a single-axis 1-D reference, and the per-axis pattern question is
+  // answered separately beside the arcs that set it.
   const href = useMemo(() => G.hypexReference({
     throatArea: throat.openTotal, fc: fcWanted, T: profileT, c,
-    coverageDeg: mouthMode === "arc" ? thetaH : 90,
-  }), [throat, fcWanted, profileT, c, mouthMode, thetaH]);
+    coverageDeg: thetaH,
+  }), [throat, fcWanted, profileT, c, thetaH]);
 
   // ── THE THREE LIMITS, WHICH ARE THREE DIFFERENT QUESTIONS ─────────────────
   // f_c is the FLARE constant, m·c/2π — how fast the passage expands, and
@@ -644,6 +664,42 @@ export default function GinkgoHorn() {
       fcLo: map.profFcMin, fcHi: map.profFcMax,
     };
   }, [map, c, thetaH, thetaV]);
+
+  // ── THE PATH LENGTH THE TARGET CUTOFF ACTUALLY ASKS FOR ───────────────────
+  // Keyed to the mouth BEING BUILT, not to the 1-D reference horn's mouth.
+  // This is the profile inverted the other way round: fc and T give m, and
+  // (m, T, the cell's own radius ratio) give the length that cell needs to
+  // reach its own mouth area at that flare rate. It is the same equation
+  // `solveHypexM` solves for m, read for L instead, so the two agree by
+  // construction — feed back the length reported here and fc comes out at the
+  // target.
+  //
+  // It replaces `hypexReference.minLength`, which was the length to the
+  // REFERENCE mouth — max(lambda/pi, lambda/sin(Th/2)), 7654 cm2 at 90 deg and
+  // 500 Hz against the 997 cm2 the coverage arcs specify, 7.7x. That made the
+  // comparison below read "short of 393 mm by 75 mm" in red while FLARE CUTOFF
+  // two rows down printed 437-440 Hz, already better than the 500 Hz asked
+  // for. Two different horns, so the verdict was about the wrong one.
+  //
+  // PER CELL, and PAIRED per cell. Each cell solves its own ratio, so each has
+  // its own required length, and the cell with the shortest path is not
+  // necessarily the one that needs the least — comparing Lmin against the
+  // minimum requirement would be comparing two different cells.
+  const pathNeeded = useMemo(() => {
+    if (!map || !map.rows.length || profileT == null || !(fcWanted > 0)) return null;
+    const mTarget = G.hypexMForFc(fcWanted, c);
+    let lo = Infinity, hi = -Infinity, worst = -Infinity;
+    for (const r of map.rows) {
+      const need = G.hypexLengthForRatio(r.profRatio, mTarget, profileT);
+      // null when the ratio is <= 1 — no expansion left to deliver, so there
+      // is no length that reaches the target and the metric says nothing
+      if (need == null) return null;
+      if (need < lo) lo = need;
+      if (need > hi) hi = need;
+      if (need - r.Lpath > worst) worst = need - r.Lpath;   // > 0 = short
+    }
+    return { lo, hi, worst, clears: worst <= 0 };
+  }, [map, profileT, fcWanted, c]);
 
   const fab = useMemo(() => G.fabrication({
     throat, t: thickness, R, c, f: Math.min(throat.f1min, fTarget), process,
@@ -978,7 +1034,14 @@ export default function GinkgoHorn() {
     if (!map) return <div style={{ fontSize: 11, color: C.inkMuted, padding: 20 }}>
       Cell-for-cell mapping needs a rectangular index at both ends, which only the H-grid has.
     </div>;
-    const padx = mouthW * 0.06, pady = mouthH * 0.12;
+    // The chord extents are DIMENSIONED ON THE DRAWING rather than printed as
+    // a line of text beside it: the two numbers describe the rectangle already
+    // on screen, so a reader should not have to match "432.2 x 208.7" back to
+    // an outline by eye. The padding is sized from the label rather than as a
+    // fixed fraction, so the witness lines and their text always have room at
+    // any aspect ratio.
+    const fs = Math.min(mouthW, mouthH) * 0.075;
+    const padx = mouthW * 0.05 + fs * 2.6, pady = mouthH * 0.05 + fs * 2.6;
     const vb = `${-mouthW / 2 - padx} ${-mouthH / 2 - pady} ${mouthW + 2 * padx} ${mouthH + 2 * pady}`;
     const sw = mouthW * 0.0016;
     const els = [];
@@ -996,6 +1059,32 @@ export default function GinkgoHorn() {
     });
     els.push(<rect key="outline" x={-mouthW / 2} y={-mouthH / 2} width={mouthW} height={mouthH}
       fill="none" stroke={C.accent} strokeWidth={sw * 2.4} />);
+
+    // ── CHORD DIMENSIONS ────────────────────────────────────────────────────
+    // Drafting convention: a witness tick at each end, a dimension line
+    // between them, the figure sitting above the line. These are the CHORD
+    // extents — the straight-line width and height of the aperture — not arc
+    // lengths, which are the inputs a few rows up and are already stated
+    // there.
+    const wY = mouthH / 2 + fs * 1.1;    // dimension line below the outline
+    const hX = -mouthW / 2 - fs * 1.1;   // and to the left of it
+    const tick = fs * 0.38;
+    els.push(<g key="dims" stroke={C.accent} strokeWidth={sw * 1.5} fill="none"
+      opacity={0.75} style={{ pointerEvents: "none" }}>
+      <line x1={-mouthW / 2} y1={wY - tick} x2={-mouthW / 2} y2={wY + tick} />
+      <line x1={mouthW / 2} y1={wY - tick} x2={mouthW / 2} y2={wY + tick} />
+      <line x1={-mouthW / 2} y1={wY} x2={mouthW / 2} y2={wY} />
+      <line x1={hX - tick} y1={-mouthH / 2} x2={hX + tick} y2={-mouthH / 2} />
+      <line x1={hX - tick} y1={mouthH / 2} x2={hX + tick} y2={mouthH / 2} />
+      <line x1={hX} y1={-mouthH / 2} x2={hX} y2={mouthH / 2} />
+    </g>);
+    els.push(<text key="dimw" x={0} y={wY} dy={-fs * 0.38} fill={C.accent} fontSize={fs}
+      fontFamily={C.mono} textAnchor="middle" style={{ pointerEvents: "none" }}>
+      {fmt(map.mouthWEff, 1)} mm</text>);
+    els.push(<text key="dimh" x={hX} y={0} dy={-fs * 0.38} fill={C.accent} fontSize={fs}
+      fontFamily={C.mono} textAnchor="middle" transform={`rotate(-90 ${hX} 0)`}
+      style={{ pointerEvents: "none" }}>{fmt(map.mouthHEff, 1)} mm</text>);
+
     return <svg viewBox={vb} width="100%" style={{ display: "block", maxHeight: 300 }}>{els}</svg>;
   };
 
@@ -1404,20 +1493,28 @@ export default function GinkgoHorn() {
               sub={`summed open area · ⌀${fmt(2 * href.rt, 1)} mm equivalent`} />
             <Metric label="Flare constant m" value={`${(href.m * 1000).toFixed(3)} /m`}
               sub={`f_c = mc/2π at ${fmt(c, 1)} m/s`} />
-            <Metric label="Mouth area needed" value={`${fmt(href.mouthArea / 100, 0)} cm²`}
-              sub={`⌀${fmt(href.dia, 0)} mm · ${href.governedBy} governs`} color={C.series3} />
-            <Metric label="Minimum horn length" value={`${fmt(href.minLength, 0)} mm`}
-              sub={`expansion ratio ${fmt(href.ratio, 1)}×`} color={C.series3} />
+            {/* THROAT -> MOUTH -> THE LENGTH THAT PAIR NEEDS -> THE LENGTH YOU
+                HAVE. Read left to right that is the whole argument, and every
+                number in it now describes the horn being built. "Mouth area
+                needed" was removed at the owner's call — it was the 1-D
+                reference horn's aperture, several times the one the coverage
+                arcs specify — and the length metric beside it, which was the
+                length to THAT mouth, is re-keyed to this one. */}
             {map && <Metric label="Mouth you have" value={`${fmt(map.mouthAreaTotal / 100, 0)} cm²`}
-              sub={map.mouthAreaTotal >= href.mouthArea
-                ? `${fmt(map.mouthAreaTotal / href.mouthArea, 2)}× the requirement`
-                : `${fmt(100 * (1 - map.mouthAreaTotal / href.mouthArea), 0)}% under`}
-              color={map.mouthAreaTotal >= href.mouthArea ? C.series4 : C.series5} />}
+              sub={`⌀${fmt(2 * Math.sqrt(map.mouthAreaTotal / Math.PI), 0)} mm equivalent · ${fmt(Math.sqrt(map.mouthAreaTotal / throat.openTotal), 2)}× on radius`}
+              color={C.series3} />}
+            {pathNeeded && <Metric label="Path needed for f_c"
+              value={pathNeeded.hi - pathNeeded.lo < 0.5
+                ? `${fmt(pathNeeded.lo, 0)} mm`
+                : `${fmt(pathNeeded.lo, 0)}–${fmt(pathNeeded.hi, 0)} mm`}
+              sub={`${fmt(fcWanted, 0)} Hz at T = ${fmt(profileT, 2)}, with this mouth`} color={C.series3} />}
             {map && <Metric label="Path you have" value={`${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} mm`}
-              sub={map.Lmin >= href.minLength
-                ? `clears the ${fmt(href.minLength, 0)} mm minimum`
-                : `short of ${fmt(href.minLength, 0)} mm by ${fmt(href.minLength - map.Lmin, 0)} mm`}
-              color={map.Lmin >= href.minLength ? C.series4 : C.series5} />}
+              sub={!pathNeeded
+                ? "centreline length, throat to mouth"
+                : pathNeeded.clears
+                  ? `every cell clears it, the worst by ${fmt(-pathNeeded.worst, 0)} mm`
+                  : `worst cell short by ${fmt(pathNeeded.worst, 0)} mm`}
+              color={!pathNeeded ? C.series3 : pathNeeded.clears ? C.series4 : C.series5} />}
           </div>
         )}
         {/* FLARE and LOADING live here, with f_c. PATTERN is per axis and
@@ -1449,8 +1546,11 @@ export default function GinkgoHorn() {
           Two criteria compete for the mouth size: <em>loading</em> wants a mouth circumference of about λ at cutoff (⌀{fmt(href ? href.diaLoading : 0, 0)} mm here),
           and <em>directivity</em> wants λ/sin(Θ/2) (⌀{fmt(href ? href.diaDirectivity : 0, 0)} mm). The larger binds. Note the direction:
           <strong style={{ color: C.inkDim }}> wider coverage needs a smaller mouth</strong>, so it is the narrow-pattern horn that comes out enormous.
-          {" "}These are <strong style={{ color: C.inkDim }}>reference</strong> figures, not constraints — the mouth below comes from the coverage and
-          cap geometry, and these say how far short of the 1-D requirement it falls.
+          {" "}These two diameters are <strong style={{ color: C.inkDim }}>reference</strong> figures, not constraints: the mouth here comes from the
+          coverage arcs, and <strong style={{ color: C.inkDim }}>Path needed for f_c is keyed to that mouth</strong> — the length each cell needs to
+          reach its own aperture at the target flare rate — not to the reference horn's much larger one. It is the profile read backwards: the tool
+          normally solves m from (ratio, length) and reports f_c, and this solves length from (ratio, f_c) instead, so feeding the number back
+          returns the cutoff you asked for.
         </div>
       </div>
 
@@ -1495,10 +1595,6 @@ export default function GinkgoHorn() {
                   {isFinite(map.biradial.rH) ? `${fmt(map.biradial.rH, 0)}` : "flat"} h ·{" "}
                   {isFinite(map.biradial.rV) ? `${fmt(map.biradial.rV, 0)}` : "flat"} v</span>
                 <span style={{ color: C.inkMuted }}> mm</span></span>
-              <span><span style={{ color: C.inkMuted }}>chord </span>
-                <span style={{ color: C.ink }}>{fmt(map.mouthWEff, 1)} × {fmt(map.mouthHEff, 1)} mm</span></span>
-              <span><span style={{ color: C.inkMuted }}>sagitta </span>
-                <span style={{ color: C.ink }}>{fmt(map.biradial.sagH, 1)} / {fmt(map.biradial.sagV, 1)} mm</span></span>
               <span><span style={{ color: C.inkMuted }}>area </span>
                 <span style={{ color: C.ink }}>{fmt(map.mouthAreaTotal / 100, 0)} cm²</span>
                 <span style={{ color: C.inkMuted }}> · per-cell spread </span>
@@ -1568,9 +1664,16 @@ export default function GinkgoHorn() {
               </span>
             </div>
 
-            {/* BOTH DEPTH SOLVES, TOGETHER. They compete for the same knob —
-                axial depth — so they belong side by side, not at opposite
-                ends of the page. */}
+            {/* ONE DEPTH SOLVE. The cutoff solve was removed at the owner's
+                call: it does not return a horn anyone would build. The reason
+                is structural — on the biradial mouth the aperture is fixed by
+                the coverage arcs, so depth moves NEITHER the mouth area nor
+                the expansion ratio, only the path length. Asking for a cutoff
+                is therefore only asking how long the body must be, and it
+                answers with a stubby or an over-long body carrying a
+                full-size mouth, always away from the dL optimum. The
+                inversion survives as `solveDepthForFc` in the model, with its
+                tests; it is the UI affordance that was misleading. */}
             <div style={{ marginTop: 8, padding: "7px 9px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 10, color: C.inkDim, letterSpacing: "0.03em" }}>SOLVE AXIAL DEPTH FOR</span>
@@ -1579,62 +1682,25 @@ export default function GinkgoHorn() {
                   setDlSolve(r);
                   if (r.ok) setDepth(Math.round(r.depth));
                 }} style={btn(false, C.series4)}>minimum ΔL</button>
-                <button onClick={() => {
-                  const r = G.solveDepthForFc(throat, solveRefOpts(), { fcTarget: fcWanted, T: profileT });
-                  setFcSolve(r);
-                  if (r.ok) setDepth(Math.round(r.depth * 10) / 10);
-                }} style={btn(false, C.series3)}>f_c = {fmt(fcWanted, 0)} Hz</button>
                 <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted, marginLeft: "auto" }}>
                   now {fmt(depth, 0)} mm{depthEqualising ? ` · ΔL estimate ≈ ${fmt(depthEqualising, 0)} mm` : ""}
                 </span>
               </div>
-              {(dlSolve || fcSolve) && (
+              {dlSolve && (
                 <div style={{ marginTop: 5, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
-                  {dlSolve && <div>{dlSolve.ok
+                  {dlSolve.ok
                     ? <><span style={{ color: C.inkMuted }}>min ΔL → depth </span>
                         <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
                         <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></>
-                    : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}</div>}
-                  {fcSolve && <div>{fcSolve.ok
-                    ? <><span style={{ color: C.inkMuted }}>f_c → depth </span>
-                        <span style={{ color: C.series3 }}>{fmt(fcSolve.depth, 1)} mm</span>
-                        <span style={{ color: C.inkMuted }}> → {fmt(fcSolve.fcLo, 0)}–{fmt(fcSolve.fcHi, 0)} Hz across cells</span></>
-                    : <span style={{ color: C.series5 }}>f_c out of reach — {fcSolve.reason === "too low"
-                        ? `${fmt(fcSolve.bound, 0)} Hz is the floor at ${fcSolve.at} mm depth`
-                        : `${fmt(fcSolve.bound, 0)} Hz is the ceiling at ${fcSolve.at} mm depth — the cutoff has a real peak, see the notes`}</span>}</div>}
-                  {/* WHAT THE SOLVE ACTUALLY BUILT. The cutoff solve often
-                      answers with a horn nobody would make, and the reason is
-                      structural: on the biradial mouth the aperture is fixed
-                      by the coverage arcs, so depth cannot move the mouth area
-                      or the expansion ratio — it moves only the path length.
-                      Asking for a cutoff is therefore only asking how LONG the
-                      horn must be, and a high cutoff answers with a very short
-                      body carrying a full-size mouth. Shown so it is visible
-                      here rather than discovered in CAD. */}
-                  {fcSolve && fcSolve.ok && (
-                    <div style={{ marginTop: 3, paddingLeft: 8, borderLeft: `2px solid ${C.border}` }}>
-                      <div><span style={{ color: C.inkMuted }}>mouth </span>{fmt(fcSolve.mouthArea / 100, 0)} cm²
-                        <span style={{ color: C.inkMuted }}> · expansion ratio </span>{fmt(fcSolve.ratio, 2)}×
-                        <span style={{ color: C.inkMuted }}> — neither moves with depth, both are set by the arcs</span></div>
-                      <div><span style={{ color: C.inkMuted }}>duct length </span>{fmt(fcSolve.Lmin, 0)}–{fmt(fcSolve.Lmax, 0)} mm
-                        <span style={{ color: C.inkMuted }}> · ΔL </span>
-                        <span style={{ color: fcSolve.dLfrac <= 0.125 ? C.series4 : fcSolve.dLfrac <= 0.25 ? C.series1 : C.series5 }}>
-                          {fmt(fcSolve.dL, 1)} mm</span>
-                        <span style={{ color: C.inkMuted }}> = {fmt(fcSolve.dLfrac * 8, 1)}× the λ/8 budget</span></div>
-                      {dlSolve && dlSolve.ok && Math.abs(fcSolve.depth - dlSolve.depth) > 20 && (
-                        <div style={{ color: C.series5 }}>
-                          {fmt(Math.abs(fcSolve.depth - dlSolve.depth), 0)} mm away from the ΔL optimum at {fmt(dlSolve.depth, 0)} mm —
-                          this is the pick-two-of-three: the mouth and the cutoff are both fixed, so depth has nothing left to spend on ΔL.
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}
                 </div>
               )}
               <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 5, lineHeight: 1.45 }}>
                 Pick any <strong style={{ color: C.inkDim }}>two of three</strong> — f_c, mouth size, ΔL-optimal depth — never all three: the ΔL rule
-                ties depth to the mouth radius while the expansion law ties mouth area to path length. Both solves reset the straight runs to 0 first,
-                so each is a repeatable reference point.
+                ties depth to the mouth radius while the expansion law ties mouth area to path length. This solve takes the ΔL leg, which leaves f_c
+                to fall out of the geometry as a readout. It resets the straight runs to 0 first, so it is a repeatable reference point.
+                {" "}The mouth area and the expansion ratio do not move with depth at all — both are set by the coverage arcs — so depth buys path
+                length and nothing else.
               </div>
             </div>
 
@@ -1797,7 +1863,14 @@ export default function GinkgoHorn() {
                 onChange={(e) => setBowTo(Math.max(parseFloat(e.target.value), bowFrom + 0.1))}
                 style={{ width: 110, accentColor: C.series1 }} />
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowTo.toFixed(2)}</span>
-              {[["throat half", 0, 0.5], ["divider region", 0, 0.35]].map(([l, a, b]) => (
+              {/* Presets all start at the throat and differ only in how far
+                  down the path they run. "divider region" is gone with the
+                  station it named: the inset now tapers linearly to zero at
+                  the mouth, so there is no fraction of the path at which the
+                  dividers stop and nothing for [0, 0.35] to have meant. The
+                  fractions replacing it say exactly what they are. */}
+              {[["throat half", 0, 0.5], ["throat third", 0, 1 / 3],
+                ["throat quarter", 0, 0.25], ["throat fifth", 0, 0.2]].map(([l, a, b]) => (
                 <button key={l} onClick={() => { setBowFrom(a); setBowTo(b); }} disabled={!lengthenOn}
                   style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
               ))}
