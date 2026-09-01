@@ -366,6 +366,16 @@ export default function GinkgoHorn() {
   // so the choice is a deliberate trade of phase error against how the part
   // looks and prints, not an oversight.
   const [lengthLobes, setLengthLobes] = useState(1);
+  // The solver ranks on wall spread, which prefers more lobes on every
+  // geometry tried, so left free it lands on 2 almost every time. The lobe
+  // count is not purely an acoustic variable, though: a second hump puts a
+  // reversal in the WIDE part of the passage, and wall spread cannot see
+  // that, because it measures the length each wall fibre has run by the
+  // MOUTH and a reversal cancels in that total whether or not the wavefront
+  // recovered on the way. So the count stays the owner's to set and the
+  // solver searches direction and region around it. Locked by default;
+  // unlocking is one click and the measured cost of the lock is printed.
+  const [lobesLocked, setLobesLocked] = useState(true);
   const [bowSolve, setBowSolve] = useState(null);
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
@@ -1757,10 +1767,17 @@ export default function GinkgoHorn() {
               {/* the whole trade is discrete and small, so it can simply be
                   enumerated and measured rather than dialled by hand */}
               <button disabled={!lengthenOn} onClick={() => {
-                const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, { lobeSet: [1, 2] });
-                setBowSolve(r);
+                const lobeSet = lobesLocked ? [lengthLobes] : [1, 2];
+                const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, { lobeSet });
+                setBowSolve({ ...r, lockedTo: lobesLocked ? lengthLobes : null });
                 if (r.ok) { setLengthDir(r.best.dir); setLengthLobes(r.best.lobes); setBowFrom(r.best.uStart); setBowTo(r.best.uEnd); }
               }} style={{ ...btn(false, C.series3), opacity: lengthenOn ? 1 : 0.4 }}>solve the bow</button>
+              {/* the count is a shape decision as much as an acoustic one, so
+                  the solver is not allowed to overrule it unless asked */}
+              <button disabled={!lengthenOn} onClick={() => setLobesLocked(!lobesLocked)}
+                style={{ ...btn(lobesLocked, C.series6), opacity: lengthenOn ? 1 : 0.4 }}>
+                {lobesLocked ? `lobes locked at ${lengthLobes}` : "lobes free to solve"}
+              </button>
               {lengthenOn && map && map.lengthen && map.lengthen.onAxis > 0 && (
                 <span style={{ fontFamily: C.mono, fontSize: 10, color: C.series5 }}>
                   {map.lengthen.onAxis} duct(s) on the axis — no symmetric bow exists for them
@@ -1809,6 +1826,12 @@ export default function GinkgoHorn() {
                       <span style={{ color: C.series3 }}>{bowSolve.best.dir}, {bowSolve.best.lobes} lobe{bowSolve.best.lobes > 1 ? "s" : ""}, region [{bowSolve.best.uStart}, {bowSolve.best.uEnd}]</span>
                       <span style={{ color: C.inkMuted }}> — lowest wall spread that stays inside the overlap floor</span></div>
                   : <div style={{ color: C.series5 }}>no candidate qualified — {bowSolve.reason}</div>}
+                <div style={{ color: C.inkMuted }}>
+                  {bowSolve.lockedTo == null
+                    ? "searched direction × lobes × region — the lobe count was free to move"
+                    : `searched direction × region at ${bowSolve.lockedTo} lobe${bowSolve.lockedTo > 1 ? "s" : ""} — the count was held, not solved`}
+                  {" "}· {bowSolve.considered} built, {bowSolve.measured.length} taken through to clearance
+                </div>
                 {/* the whole measured set, so the trade is visible rather than
                     hidden behind one answer */}
                 {bowSolve.measured.map((m, k) => (
@@ -1836,6 +1859,16 @@ export default function GinkgoHorn() {
               world axis does not, and is not offered. Short axis is the cheaper turn acoustically: a duct of width w turning through θ puts w·θ more
               length on its outer wall than its inner, so bending across the short dimension of a 2:1 cell nearly halves that — measured 29.1 mm
               against radial's 37.1 mm. It buys that with clearance, which is why both are here and why the readout above shows them together.
+              <br />
+              <strong style={{ color: C.inkDim }}>Solve the bow</strong> builds every combination of those knobs, measures each one, ranks them on
+              wall spread and then measures duct clearance on the best four, taking the lowest-spread candidate that stays under 2 mm of overlap and
+              actually reaches the target length. With <strong style={{ color: C.inkDim }}>lobes locked</strong> it searches direction and region at
+              the count you set and leaves that count alone; unlocked it also tries the other count, and will almost always come back with 2, because
+              wall spread prefers more lobes on every geometry measured. That preference is real but partial: wall spread is the length each wall
+              fibre has run <em>by the mouth</em>, and a reversing bend cancels in that total whether or not the wavefront recovered in between,
+              while the second hump sits further down the passage where the section is wider. Measured at 6×3, 90°×40°, 480 mm arc, depth 320 mm the
+              lock costs about a fifth: the same winning direction and region — short axis, [0.30, 0.95] — at 5.37 mm of wall spread against 4.42,
+              with 13.8 mm of bow amplitude against 7.0 and the same 1.9 mm of overlap.
             </div>
           </div>
 
