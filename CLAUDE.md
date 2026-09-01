@@ -639,6 +639,59 @@ exists.
   absolute error on a random 11x11, and 105 mm of surface residual before
   the fix. The residual check caught it; a fixed-tolerance "looks close"
   check would not have, because small systems often pivot trivially.
+- **THE COPED-JOINT BULGE IS BUILT, and the union identity held to 4e-16.**
+  `bulge: { amp }` bows every INTERIOR mouth-cell edge into its neighbour
+  with a sine lobe in (u,v) space — zero at the corners, mm converted per
+  edge through the measured local metric, clamped to 0.45 of a cell pitch —
+  and the swept loft carries it down the whole path, so ducts overlap
+  toward the mouth and meet at knife edges. Measured at 6x3, 90x40, depth
+  320, amp 5: `mouthAreaTotal` (the union, summed from unbulged shares)
+  invariant to 4.4e-16 relative; the per-cell sum double-counts 11.28%; the
+  interior-cell excess matches the (2/pi)·a·E sine-lobe closed form to 4%;
+  corners and throat ring at exactly 0; both mirrors at 8e-11 mm2. fc rises
+  2.19% against the beta/(2 ln rho) estimate's 2.27% — the law lands on the
+  bulged outline (fc re-derives through the closed-form solver to 1e-9 once
+  the throat open area is measured on the RING, not taken from the layout's
+  2-D bookkeeping — the two differ at discretisation level). Flow mode
+  ignores the bulge entirely: a shared boundary point cannot take two
+  targets. STL stays manifold and STEP valid, because the corners survive.
+- **OVERLAP INSIDE A JOINT RUN IS ENGAGEMENT, NOT A DEFECT, and the split
+  is computed, not assumed.** `ductClearance(rows, { jointAware })` walks
+  each pair back from the mouth: the maximal contiguous contact run ending
+  at the mouth is that pair's JOINT; its first station is the knife edge;
+  everything else stays defect. Without a bulge the run degenerates to the
+  mouth station alone and every statistic reduces EXACTLY to the old form
+  (verified to 1e-12). Measured at amp 5: all 27 pairs engaged, knife at
+  stations 30-31 of 32, 10 mm of engagement — while the defect overlap
+  reads 2.06 mm against 2.03 unbulged, i.e. the pre-existing swept-mode
+  interpenetration is still reported and the joint is not. The RAW overlap
+  would have read 4.75 mm and pointed at the wrong station. `thinBand`
+  rides in the same pass: a defect gap in (0, band) is a wall sliver too
+  thin to print — 17 pair-stations under 1 mm at the 320-depth defaults.
+- **THE SEPARATION SOLVER IS A CONTACT-CHAIN ITERATION, because pairwise
+  pushes diffuse and one shared knob is non-monotone.** Three measured
+  facts drove the design. (1) Uniform radial spread improves the worst gap
+  only to about -1.5 mm at ~2 mm of amplitude and then WORSENS it —
+  monotonically to -7.4 mm at 40 — because near the throat the ducts almost
+  tile: past a point every duct is pushed into its other neighbours and the
+  bent paths tilt sections into new contacts. So "uniform" is a SCAN for
+  the best single amplitude, and it says when that knob cannot fix the
+  geometry. (2) Naive per-pair half-deficit pushes oscillate between -5 and
+  -1.3 mm and stall near -0.6 after 16 rounds: a whole row is over-packed,
+  every push steals the next pair's room, and the iteration diffuses like
+  Jacobi. (3) The chain has an exact answer: walk each row/column, sum the
+  deficits, displace each cell by the mean-centred cumulative — ends move
+  out, middle barely moves, every pair opens by its deficit. Chain-resolved
+  `solveSeparation` mode "nudge" took the recorded 6x3/90x40/d320/T0.7
+  interpenetration from -1.92 mm to +0.16 mm in 15 rounds (~5 s at 24
+  stations) with dL PRESERVED (2.13 -> 2.06), mirrors at 3e-11, ends
+  pinned at 5e-14, and lengthening re-equalising on top to dL 0.006. It
+  returns the BEST state visited, not the last — the iteration flip-flops
+  at the threshold — and annealing the relaxation was tried and REMOVED
+  (0.85/iter decays too fast; measured +0.29 un-annealed against +0.04).
+  Higher floors saturate honestly: floor 1.0 reaches +0.73 at the 40 mm
+  amplitude cap with dL 10.6 — the throat region genuinely runs out of
+  room, and the report says so instead of pretending.
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now

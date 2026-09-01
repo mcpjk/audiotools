@@ -2095,5 +2095,191 @@ head("STEP export (AP214 B-spline solids)");
     `worst ${(worstCapExcess * 100).toFixed(1)}% of the ring-spread bound`);
 }
 
+head("Coped joints (mouth-tile bulge)");
+{
+  const t = 0.4, ST = 32;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  const base = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    sectionMode: "swept", stations: ST, depth: 320, profileT: 0.7,
+    keepGeometry: true, computeClearance: false,
+  };
+  const m0 = M.mapThroatToMouth(th, base);
+  const m5 = M.mapThroatToMouth(th, { ...base, bulge: { amp: 5 } });
+
+  // the union identity: interior-edge symmetric bulges trade area pairwise,
+  // so the aperture total must not move at all
+  check("the union of bulged tiles IS the tiled aperture",
+    Math.abs(m5.mouthAreaTotal - m0.mouthAreaTotal) / m0.mouthAreaTotal, 0, 1e-9);
+  checkTrue("the per-cell sum double-counts the joints",
+    m5.mouthAreaSum > m5.mouthAreaTotal && m5.bulge.doubleCountPct > 5,
+    `${m5.bulge.doubleCountPct.toFixed(2)}% of the sum is double-counted at 5 mm`);
+
+  // both invariants the construction promised
+  let cworst = 0, tworst = 0;
+  for (const r5 of m5.rows) {
+    const r0 = m0.rows.find((x) => x.id === r5.id);
+    for (const k of [0, 16, 32, 48])
+      cworst = Math.max(cworst, Math.hypot(...r5.sched[ST].pts[k].map((v, i) => v - r0.sched[ST].pts[k][i])));
+    for (let k = 0; k < 64; k++)
+      tworst = Math.max(tworst, Math.hypot(...r5.sched[0].pts[k].map((v, i) => v - r0.sched[0].pts[k][i])));
+  }
+  check("mouth-ring corners do not move (corner maps to corner)", cworst, 0, 1e-9, "mm");
+  check("the throat ring is untouched", tworst, 0, 1e-12, "mm");
+
+  // symmetric exchange needs symmetric lobes
+  const A5 = (i, j) => m5.rows.find((r) => r.i === i && r.j === j).mouthArea;
+  checkTrue("bulged areas keep both mirrors",
+    Math.abs(A5(0, 0) - A5(5, 0)) < 1e-8 && Math.abs(A5(0, 0) - A5(0, 2)) < 1e-8,
+    `x ${Math.abs(A5(0, 0) - A5(5, 0)).toExponential(1)}, y ${Math.abs(A5(0, 0) - A5(0, 2)).toExponential(1)} mm2`);
+
+  // a sine lobe of amplitude a over an edge of length E carries (2/pi) a E;
+  // an interior cell bulges all four edges
+  const rc = m5.rows.find((r) => r.i === 2 && r.j === 1);
+  const excess = rc.mouthArea - rc.mouthAreaTiled;
+  const expect = (2 / Math.PI) * 5 * (2 * (m5.mouthWEff / 6) + 2 * (m5.mouthHEff / 3));
+  checkTrue("interior-cell excess matches the sine-lobe closed form",
+    excess / expect > 0.9 && excess / expect < 1.15,
+    `${excess.toFixed(1)} mm2 against ${expect.toFixed(1)} predicted (${(excess / expect).toFixed(3)}x)`);
+
+  // the law lands on the bulged outline: re-derive fc from the MEASURED
+  // rings — throat open area by insetting the throat ring t/2 per shared
+  // side, mouth area from the bulged mouth ring — through the closed-form
+  // solver, independently of the profile's own bookkeeping. (Not the
+  // layout's 2-D open area: the law is written on the sampled ring, and the
+  // two open-area evaluations differ at discretisation level.)
+  const rim = th.cells.find((cc) => cc.id === rc.id).rimSide || [false, false, false, false];
+  const A0 = M.polyArea3(M.insetSection3(rc.sched[0].pts, rim.map((isRim) => (isRim ? 0 : t / 2))));
+  const AL = M.polyArea3(rc.sched[ST].pts);
+  const fcRe = M.fcForHypexM(M.solveHypexM(Math.sqrt(AL / A0), rc.Lpath, 0.7), c);
+  check("k = 1 still lands on the (bulged) mouth: fc re-derives", fcRe, rc.profFc, rc.profFc * 1e-6, "Hz");
+  // and fc must RISE: same throat, bigger per-cell mouth, same length
+  const shift = m5.profFcMin / m0.profFcMin - 1;
+  const beta = m5.bulge.doubleCountPct / 100;
+  const rho = Math.sqrt(m0.mouthAreaTotal / th.openTotal);
+  const est = Math.log(1 + beta) / (2 * Math.log(rho));
+  checkTrue("fc rises by about beta / (2 ln rho)",
+    shift > 0 && shift / est > 0.5 && shift / est < 2,
+    `${(shift * 100).toFixed(2)}% measured against ${(est * 100).toFixed(2)}% estimated`);
+
+  // joint-aware clearance: exact reduction without a bulge, engagement with
+  const cl0 = M.ductClearance(m0.rows);
+  const cl0j = M.ductClearance(m0.rows, { jointAware: true });
+  checkTrue("without a bulge, joint-aware clearance reduces exactly",
+    Math.abs(cl0.overlap - cl0j.overlap) < 1e-12 && Math.abs(cl0.minMid - cl0j.minMid) < 1e-12
+    && cl0j.joint.engaged === 0, "");
+  const cl5 = M.ductClearance(m5.rows, { jointAware: true });
+  const cl5raw = M.ductClearance(m5.rows);
+  checkTrue("5 mm of bulge engages every interior pair",
+    cl5.joint.engaged === cl5.joint.pairs && cl5.joint.knifeMax < ST,
+    `${cl5.joint.engaged}/${cl5.joint.pairs} at stations ${cl5.joint.knifeMin}-${cl5.joint.knifeMax} of ${ST}, ${cl5.joint.engageMax.toFixed(1)} mm deep`);
+  checkTrue("the joint is engagement, not defect: defect overlap stays put",
+    Math.abs(cl5.overlap - cl0.overlap) < 0.5 && cl5raw.overlap > cl5.overlap + 1,
+    `defect ${cl5.overlap.toFixed(2)} vs ${cl0.overlap.toFixed(2)} unbulged; raw would read ${cl5raw.overlap.toFixed(2)}`);
+
+  // flow mode: a shared boundary point cannot take two bulged targets
+  const f0 = M.mapThroatToMouth(th, { ...base, sectionMode: "flow" });
+  const f5 = M.mapThroatToMouth(th, { ...base, sectionMode: "flow", bulge: { amp: 5 } });
+  checkTrue("flow mode ignores the bulge entirely",
+    f5.bulge === null && Math.abs(f5.mouthAreaSum - f0.mouthAreaSum) < 1e-9
+    && Math.abs(f5.dL - f0.dL) < 1e-12, "");
+
+  // the exports must survive: corners survive, so the 4-side ring structure
+  // and the curved-box STEP topology survive with them
+  const solids = M.ductSolids(th, m5, { t });
+  checkTrue("bulged ducts still mesh manifold", solids.every((sd) => sd.manifold.ok),
+    `${solids.length} ducts`);
+  const step5 = M.buildSTEP(th, m5, { t, name: "bulged" });
+  const integ5 = M.stepIntegrity(step5.text);
+  checkTrue("bulged ducts still export valid STEP",
+    step5.checks.residual < 1e-9 && step5.checks.edgePairing && integ5.ok,
+    `residual ${step5.checks.residual.toExponential(1)} mm, ${integ5.entities} entities`);
+}
+
+head("Duct separation (field and solver)");
+{
+  const t = 0.4, ST = 24;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  const opts = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    sectionMode: "swept", stations: ST, depth: 320, profileT: 0.7,
+    keepGeometry: true, computeClearance: false,
+  };
+  const m0 = M.mapThroatToMouth(th, opts);
+  const cl0 = M.ductClearance(m0.rows, { thinBand: 1.0 });
+  checkTrue("the test case genuinely interpenetrates without help",
+    cl0.overlap > 1.5, `${cl0.overlap.toFixed(2)} mm at station ${cl0.overlapAt}`);
+  checkTrue("the thin-wall band sees slivers on the baseline",
+    cl0.thin.count > 0 && cl0.thin.worst > 0 && cl0.thin.worst < 1.0,
+    `${cl0.thin.count} pair-stations under 1 mm, worst ${cl0.thin.worst.toFixed(2)} mm`);
+
+  // the field itself: a single explicit displacement, measured
+  const one = {};
+  const rc = m0.rows.find((r) => r.i === 2 && r.j === 1);
+  one[rc.id] = { dx: 0, dy: 1, amp: 5 };
+  const m1 = M.mapThroatToMouth(th, { ...opts, separate: { amps: one, uStart: 0.1, uEnd: 0.9, lobes: 1 } });
+  const r1 = m1.rows.find((r) => r.id === rc.id);
+  let maxDisp = 0;
+  for (let q = 0; q <= ST; q++)
+    maxDisp = Math.max(maxDisp, Math.hypot(...r1.sched[q].origin.map((v, i) => v - rc.sched[q].origin[i])));
+  checkTrue("a 5 mm separation displaces the centreline by about 5 mm",
+    maxDisp > 4.5 && maxDisp < 5.5, `${maxDisp.toFixed(2)} mm at peak`);
+  let endDrift = 0;
+  for (let k = 0; k < 64; k += 4) {
+    endDrift = Math.max(endDrift, Math.hypot(...r1.sched[0].pts[k].map((v, i) => v - rc.sched[0].pts[k][i])));
+    endDrift = Math.max(endDrift, Math.hypot(...r1.sched[ST].pts[k].map((v, i) => v - rc.sched[ST].pts[k][i])));
+  }
+  check("both end rings stay pinned under separation", endDrift, 0, 1e-12, "mm");
+  checkTrue("only the displaced cell moved", m1.separate.cells === 1, "");
+
+  // the chain-resolved solver on the recorded 2 mm interpenetration
+  const n = M.solveSeparation(th, opts, { floor: 0.2, mode: "nudge", maxIter: 20 });
+  checkTrue("nudge clears the recorded interpenetration to the floor",
+    n.ok && n.gapBefore < -1.5 && n.gapAfter >= 0.15,
+    `${n.gapBefore.toFixed(2)} -> ${n.gapAfter.toFixed(2)} mm in ${n.iters} rounds, amp ${n.ampMax.toFixed(1)} mm`);
+  const byIJ = {};
+  for (const r of m0.rows) byIJ[`${r.i},${r.j}`] = r.id;
+  let asym = 0;
+  for (const r of m0.rows) {
+    const a = n.amps[r.id] ? n.amps[r.id].amp : 0;
+    const bx = n.amps[byIJ[`${5 - r.i},${r.j}`]], by = n.amps[byIJ[`${r.i},${2 - r.j}`]];
+    asym = Math.max(asym, Math.abs(a - (bx ? bx.amp : 0)), Math.abs(a - (by ? by.amp : 0)));
+  }
+  check("the solved field keeps both mirrors", asym, 0, 1e-8, "mm");
+  // the result must survive an independent rebuild + measurement
+  const sep = { amps: n.amps, uStart: n.uStart, uEnd: n.uEnd, lobes: 1 };
+  const mv = M.mapThroatToMouth(th, { ...opts, separate: sep });
+  const clv = M.ductClearance(mv.rows, { thinBand: 0.15 });
+  check("independent re-measure returns the solver's gap", clv.minMid, n.gapAfter, 1e-9, "mm");
+  checkTrue("the slivers thinner than the floor are gone", clv.thin.count === 0, "");
+  // separation composes with length equalisation
+  const ml = M.mapThroatToMouth(th, { ...opts, separate: sep, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } });
+  checkTrue("lengthening re-equalises the separated paths", ml.dL < 0.05,
+    `dL ${ml.dL.toFixed(3)} mm with both fields on`);
+
+  // the cheap mode is honest about its limit on this case
+  const u = M.solveSeparation(th, opts, { floor: 0.5, mode: "uniform" });
+  checkTrue("uniform reports its best and points at nudge",
+    !u.ok && u.gapAfter > u.gapBefore && /nudge/.test(u.reason),
+    `best ${u.gapAfter.toFixed(2)} mm at ${u.ampMax.toFixed(1)} mm spread`);
+
+  // and the two features compose: separation under a bulge clears the defect
+  // without disturbing a single joint
+  const nb = M.solveSeparation(th, { ...opts, bulge: { amp: 5 } }, { floor: 0.2, mode: "nudge", maxIter: 20 });
+  const mb = M.mapThroatToMouth(th, { ...opts, bulge: { amp: 5 }, separate: { amps: nb.amps, uStart: nb.uStart, uEnd: nb.uEnd, lobes: 1 } });
+  const cb = M.ductClearance(mb.rows, { jointAware: true });
+  checkTrue("separation under a bulge keeps every joint engaged",
+    cb.joint.engaged === cb.joint.pairs && nb.gapAfter > 0,
+    `defect ${nb.gapBefore.toFixed(2)} -> ${nb.gapAfter.toFixed(2)} mm, ${cb.joint.engaged}/${cb.joint.pairs} joints`);
+}
+
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
