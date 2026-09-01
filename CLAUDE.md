@@ -686,6 +686,25 @@ exists.
   would have read 4.75 mm and pointed at the wrong station. `thinBand`
   rides in the same pass: a defect gap in (0, band) is a wall sliver too
   thin to print — 17 pair-stations under 1 mm at the 320-depth defaults.
+- **THE DEFECT METRIC HAS A MEASURED MOUTH BOUNDARY AND NO THROAT ONE, and
+  at the 2026-09-01 defaults that is what the separation solve is actually
+  chasing.** `ductClearance` excludes only station 0 and the last station
+  outright; on the mouth side `jointAware` additionally walks back the
+  contiguous contact run and calls it engagement, so the mouth knife edge is
+  COMPUTED per pair. There is no mirror of that at the throat, where the
+  cells also tile by construction. Measured at 6x3, 90x0, 560x250, depth
+  300, T 0.7, no bow, no separation — defect gap by station:
+    u      0.000  0.042  0.083  0.167  0.250  0.500  0.750  0.958  1.000
+    gap    (end)  -0.002 +0.046 +1.768 +3.828 13.647 21.518 +9.249 (end)
+  End rings measure -4.4e-12 and -3.2e-14 mm, i.e. exact tiling. So
+  `minMid` is -0.002 mm AT STATION 1 — the throat knife edge bleeding one
+  station in at 24 stations, not a defect — and a 0.5 mm floor therefore
+  fires on it. Both modes then move material to "fix" it: uniform reaches
+  +0.556 mm but costs dL 25.52 -> 22.49, nudge reaches +0.455 for dL 25.52
+  -> 25.47. **Excluding station 1 would not by itself settle it** — station
+  2 reads +0.046 mm, still under any usable floor, because the ducts have
+  not had path length to open yet. The boundary wanted is "where the ducts
+  have separated", not a fixed station count.
 - **THE SEPARATION SOLVER IS A CONTACT-CHAIN ITERATION, because pairwise
   pushes diffuse and one shared knob is non-monotone.** Three measured
   facts drove the design. (1) Uniform radial spread improves the worst gap

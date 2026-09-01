@@ -424,8 +424,12 @@ export default function GinkgoHorn() {
   // WHERE the bow sits, as a fraction of each cell's own path. The straight
   // runs are excised from this on top, per cell, inside the model — a run
   // asked to be straight is not a place to put a bow.
+  // Defaults to the throat fifth: a narrower region is a SMALLER bow that
+  // turns harder (amplitude goes as sqrt(span), curvature as span^-1.5), and
+  // the measured wall spread falls with it too — 17.44 mm at throat half
+  // against 15.16 at throat fifth, for 46.8 mm of amplitude against 25.6.
   const [bowFrom, setBowFrom] = useState(0);
-  const [bowTo, setBowTo] = useState(0.5);
+  const [bowTo, setBowTo] = useState(0.2);
   // ONE lobe by default, at the owner's call: three humps read as a
   // corrugation rather than a duct and are not commercially acceptable, and
   // one is the shape a real part wants. Two is offered because the measured
