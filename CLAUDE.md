@@ -37,6 +37,7 @@ annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
 ginkgo-horn.html          → src/ginkgo-main.jsx      → GinkgoHorn
+ginkgo-cockpit.html       → src/ginkgo-cockpit-main.jsx → GinkgoCockpit
 src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -48,6 +49,14 @@ wrangler.jsonc            Cloudflare deploy + custom domain
 Each tool is its own real HTML entry point. There is **no client-side router**,
 and that is deliberate: direct links, bookmarks and refreshes work with no
 server rewrite rules. Do not introduce one.
+
+**`ginkgo-cockpit.html` is a DELIBERATE DUPLICATE of the Ginkgo tool** — the
+same physics, state and readouts in a two-pane "cockpit" layout, kept as a
+separate page so the owner can compare the two before choosing one. The
+classic page stays canonical until that choice; a change to any NUMBER or
+BEHAVIOUR must land in both files (everything above `return (` is copied
+verbatim between them — keep it that way), while layout changes belong to
+the cockpit alone. When the owner picks, the loser is deleted, not kept.
 
 ## Commands
 
