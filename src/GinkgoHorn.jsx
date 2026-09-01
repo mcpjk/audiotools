@@ -6,6 +6,26 @@ import * as G from "./hgrid-model.js";
 // GINKGO MULTICELL HORN
 // ═══════════════════════════════════════════════════════════════════════════
 //
+// THE LAYOUT IS TWO PANES, and the split is the point. The LEFT pane scrolls
+// and carries the inputs as eight numbered stages in DESIGN CHRONOLOGY —
+// driver, throat partition, coverage & mouth, expansion law, depth & path,
+// path lengthening, a ghost slot for the planned coped joints, export. Each
+// stage houses its own diagram: the throat plan sits in the partition stage,
+// the mouth plan in the mouth stage, the path-length chart in the lengthening
+// stage, because a drawing belongs beside the inputs that shape it.
+//
+// The RIGHT pane is PINNED: the horn's name and solve status, the warnings, a
+// tabbed viewport (3-D ducts / horizontal section / cell table), and a verdict
+// strip that scrolls independently underneath. Those verdicts — flare cutoff,
+// loading limit, pattern per axis, f1, dL, wall spread, and the physical form
+// — are what you judge a candidate horn by, so they stay on screen whatever
+// the left side is editing. Below ~1020 px the two panes stack into one
+// column, which is the old single-column page.
+//
+// This replaced a single scrolling column in which every readout was one
+// scroll away from the control that moved it. Both layouts were built and
+// compared side by side before this one was chosen; the other is deleted.
+//
 // Named for the leaf: a round stem that fans out into a broad, gently folded
 // blade. The tool partitions a compression driver's round exit into a
 // structured ROW-AND-COLUMN grid of exactly equal open area, then routes each
@@ -310,7 +330,44 @@ function Solving({ label = "solving" }) {
   );
 }
 
+// One numbered stage card in the left pane. The number is chronology, not
+// decoration: each stage consumes what the one before it fixed.
+function Stage({ n, title, why, ghost, children }) {
+  return (
+    <section style={{
+      ...card, marginBottom: 0,
+      ...(ghost ? { borderStyle: "dashed", background: "transparent" } : {}),
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 9, marginBottom: 10 }}>
+        <span style={{
+          fontFamily: C.mono, fontSize: 10, color: C.accent, flex: "none",
+          border: `1px ${ghost ? "dashed" : "solid"} ${C.accent}`, borderRadius: "50%",
+          width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center",
+          opacity: ghost ? 0.6 : 1,
+        }}>{n}</span>
+        <span style={{ ...secTitle, marginBottom: 0, opacity: ghost ? 0.7 : 1 }}>{title}</span>
+        {why && <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: "auto", textAlign: "right", maxWidth: "46%", lineHeight: 1.35 }}>{why}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export default function GinkgoHorn() {
+  // ── layout state ──
+  // Which view the pinned pane shows, and whether the viewport is too narrow
+  // for two panes at all — below the breakpoint the panes stack into one
+  // scrolling column.
+  const [view, setView] = useState("ducts");
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 1020px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1020px)");
+    const on = (e) => setNarrow(e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
   const [exitAngle, setExitAngle] = useState(8);
@@ -1234,28 +1291,25 @@ export default function GinkgoHorn() {
   const presets = [["1″", 25.4], ["1.4″", 35.5], ["1.5″", 38.1], ["2″", 50.8]];
   const expBtn = { ...btn(false, C.series2), color: C.series2, borderColor: C.border, fontSize: 11, padding: "4px 10px" };
 
-  return (
-    <div style={{ background: C.page, color: C.ink, fontFamily: C.sans, padding: "16px 18px", minHeight: "100vh", boxSizing: "border-box" }}>
-      <style>{SPIN_CSS}</style>
-      <div style={{ marginBottom: 14 }}>
-        <h1 style={{ fontFamily: C.mono, fontSize: 16, fontWeight: 600, color: C.accent, margin: 0, letterSpacing: "0.05em" }}>
-          GINKGO MULTICELL HORN
-        </h1>
-        <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>
-          Equal-area row-and-column partition of a compression driver exit · independent grid-line curvature · per-cell ducts under an imposed Hypex expansion, routed to a biradial coverage mouth
-        </div>
-      </div>
+  // ── layout chrome ──────────────────────────────────────────────────────────
+  const vGroup = { fontSize: 10, fontWeight: 600, color: C.inkDim, textTransform: "uppercase", letterSpacing: "0.08em", margin: "10px 2px 6px" };
+  const tabBtn = (on) => ({
+    fontFamily: C.mono, fontSize: 10, padding: "4px 11px", cursor: "pointer",
+    color: on ? C.accent : C.inkMuted, background: on ? C.panel : "transparent",
+    border: `1px solid ${on ? C.border : "transparent"}`, borderBottom: "none",
+    borderRadius: "4px 4px 0 0",
+  });
+  const hintStyle = { fontSize: 10, color: C.inkMuted, lineHeight: 1.5 };
 
-      {warnings.length > 0 && (
-        <div style={{ ...card, border: `1px solid ${C.series5}`, background: C.series5 + "10" }}>
-          {warnings.map((w, i) => <div key={i} style={{ fontSize: 12, color: C.series5, marginBottom: 4, lineHeight: 1.45 }}>⚠ {w}</div>)}
-        </div>
-      )}
+  // ── LEFT PANE — the design sequence ────────────────────────────────────────
+  const leftPane = (
+    <div style={{
+      ...(narrow ? {} : { overflowY: "auto", minHeight: 0 }),
+      padding: "12px 14px 20vh 14px", display: "flex", flexDirection: "column", gap: 12,
+    }}>
 
-      {/* DRIVER */}
-      <div style={card}>
-        <div style={secTitle}>Driver exit and material</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "0 12px" }}>
+      <Stage n={1} title="Driver & material" why="the physical givens — everything downstream starts from the exit">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "0 12px" }}>
           <div>
             <div style={{ display: "flex", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
               {presets.map(([l, v]) => (
@@ -1279,18 +1333,27 @@ export default function GinkgoHorn() {
             </div>
           </div>
         </div>
-      </div>
+      </Stage>
 
-      {/* TOPOLOGY */}
-      <div style={card}>
-        <div style={secTitle}>Topology</div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <Stage n={2} title="Throat partition" why="divide the exit into equal open areas — buy f₁ with rows, not columns">
+        <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
           {[["hgrid", "H-grid — one (i,j) index, 4 rim singularities"],
             ["ogrid", "O-grid — concentric rings, no singularities"]].map(([v, l]) => (
             <button key={v} onClick={() => setFamily(v)} style={{ ...btn(family === v, C.series4), fontSize: 11, padding: "5px 10px" }}>{l}</button>
           ))}
+          {family === "hgrid" && <>
+            <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 8 }}>shape order m</span>
+            {[1, 2, 3].map((d) => (
+              <button key={d} onClick={() => setShapeOrder(d)} style={btn(shapeOrder === d, C.series7)}>{d}</button>
+            ))}
+            <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11, marginLeft: 6 }}>
+              <input type="checkbox" checked={symmetric} onChange={(e) => setSymmetric(e.target.checked)} style={{ accentColor: C.series7 }} />
+              <span style={{ color: C.inkDim }}>both mirrors</span>
+            </label>
+            <button onClick={() => setRequest(null)} style={{ ...btn(false, C.series5), marginLeft: 4 }}>Reset to nominal</button>
+          </>}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "0 12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0 12px", marginBottom: 4 }}>
           {family === "hgrid" && <>
             <NumInput label="Columns n_cols" value={nc} onChange={(v) => setNc(Math.round(v))} min={2} max={16} step={1} accent={C.series4} />
             <NumInput label="Rows n_rows" value={nr} onChange={(v) => setNr(Math.round(v))} min={1} max={10} step={1} accent={C.series4} />
@@ -1310,53 +1373,18 @@ export default function GinkgoHorn() {
           </div>
           <div style={{ fontFamily: C.mono, fontSize: 11, lineHeight: 1.7, color: C.inkDim }}>
             {family === "hgrid" ? (<>
-              <div><span style={{ color: C.series4 }}>{cfg.nParams}</span> free parameters · <span style={{ color: C.series1 }}>{cfg.nConstraints}</span> constraints</div>
-              <div>spare <span style={{ color: cfg.spare >= 0 ? C.series3 : C.series5 }}>{cfg.spare}</span> · {cfg.nLon + cfg.nLat} line shapes</div>
-              <div style={{ color: C.inkMuted }}>{cfg.nClasses} distinct cells under the mirrors</div>
+              <div><span style={{ color: C.series4 }}>{cfg.nParams}</span> free · <span style={{ color: C.series1 }}>{cfg.nConstraints}</span> constraints · spare <span style={{ color: cfg.spare >= 0 ? C.series3 : C.series5 }}>{cfg.spare}</span></div>
+              <div style={{ color: C.inkMuted }}>{cfg.nClasses} distinct cells under the mirrors · {singular.length} singular vertices</div>
             </>) : (<>
-              <div><span style={{ color: C.series4 }}>{layout.mesh ? G.dofCount(layout.mesh) : 0}</span> node DOF</div>
-              <div style={{ color: C.inkMuted }}>comparison family — no line parameterisation</div>
+              <div><span style={{ color: C.series4 }}>{layout.mesh ? G.dofCount(layout.mesh) : 0}</span> node DOF · comparison family</div>
+              <div style={{ color: C.inkMuted }}>{singular.length} singular vertices</div>
             </>)}
-            <div style={{ color: C.inkMuted }}>{singular.length} singular vertices</div>
-            <div style={{ color: C.inkMuted, fontSize: 10, marginTop: 3, lineHeight: 1.4, fontFamily: C.sans }}>
-              Conformally natural α for a {fmt(mouthW / mouthH, 2)}:1 mouth is {fmt(G.scAlphaForAspect(mouthW / mouthH) * R2D, 1)}°, set by the
-              Schwarz–Christoffel elliptic modulus. The equal-arc formula is a seed, not a derivation.
-            </div>
           </div>
         </div>
-      </div>
 
-      {/* LINE SHAPES */}
-      <div style={card}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-          <span style={secTitle}>Grid-line shape — sliders are requests, not settings</span>
-          {family === "hgrid" && (
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, color: C.inkMuted }}>shape order m</span>
-              {[1, 2, 3].map((d) => (
-                <button key={d} onClick={() => setShapeOrder(d)} style={btn(shapeOrder === d, C.series7)}>{d}</button>
-              ))}
-              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, marginLeft: 4 }}>
-                T{cfg.orders.join(", T")}
-              </span>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11, marginLeft: 8 }}>
-                <input type="checkbox" checked={symmetric} onChange={(e) => setSymmetric(e.target.checked)} style={{ accentColor: C.series7 }} />
-                <span style={{ color: C.inkDim }}>enforce both mirror symmetries</span>
-              </label>
-              <button onClick={() => setRequest(null)} style={{ ...btn(false, C.series5), marginLeft: 6 }}>Reset to nominal</button>
-            </div>
-          )}
-        </div>
-
-        {family !== "hgrid" ? (
-          <div style={{ fontSize: 11, color: C.inkMuted, lineHeight: 1.5 }}>
-            The line parameterisation belongs to the H-grid: it needs one continuous latitude and longitude line across the whole disc.
-            An O-grid has rings and radials, not a single (i,j) index, so it has no grid lines to shape. It is here as the equal-N
-            comparison at the throat and is solved on its own node positions.
-          </div>
-        ) : (
+        {family === "hgrid" && (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${300}px, 1fr))`, gap: "0 20px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0 18px" }}>
               {groups.map((grp) => (
                 <div key={grp.name} style={{ marginBottom: 4 }}>
                   <div style={{ fontSize: 10, color: C.series7, fontFamily: C.mono, letterSpacing: "0.05em", margin: "6px 0 2px" }}>
@@ -1368,11 +1396,6 @@ export default function GinkgoHorn() {
                     const got = isAlpha ? pOut[i] * R2D : pOut[i];
                     const lim = l.kind === "pos" ? 1 : l.kind === "alpha" ? null : 0.6;
                     const moved = Math.abs(got - val) > (isAlpha ? 0.05 : 5e-4);
-                    // Per-slider reset. Every bow parameter is nominally zero, so on
-                    // those this is literally a zero button and says so; a position is
-                    // nominally its even spacing and alpha the equal-arc angle, and
-                    // zero is meaningless for one and outside the range of the other,
-                    // so there it returns that slider to its own nominal instead.
                     const nomVal = isAlpha ? nominal[i] * R2D : nominal[i];
                     const atNom = Math.abs(val - nomVal) <= (isAlpha ? 5e-3 : 5e-5);
                     return (
@@ -1395,7 +1418,7 @@ export default function GinkgoHorn() {
                               borderColor: atNom ? C.border : C.series5,
                               opacity: atNom ? 0.35 : 1, cursor: atNom ? "default" : "pointer",
                             }}>
-                            {nomVal === 0 ? "0" : "\u21ba"}
+                            {nomVal === 0 ? "0" : "↺"}
                           </button>
                         </div>
                         <input type="range"
@@ -1419,42 +1442,41 @@ export default function GinkgoHorn() {
               ))}
             </div>
 
-            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 6, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 4, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <button onClick={runOptimiser} disabled={running}
                 style={{ ...btn(true, C.series1), fontSize: 11, padding: "6px 14px", opacity: running ? 0.5 : 1 }}>
                 {running ? "Optimising…" : "Maximise min f₁"}
               </button>
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 {[["aspect", wAspect, setWAspect], ["twist", wTwist, setWTwist], ["correction", wCorrection, setWCorrection]].map(([l, v, set]) => (
                   <label key={l} style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 4, alignItems: "center" }}>
                     w<sub>{l}</sub>
                     <input type="number" value={v} min={0} max={5} step={0.1} onChange={(e) => set(parseFloat(e.target.value) || 0)}
-                      style={{ ...sInput, width: 56, padding: "3px 5px", fontSize: 11 }} />
+                      style={{ ...sInput, width: 52, padding: "3px 5px", fontSize: 11 }} />
                   </label>
                 ))}
                 <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 4, alignItems: "center" }}>
                   evals
                   <input type="number" value={maxEval} min={40} max={2000} step={20} onChange={(e) => setMaxEval(parseInt(e.target.value) || 160)}
-                    style={{ ...sInput, width: 64, padding: "3px 5px", fontSize: 11 }} />
+                    style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
                 </label>
               </div>
               <div style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted, marginLeft: "auto", textAlign: "right", lineHeight: 1.5 }}>
-                <div>objective J = {fmt(obj.J, 3)} · softmin f₁ {fmt(obj.soft, 2)} kHz</div>
-                <div>aspect {fmt(obj.aspectPenalty, 3)} · twist {fmt(obj.twistPenalty, 3)} · correction {fmt(obj.correctionPenalty, 3)}</div>
+                <div>J = {fmt(obj.J, 3)} · softmin f₁ {fmt(obj.soft, 2)} kHz</div>
                 {optState && <div style={{ color: C.series4 }}>{optState.evals} evaluations in {(optState.ms / 1000).toFixed(1)} s</div>}
               </div>
             </div>
 
-            <div style={{ marginTop: 8, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", fontFamily: C.mono, fontSize: 11 }}>
-              {stale && <Solving label="re-solving — figures below are the previous grid" />}
+            <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", fontFamily: C.mono, fontSize: 11 }}>
+              {stale && <Solving label="re-solving — figures show the previous grid" />}
               <span><span style={{ color: C.inkMuted }}>status </span>
                 <span style={{ color: solve.converged ? C.series4 : C.series5 }}>
                   {solve.converged
                     ? "equal-area solution found"
                     : `infeasible — showing ${fmt((solve.reachedFraction || 0) * 100, 0)}% of the request`}
                 </span></span>
-              <span><span style={{ color: C.inkMuted }}>area residual </span>{solve.residual.toExponential(2)}</span>
-              <span><span style={{ color: C.inkMuted }}>correction ‖p−p_req‖_W </span>
+              <span><span style={{ color: C.inkMuted }}>residual </span>{solve.residual.toExponential(2)}</span>
+              <span><span style={{ color: C.inkMuted }}>correction </span>
                 <span style={{ color: solve.correction > 0.2 ? C.series1 : C.ink }}>{fmt(solve.correction, 4)}</span></span>
               <span><span style={{ color: C.inkMuted }}>closest line spacing </span>
                 <span style={{ color: solve.monotone && solve.monotone.gap < 0.02 ? C.series5 : C.ink }}>
@@ -1462,105 +1484,18 @@ export default function GinkgoHorn() {
                     ? (solve.monotone.gap < 1e-3 ? solve.monotone.gap.toExponential(2) : solve.monotone.gap.toFixed(4))
                     : "—"}</span></span>
             </div>
-
-            <div style={{ marginTop: 8, fontSize: 10, color: C.inkMuted, lineHeight: 1.5 }}>
-              A slider states what you want; the solver returns the <em>nearest</em> parameter vector that still has equal areas, and both numbers
-              are shown above — request on the left, achieved on the right, in red when they differ. Positions are weighted cheap so they move
-              freely; bows are weighted expensive so the shape you asked for survives wherever the constraint leaves room. Unlike free nodes,
-              whole-line curvature <strong style={{ color: C.inkDim }}>cannot always reach equal area</strong>: when it cannot, the tool says so and names
-              the binding constraint rather than returning a converged-looking but distorted grid.
+            <div style={{ ...hintStyle, marginTop: 6 }}>
+              Sliders are <strong style={{ color: C.inkDim }}>requests</strong>: the solver returns the nearest parameter vector that still
+              has equal areas — request on the left, achieved on the right, red when they differ. Whole-line curvature can genuinely run
+              out; when it does, the tool names the binding constraint instead of returning a distorted grid.
             </div>
           </>
         )}
-      </div>
 
-      {/* HYPEX EXPANSION — the design intent, before any geometry */}
-      <div style={card}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-          <span style={{ ...secTitle, marginBottom: 0 }}>Hypex expansion</span>
-          <span style={{ fontSize: 10, color: C.inkMuted }}>T</span>
-          <input type="range" min={0} max={1} step={0.01} value={profileT}
-            onChange={(e) => setProfileT(parseFloat(e.target.value))}
-            style={{ width: 150, accentColor: C.series3 }} />
-          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
-            {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
-          </span>
-          <NumInput label="Cutoff f_c" value={fcWanted} onChange={setFcWanted} unit="Hz" min={20} max={20000} step={10} accent={C.series3} />
-        </div>
-        {href && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-            <Metric label="Acoustic throat" value={`${fmt(throat.openTotal / 100, 2)} cm²`}
-              sub={`summed open area · ⌀${fmt(2 * href.rt, 1)} mm equivalent`} />
-            <Metric label="Flare constant m" value={`${(href.m * 1000).toFixed(3)} /m`}
-              sub={`f_c = mc/2π at ${fmt(c, 1)} m/s`} />
-            {/* THROAT -> MOUTH -> THE LENGTH THAT PAIR NEEDS -> THE LENGTH YOU
-                HAVE. Read left to right that is the whole argument, and every
-                number in it now describes the horn being built. "Mouth area
-                needed" was removed at the owner's call — it was the 1-D
-                reference horn's aperture, several times the one the coverage
-                arcs specify — and the length metric beside it, which was the
-                length to THAT mouth, is re-keyed to this one. */}
-            {map && <Metric label="Mouth you have" value={`${fmt(map.mouthAreaTotal / 100, 0)} cm²`}
-              sub={`⌀${fmt(2 * Math.sqrt(map.mouthAreaTotal / Math.PI), 0)} mm equivalent · ${fmt(Math.sqrt(map.mouthAreaTotal / throat.openTotal), 2)}× on radius`}
-              color={C.series3} />}
-            {pathNeeded && <Metric label="Path needed for f_c"
-              value={pathNeeded.hi - pathNeeded.lo < 0.5
-                ? `${fmt(pathNeeded.lo, 0)} mm`
-                : `${fmt(pathNeeded.lo, 0)}–${fmt(pathNeeded.hi, 0)} mm`}
-              sub={`${fmt(fcWanted, 0)} Hz at T = ${fmt(profileT, 2)}, with this mouth`} color={C.series3} />}
-            {map && <Metric label="Path you have" value={`${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} mm`}
-              sub={!pathNeeded
-                ? "centreline length, throat to mouth"
-                : pathNeeded.clears
-                  ? `every cell clears it, the worst by ${fmt(-pathNeeded.worst, 0)} mm`
-                  : `worst cell short by ${fmt(pathNeeded.worst, 0)} mm`}
-              color={!pathNeeded ? C.series3 : pathNeeded.clears ? C.series4 : C.series5} />}
-          </div>
-        )}
-        {/* FLARE and LOADING live here, with f_c. PATTERN is per axis and
-            lives beside the arcs that set it — see the mouth card. Keeping
-            them apart is the point: they are three different questions and
-            reading them as one "cutoff" is exactly the trap. */}
-        {limits && (
-          <div style={{ marginTop: 8, padding: "7px 9px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4,
-            fontFamily: C.mono, fontSize: 11, display: "flex", gap: 18, flexWrap: "wrap" }}>
-            <span><span style={{ color: C.inkDim }}>FLARE CUTOFF </span>
-              <span style={{ color: C.series3 }}>
-                {limits.fcLo != null ? `${fmt(limits.fcLo, 0)}–${fmt(limits.fcHi, 0)} Hz` : "—"}</span>
-              <span style={{ color: C.inkMuted }}> · m·c/2π, the expansion rate alone</span></span>
-            <span><span style={{ color: C.inkDim }}>LOADING LIMIT </span>
-              <span style={{ color: C.series4 }}>{fmt(limits.loadHz, 0)} Hz</span>
-              <span style={{ color: C.inkMuted }}> · ⌀{fmt(limits.dEq, 0)} mm equivalent, circumference = λ</span></span>
-          </div>
-        )}
-        <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
-          <strong style={{ color: C.inkDim }}>f_c is the flare constant, not "the cutoff".</strong> It is m·c/2π — how fast the passage expands,
-          and nothing more. Whether the mouth is large enough to <em>load</em> at that frequency is the second question, answered above; whether it
-          is large enough to hold the <em>pattern</em> is the third, answered per axis beside the arcs that set it, because each axis holds its own
-          angle over its own width. The three routinely disagree by an order of magnitude at wide coverage: a horn can have a 500 Hz flare cutoff,
-          load comfortably to 312 Hz, and still lose 90° horizontal control above 1.4 kHz. That is not an inconsistency — it is what a small-mouthed
-          horn does, and it is why the three are reported separately and never merged.
-          <br />
-          The same calculation the standalone horn tool does, run on this multicell's <strong style={{ color: C.inkDim }}>acoustic</strong> throat —
-          the summed open area of the cells, not the driver's bore, because the dividers are in the way and the wave only sees what is left.
-          Two criteria compete for the mouth size: <em>loading</em> wants a mouth circumference of about λ at cutoff (⌀{fmt(href ? href.diaLoading : 0, 0)} mm here),
-          and <em>directivity</em> wants λ/sin(Θ/2) (⌀{fmt(href ? href.diaDirectivity : 0, 0)} mm). The larger binds. Note the direction:
-          <strong style={{ color: C.inkDim }}> wider coverage needs a smaller mouth</strong>, so it is the narrow-pattern horn that comes out enormous.
-          {" "}These two diameters are <strong style={{ color: C.inkDim }}>reference</strong> figures, not constraints: the mouth here comes from the
-          coverage arcs, and <strong style={{ color: C.inkDim }}>Path needed for f_c is keyed to that mouth</strong> — the length each cell needs to
-          reach its own aperture at the target flare rate — not to the reference horn's much larger one. It is the profile read backwards: the tool
-          normally solves m from (ratio, length) and reports f_c, and this solves length from (ratio, f_c) instead, so feeding the number back
-          returns the cutoff you asked for.
-        </div>
-      </div>
-
-      {/* THROAT + MOUTH */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 1fr) minmax(300px, 1.15fr)", gap: 14, marginBottom: 14 }}>
-        <div style={{ ...card, marginBottom: 0 }}>
+        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ ...secTitle, display: "flex", alignItems: "baseline", gap: 8 }}>
-              Throat plane · looking into the driver
-              {stale && <Solving />}
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+              throat plane · looking into the driver {stale && <Solving />}
             </span>
             <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11 }}>
               <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} style={{ accentColor: C.series4 }} />
@@ -1574,171 +1509,551 @@ export default function GinkgoHorn() {
             <span style={{ color: C.series5 }}>━ sets f₁_min</span>
             <span style={{ color: C.series6 }}>◎ singular vertex</span>
           </div>
+          <div style={{ marginTop: 4, fontFamily: C.mono, fontSize: 10, color: C.inkMuted, textAlign: "center" }}>
+            isodiametric ceiling {fmt(throat.f1ceiling / 1000, 2)} kHz · undivided exit {fmt(throat.fUndividedAz / 1000, 2)} kHz ·
+            gain {fmt(throat.f1min / throat.fUndividedAz, 2)}× of a {fmt(throat.f1ceiling / throat.fUndividedAz, 2)}× ceiling
+          </div>
         </div>
+      </Stage>
 
-        <div style={{ ...card, marginBottom: 0 }}>
-          <div style={{ ...secTitle, display: "flex", alignItems: "baseline", gap: 8 }}>
-            Mouth aperture · same colour identity
-            {stale && <Solving />}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "0 10px" }}>
-            <NumInput label="Coverage Θh" value={thetaH} onChange={setThetaH} unit="°" min={0} max={170} step={1} accent={C.accent} />
-            <NumInput label="Arc length h" value={arcH} onChange={setArcH} unit="mm" min={40} max={3000} step={5} accent={C.accent} />
-            <NumInput label="Coverage Θv" value={thetaV} onChange={setThetaV} unit="°" min={0} max={170} step={1} accent={C.series2} />
-            <NumInput label="Arc length v" value={arcV} onChange={setArcV} unit="mm" min={40} max={3000} step={5} accent={C.series2} />
-            <NumInput label="Axial depth" value={depth} onChange={setDepth} unit="mm" min={10} max={2000} step={5} />
-          </div>
-          {map && map.biradial && (
-            <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
-              <span><span style={{ color: C.inkMuted }}>radii </span>
-                <span style={{ color: C.ink }}>
-                  {isFinite(map.biradial.rH) ? `${fmt(map.biradial.rH, 0)}` : "flat"} h ·{" "}
-                  {isFinite(map.biradial.rV) ? `${fmt(map.biradial.rV, 0)}` : "flat"} v</span>
-                <span style={{ color: C.inkMuted }}> mm</span></span>
-              <span><span style={{ color: C.inkMuted }}>area </span>
-                <span style={{ color: C.ink }}>{fmt(map.mouthAreaTotal / 100, 0)} cm²</span>
-                <span style={{ color: C.inkMuted }}> · per-cell spread </span>
-                <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 4)}%</span></span>
-            </div>
-          )}
-          {/* PATTERN CONTROL, PER AXIS, beside the arcs that set it. An axis
-              holds its coverage angle only while the mouth measures about
-              λ/sin(Θ/2) across that axis, so each axis has its own limit from
-              its own chord and its own angle — and the two are usually far
-              apart. This is the criterion that governs at wide coverage, and
-              it is nothing to do with the flare cutoff. */}
-          {limits && (
-            <div style={{ marginTop: 6, padding: "6px 8px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4,
-              fontFamily: C.mono, fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <span style={{ color: C.inkDim }}>PATTERN HOLDS DOWN TO</span>
-              <span><span style={{ color: C.inkMuted }}>{fmt(thetaH, 0)}° horizontal </span>
-                {limits.patH
-                  ? <span style={{ color: C.series1 }}>{fmt(limits.patH, 0)} Hz</span>
-                  : <span style={{ color: C.inkMuted }}>flat axis — no angle stated</span>}
-                <span style={{ color: C.inkMuted }}> over {fmt(map.mouthWEff, 0)} mm</span></span>
-              <span><span style={{ color: C.inkMuted }}>{fmt(thetaV, 0)}° vertical </span>
-                {limits.patV
-                  ? <span style={{ color: C.series2 }}>{fmt(limits.patV, 0)} Hz</span>
-                  : <span style={{ color: C.inkMuted }}>flat axis — no angle stated</span>}
-                <span style={{ color: C.inkMuted }}> over {fmt(map.mouthHEff, 0)} mm</span></span>
-              <span style={{ color: C.inkMuted }}>λ/sin(Θ/2) across each axis — widen the arc to lower it</span>
-            </div>
-          )}
-          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-            The aperture is stated by what it has to deliver — a horizontal arc of Θh over its own length, and a vertical arc of Θv over
-            its own — and the two radii are <strong style={{ color: C.inkDim }}>independent</strong>. Θ = 0 on either axis makes that axis
-            flat, so a vertically straight-sided mouth is just Θv = 0. There is <strong style={{ color: C.inkDim }}>no apex</strong>: it was
-            an artifact of building the mouth as one spherical cap, which forced both curvatures to be the same number. Ducts arrive normal
-            to the surface, which is the direction the aperture itself points, so no common radiating centre is needed to define it.
-            Cells subdivide at equal <em>area</em> on both axes at every curvature — exactly equal when an axis is flat — which is what keeps
-            the expansion ratio identical across cells. Axial depth is the free variable the path optimiser will take over; for now set it
-            here or solve it from the cutoff below.
-          </div>
-          <div style={{ opacity: stale ? 0.35 : 1 }}>{mouthSVG()}</div>
-          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-            Choose the aperture from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement — the two coverage angles and the
-            arc length each needs — then equalise the paths <em>to</em> it. A surface shaped for routing convenience radiates its own curvature
-            error phase-coherently, and no EQ removes that, which is why the mouth is a constraint here and the connection to it is what gets solved.
-          </div>
+      <Stage n={3} title="Coverage & mouth" why="the aperture is stated by what it must deliver — two arcs, each with its own angle and length">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0 10px" }}>
+          <NumInput label="Coverage Θh" value={thetaH} onChange={setThetaH} unit="°" min={0} max={170} step={1} accent={C.accent} />
+          <NumInput label="Arc length h" value={arcH} onChange={setArcH} unit="mm" min={40} max={3000} step={5} accent={C.accent} />
+          <NumInput label="Coverage Θv" value={thetaV} onChange={setThetaV} unit="°" min={0} max={170} step={1} accent={C.series2} />
+          <NumInput label="Arc length v" value={arcV} onChange={setArcV} unit="mm" min={40} max={3000} step={5} accent={C.series2} />
         </div>
+        {map && map.biradial && (
+          <div style={{ marginTop: 2, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+            <span><span style={{ color: C.inkMuted }}>radii </span>
+              <span style={{ color: C.ink }}>
+                {isFinite(map.biradial.rH) ? `${fmt(map.biradial.rH, 0)}` : "flat"} h ·{" "}
+                {isFinite(map.biradial.rV) ? `${fmt(map.biradial.rV, 0)}` : "flat"} v</span>
+              <span style={{ color: C.inkMuted }}> mm</span></span>
+            <span><span style={{ color: C.inkMuted }}>per-cell area spread </span>
+              <span style={{ color: map.mouthAreaSpread < 0.1 ? C.series4 : C.series5 }}>{fmt(map.mouthAreaSpread, 4)}%</span></span>
+          </div>
+        )}
+        <div style={{ opacity: stale ? 0.35 : 1 }}>{mouthSVG()}</div>
+        <div style={hintStyle}>
+          Choose the aperture from the <strong style={{ color: C.inkDim }}>directivity</strong> requirement, then equalise the paths
+          <em> to</em> it. Θ = 0 on either axis makes that axis flat; there is <strong style={{ color: C.inkDim }}>no apex</strong>, and ducts
+          arrive normal to the surface. The per-axis pattern limits these arcs buy sit in the verdict pane, keyed to the chords dimensioned
+          on the drawing.
+        </div>
+      </Stage>
+
+      <Stage n={4} title="Expansion law" why="how the passage loads — T sets the schedule shape and the duct gaps with one number">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>T</span>
+          <input type="range" min={0} max={1} step={0.01} value={profileT}
+            onChange={(e) => setProfileT(parseFloat(e.target.value))}
+            style={{ width: 150, accentColor: C.series3 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>
+            {fmt(profileT, 2)} · {profileT < 0.02 ? "hyperbolic (cosh²)" : profileT > 0.98 ? "exponential" : "hypex"}
+          </span>
+          <NumInput label="Cutoff f_c" value={fcWanted} onChange={setFcWanted} unit="Hz" min={20} max={20000} step={10} accent={C.series3} />
+          <button onClick={() => setProfileArea(profileArea === "open" ? "gross" : "open")}
+            style={btn(profileArea === "open", C.series6)}>
+            on {profileArea} area
+          </button>
+        </div>
+        {href && (
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+            <span><span style={{ color: C.inkMuted }}>acoustic throat </span>{fmt(throat.openTotal / 100, 2)} cm²
+              <span style={{ color: C.inkMuted }}> · ⌀{fmt(2 * href.rt, 1)} mm equivalent</span></span>
+            <span><span style={{ color: C.inkMuted }}>target flare m </span>{(href.m * 1000).toFixed(3)} /m</span>
+            {map && profileT != null && thickness > 0 && map.rows[0] && map.rows[0].profRatioGross && (
+              <span><span style={{ color: C.inkMuted }}>ratio spread </span>
+                <span style={{ color: map.ratioSpread < 0.5 ? C.series4 : C.series5 }}>{fmt(map.ratioSpread, 3)}%</span>
+                <span style={{ color: C.inkMuted }}> · gross would read {fmt(map.ratioSpreadGross, 2)}%</span></span>
+            )}
+          </div>
+        )}
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          m is <strong style={{ color: C.inkDim }}>solved</strong> per cell so the profile lands exactly on each cell's mouth area — f_c is a
+          verdict, not a setting, and the target above drives the <em>path-needed</em> comparison in the verdict pane. The law is written on
+          the <strong style={{ color: C.inkDim }}>open</strong> passage, which is what the wave travels through. T also sets the duct gaps:
+          the convex profile dips below the near-linear fan of the centrelines, and raising T flattens the dip until the ducts touch.
+        </div>
+      </Stage>
+
+      <Stage n={5} title="Depth & path" why="the one knob ΔL and the joints will spend — solve it, then experiment on top">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ width: 130 }}>
+            <NumInput label="Axial depth" value={depth} onChange={setDepth} unit="mm" min={10} max={2000} step={5} accent={C.series4} />
+          </div>
+          <button onClick={() => {
+            const r = G.solveDepthForMinDL(throat, solveRefOpts());
+            setDlSolve(r);
+            if (r.ok) setDepth(Math.round(r.depth));
+          }} style={btn(false, C.series4)}>solve depth for minimum ΔL</button>
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+            {depthEqualising ? `estimate ≈ ${fmt(depthEqualising, 0)} mm` : ""}
+          </span>
+        </div>
+        {dlSolve && (
+          <div style={{ marginTop: 5, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+            {dlSolve.ok
+              ? <><span style={{ color: C.inkMuted }}>min ΔL → depth </span>
+                  <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
+                  <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></>
+              : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>divergence run</span>
+          <input type="range" min={0} max={40} step={0.5} value={divergeLen} onChange={(e) => setDivergeLen(parseFloat(e.target.value))}
+            style={{ width: 110, accentColor: C.series7 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(divergeLen, 1)} mm</span>
+          <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 4 }}>arrival run</span>
+          <input type="range" min={0} max={60} step={0.5} value={arriveLen} onChange={(e) => setArriveLen(parseFloat(e.target.value))}
+            style={{ width: 110, accentColor: C.series7 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(arriveLen, 1)} mm</span>
+        </div>
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          Pick any <strong style={{ color: C.inkDim }}>two of three</strong> — f_c, mouth size, ΔL-optimal depth. Depth buys path length and
+          nothing else on the biradial mouth, and at the ΔL optimum the mouth's curvature centre lands on the throat so every cell is
+          equidistant — watch the <strong style={{ color: C.inkDim }}>section</strong> tab while this moves. The solve resets both straight
+          runs to 0 first, so it is a repeatable reference; a long <strong style={{ color: C.inkDim }}>arrival run</strong> then pushes the
+          turning back toward the throat, where the section is small. Bend tightness is fixed at 0.5 — see the notes.
+        </div>
+      </Stage>
+
+      <Stage n={6} title="Path lengthening" why="the correction applied after depth has done what it can">
+        {/* THE DEFICIT MAP, above the controls that close it. Each bar is one
+            cell's developed path against the longest, which is exactly what
+            lengthening equalises — so the chart belongs with these inputs
+            rather than in the pinned pane, where it said nothing the ΔL
+            verdict did not already say. */}
+        {map && <>
+          <div style={{ opacity: stale ? 0.35 : 1 }}>{pathSVG()}</div>
+          <div style={{ ...hintStyle, marginBottom: 8 }}>
+            Padding lengthens short paths and cannot shorten long ones, so the <strong style={{ color: C.inkDim }}>longest cell sets the
+            budget</strong> for every other. ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past
+            λ/4 the cells fight each other.
+          </div>
+        </>}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setLengthenOn(!lengthenOn)} style={btn(lengthenOn, C.series1)}>
+            {lengthenOn ? "equalising to the longest cell" : "off — bare geometry"}
+          </button>
+          <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>lobes</span>
+          {[1, 2].map((n) => (
+            <button key={n} onClick={() => setLengthLobes(n)} disabled={!lengthenOn}
+              style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
+          ))}
+          <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>bow direction</span>
+          {[["radial", "radial out"], ["short", "short axis"]].map(([v, l]) => (
+            <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
+              style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
+          ))}
+          {/* the whole trade is discrete and small, so it can simply be
+              enumerated and measured rather than dialled by hand */}
+          <button disabled={!lengthenOn} onClick={() => {
+            const lobeSet = lobesLocked ? [lengthLobes] : [1, 2];
+            const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, { lobeSet });
+            setBowSolve({ ...r, lockedTo: lobesLocked ? lengthLobes : null });
+            if (r.ok) { setLengthDir(r.best.dir); setLengthLobes(r.best.lobes); setBowFrom(r.best.uStart); setBowTo(r.best.uEnd); }
+          }} style={{ ...btn(false, C.series3), opacity: lengthenOn ? 1 : 0.4 }}>solve the bow</button>
+          {/* the count is a shape decision as much as an acoustic one, so
+              the solver is not allowed to overrule it unless asked */}
+          <button disabled={!lengthenOn} onClick={() => setLobesLocked(!lobesLocked)}
+            style={{ ...btn(lobesLocked, C.series6), opacity: lengthenOn ? 1 : 0.4 }}>
+            {lobesLocked ? `lobes locked at ${lengthLobes}` : "lobes free to solve"}
+          </button>
+          {lengthenOn && map && map.lengthen && map.lengthen.onAxis > 0 && (
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.series5 }}>
+              {map.lengthen.onAxis} duct(s) on the axis — no symmetric bow exists for them
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: lengthenOn ? 1 : 0.4 }}>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>bow region</span>
+          <input type="range" min={0} max={0.9} step={0.01} value={bowFrom} disabled={!lengthenOn}
+            onChange={(e) => setBowFrom(Math.min(parseFloat(e.target.value), bowTo - 0.1))}
+            style={{ width: 100, accentColor: C.series1 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowFrom.toFixed(2)}</span>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>to</span>
+          <input type="range" min={0.1} max={1} step={0.01} value={bowTo} disabled={!lengthenOn}
+            onChange={(e) => setBowTo(Math.max(parseFloat(e.target.value), bowFrom + 0.1))}
+            style={{ width: 100, accentColor: C.series1 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowTo.toFixed(2)}</span>
+          {[["throat half", 0, 0.5], ["throat third", 0, 1 / 3],
+            ["throat quarter", 0, 0.25], ["throat fifth", 0, 0.2]].map(([l, a, b]) => (
+            <button key={l} onClick={() => { setBowFrom(a); setBowTo(b); }} disabled={!lengthenOn}
+              style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
+          ))}
+        </div>
+        {lengthenOn && map && map.lengthen && (
+          <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
+            <span><span style={{ color: C.inkMuted }}>target </span>{fmt(map.lengthen.target, 1)} mm
+              <span style={{ color: C.inkMuted }}> · {map.lengthen.cells} bowed</span></span>
+            <span><span style={{ color: C.inkMuted }}>max amplitude </span>
+              <span style={{ color: map.lengthen.ampMax > 25 ? C.series5 : map.lengthen.ampMax > 15 ? C.series1 : C.series4 }}>
+                {fmt(map.lengthen.ampMax, 1)} mm</span></span>
+            <span><span style={{ color: C.inkMuted }}>ΔL now </span>
+              <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : C.series5 }}>{fmt(map.dL, 3)} mm</span></span>
+          </div>
+        )}
+        {bowSolve && (
+          <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+            {bowSolve.ok
+              ? <div><span style={{ color: C.inkMuted }}>solved: </span>
+                  <span style={{ color: C.series3 }}>{bowSolve.best.dir}, {bowSolve.best.lobes} lobe{bowSolve.best.lobes > 1 ? "s" : ""}, region [{bowSolve.best.uStart}, {bowSolve.best.uEnd}]</span>
+                  <span style={{ color: C.inkMuted }}> — lowest wall spread inside the overlap floor</span></div>
+              : <div style={{ color: C.series5 }}>no candidate qualified — {bowSolve.reason}</div>}
+            <div style={{ color: C.inkMuted }}>
+              {bowSolve.lockedTo == null
+                ? "searched direction × lobes × region — the lobe count was free to move"
+                : `searched direction × region at ${bowSolve.lockedTo} lobe${bowSolve.lockedTo > 1 ? "s" : ""} — the count was held, not solved`}
+              {" "}· {bowSolve.considered} built, {bowSolve.measured.length} taken through to clearance
+            </div>
+            {/* the whole measured set, so the trade is visible rather than
+                hidden behind one answer */}
+            {bowSolve.measured.map((m, k) => (
+              <div key={k} style={{ color: bowSolve.best && m === bowSolve.measured[0] ? C.ink : C.inkMuted }}>
+                {"  "}{m.dir.padEnd(7)} {m.lobes} lobe · [{m.uStart}, {m.uEnd}] · wall spread {fmt(m.wallSpread, 2)} mm ·
+                {" "}amplitude {fmt(m.amp, 1)} mm · overlap {m.overlap == null ? "not measured" : fmt(m.overlap, 2) + " mm"}
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          Cells shorter than the longest are <strong style={{ color: C.inkDim }}>bowed sideways</strong> to its length inside the bow
+          region; the straight runs are excised automatically. Narrowing the region is a <em>smaller</em> bow that turns harder — and the
+          room is not at the throat, where the profile already has the ducts near touching. Judge a bow by
+          <strong style={{ color: C.inkDim }}> wall spread</strong> in the verdict pane, never by gross turning. Sections are swept in
+          specified planes{map && map.sweptRollMax != null ? ` — imposed roll ${fmt(map.sweptRollMax, 1)}°, landing to ${map.sweptAimMax.toExponential(0)}°` : ""}.
+        </div>
+      </Stage>
+
+      <Stage n={7} title="Coped joints — planned (Task A)" why="bulge the mouth tiles; ducts meet at knife edges before the mouth" ghost>
+        <div style={{ ...hintStyle, opacity: 0.7 }}>
+          The next build: each mouth cell's shared edges bulge outward so neighbouring ducts overlap and meet at curved knife edges, like
+          coped pipe joints. Bulge amplitude and the double-counted-area readout will live here; the knife-edge stations, engagement depth
+          and the restored recombination analysis will join the verdict pane.
+        </div>
+      </Stage>
+
+      <Stage n={8} title="Export" why="exports build at full resolution on click; the preview stays at 24 stations">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button style={expBtn} onClick={() => dl(`${stem}.dxf`, buildDXF(exportMap()), "application/dxf")}>DXF · one layer per station</button>
+          <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(exportMap()), "application/json")}>JSON cell definition</button>
+          <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(exportMap()), "text/csv")}>CSV · per cell</button>
+          <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(exportMap()), "text/csv")}>ΣA(x) CSV</button>
+          <button style={expBtn} disabled={!map} onClick={() => {
+            const solids = G.ductSolids(throat, exportMap(), { t: thickness });
+            if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
+          }}>STL · cell ducts</button>
+          <button style={expBtn} disabled={!map} onClick={() => {
+            const r = G.buildSTEP(throat, exportMap(), { t: thickness, name: stem });
+            if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
+            const integ = G.stepIntegrity(r.text);
+            const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+            setStepNote({
+              ok,
+              msg: `${r.checks.ducts} solids · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
+                ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
+            });
+            if (ok) dl(`${stem}.step`, r.text, "application/step");
+          }}>STEP · B-spline solids</button>
+          <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
+            export stations
+            <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
+              style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
+          </label>
+        </div>
+        {stepNote && (
+          <div style={{ marginTop: 5, fontFamily: C.mono, fontSize: 10, color: stepNote.ok ? C.series4 : C.series5 }}>
+            STEP: {stepNote.msg}
+          </div>
+        )}
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          The STL carries the {throat.N} ducts as faceted closed solids; the <strong style={{ color: C.inkDim }}>STEP</strong> carries the
+          same ducts as lofted B-spline solids — the file for CAD when the ducts need filleting, offsetting or joint cuts. DXF is 2-D per
+          plane, so only the throat layer imports as a sketch.
+        </div>
+      </Stage>
+
+      <details style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
+        <summary style={{ fontSize: 11, color: C.inkDim, cursor: "pointer", fontFamily: C.mono }}>
+          Notes & model assumptions — reference, not required reading
+        </summary>
+        <div style={{ fontSize: 10, color: C.inkMuted, lineHeight: 1.6, padding: "8px 4px 0", fontFamily: C.sans }}>
+          <strong style={{ color: C.inkDim }}>The three limits are three different questions</strong> · f_c is the flare constant, m·c/2π —
+          how fast the passage expands. Whether the mouth is large enough to <em>load</em> there, and whether it is large enough to hold the
+          <em> pattern</em>, are separate questions with their own answers, and at wide coverage they disagree by an order of magnitude. A horn
+          can honestly have a 500 Hz flare cutoff, load to 312 Hz, and lose 90° control above 1.4 kHz — that is a small-mouthed horn, not an
+          inconsistency, and it is why the verdict pane prints them separately and never merges them.
+          <br />
+          <strong style={{ color: C.inkDim }}>Why lines, and why they bend individually</strong> · A fixed square-to-disc map with adjustable
+          division values offers (n_cols−1)+(n_rows−1) knobs against n_cols·n_rows−1 area constraints — not solvable. Each line therefore
+          carries its own Chebyshev coefficients: far more freedom than division vectors, far less than free nodes, and the parameters stay
+          legible. Only even orders appear under mirror symmetry.
+          <br />
+          <strong style={{ color: C.inkDim }}>Whole-line curvature can genuinely run out</strong> · An equal-area grid may not exist for a
+          given corner angle and bow request; the honest answer is naming the binding constraint rather than returning a converged-looking
+          distorted grid. Feasibility tightens as m falls and as α leaves the equal-arc default.
+          <br />
+          <strong style={{ color: C.inkDim }}>Singular vertices are not a layout failure</strong> · A rectangular index on a disc must
+          produce vertices where the number of cells meeting is not four; the H-grid puts its four on the rim, where cells are already most
+          distorted.
+          <br />
+          <strong style={{ color: C.inkDim }}>Rows, not columns</strong> · f₁_min is set by the row-direction edge length: adding columns
+          narrows every cell while L_long barely moves. Adding a row is what moves the number.
+          <br />
+          <strong style={{ color: C.inkDim }}>Depth is the dominant ΔL lever</strong> · At the optimum the mouth's curvature centre lands on
+          the throat and every cell is equidistant — measured 81 mm of ΔL at 200 mm depth falling to 2.0 mm at 425 on a 600 mm arc. It needs
+          both radii to land together, so ΔL is lowest near arc_h/arc_v ≈ Θh/Θv; the minimum is broad.
+          <br />
+          <strong style={{ color: C.inkDim }}>Bend tightness is fixed at 0.5</strong> · The measured optimum is 0.45–0.55 on every well-posed
+          geometry and flat between; the old slider minimum of 0.25 measured 8.50 mm of wall spread against 5.63 and 12.7 mm of ΔL against
+          2.4. Above 0.8 it collapses outright.
+          <br />
+          <strong style={{ color: C.inkDim }}>What the first-mode number is, and is not</strong> · f₁ ≈ c/(2·max(L_long, L_short)) is a
+          flat-rectangle approximation with error O((L/r_curv)²), sign not established — strongly curved cells are flagged, not corrected.
+          Closed forms are used where they exist (full disc, circular sector) and the cell says which model ran.
+          <br />
+          <strong style={{ color: C.inkDim }}>Where the dividers end</strong> · The inset tapers linearly from full at the throat to zero at
+          the mouth — the only two places the tiling is exactly true. The recombination analysis returns when the coped joints give the walls
+          a real end station.
+          <br />
+          <strong style={{ color: C.inkDim }}>Assumptions carried in this build</strong> · Open-area correction is first order (t/2 per
+          shared edge). Areas are throat-plane, not spherical-wavefront — the 2/(1+cos θ) factor is reported, never applied. Thermoviscous
+          loss is the smooth-wall Kirchhoff lower bound. The achieved area spread is reported rather than equality asserted.
+        </div>
+      </details>
+    </div>
+  );
+
+  // ── RIGHT PANE — the horn, pinned ──────────────────────────────────────────
+  const views = [["ducts", "3-D ducts"], ["section", "horizontal section"], ["cells", "cells"]];
+  const rightPane = (
+    <div style={{
+      borderLeft: narrow ? "none" : `1px solid ${C.borderStrong}`,
+      borderTop: narrow ? `2px solid ${C.borderStrong}` : "none",
+      display: "flex", flexDirection: "column", minHeight: 0, background: C.page,
+    }}>
+      <div style={{ padding: "8px 14px", display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap", borderBottom: `1px solid ${C.border}`, background: C.panel }}>
+        <span style={{ fontFamily: C.mono, fontSize: 12, fontWeight: 600, color: C.accent, letterSpacing: "0.04em" }}>
+          {shown.family === "hgrid" ? `${shown.nc}×${shown.nr}` : "O-grid"} · ⌀{fmt(exitDia, 1)} · {fmt(thetaH, 0)}°×{fmt(thetaV, 0)}°
+        </span>
+        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+          depth {fmt(depth, 0)} · T {fmt(profileT, 2)} · {throat.N} cells · swept
+        </span>
+        <span style={{ marginLeft: "auto", fontFamily: C.mono, fontSize: 10, padding: "2px 8px", borderRadius: 9,
+          color: stale ? C.accent : solve.converged ? C.series4 : C.series5,
+          border: `1px solid ${stale ? C.accent : solve.converged ? C.series4 : C.series5}` }}>
+          {stale ? "solving…" : solve.converged ? "equal-area ✓" : "infeasible"}
+        </span>
       </div>
 
-      {/* THE TWO VIEWS OF THE SAME GEOMETRY, SIDE BY SIDE ─────────────────────
-          Left: the horizontal section, which is the view that EXPLAINS path
-          length — it shows the mouth curving away from the throat, so it is
-          the one to watch while depth moves. Right: the duct solids as the
-          STL carries them. Kept together and directly under the throat and
-          mouth plans, so the plan, the section and the solid read as one
-          sequence rather than being scattered down the page. */}
-      {map && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 14, marginBottom: 14 }}>
-          <div style={{ ...card, marginBottom: 0 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-              <span style={{ ...secTitle, marginBottom: 0 }}>Horizontal section</span>
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>middle row · centrelines and duct extent</span>
-              <span style={{ marginLeft: "auto", fontFamily: C.mono, fontSize: 11 }}>
-                <span style={{ color: C.inkMuted }}>ΔL </span>
-                <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : map.dLfrac <= 0.25 ? C.series1 : C.series5 }}>
-                  {fmt(map.dL, 1)} mm</span>
-                <span style={{ color: C.inkMuted }}> · {fmt(map.dL / (map.lambda / 8), 1)}× λ/8</span>
-              </span>
-            </div>
+      {warnings.length > 0 && (
+        <div style={{ background: C.series5 + "10", borderBottom: `1px solid ${C.series5}`, padding: "5px 14px", maxHeight: 130, overflowY: "auto", flex: "none" }}>
+          {warnings.map((w, i) => (
+            <div key={i} style={{ fontSize: 10.5, color: C.series5, marginBottom: 3, lineHeight: 1.4 }}>⚠ {w}</div>
+          ))}
+        </div>
+      )}
 
-            {/* ONE DEPTH SOLVE. The cutoff solve was removed at the owner's
-                call: it does not return a horn anyone would build. The reason
-                is structural — on the biradial mouth the aperture is fixed by
-                the coverage arcs, so depth moves NEITHER the mouth area nor
-                the expansion ratio, only the path length. Asking for a cutoff
-                is therefore only asking how long the body must be, and it
-                answers with a stubby or an over-long body carrying a
-                full-size mouth, always away from the dL optimum. The
-                inversion survives as `solveDepthForFc` in the model, with its
-                tests; it is the UI affordance that was misleading. */}
-            <div style={{ marginTop: 8, padding: "7px 9px", background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontSize: 10, color: C.inkDim, letterSpacing: "0.03em" }}>SOLVE AXIAL DEPTH FOR</span>
-                <button onClick={() => {
-                  const r = G.solveDepthForMinDL(throat, solveRefOpts());
-                  setDlSolve(r);
-                  if (r.ok) setDepth(Math.round(r.depth));
-                }} style={btn(false, C.series4)}>minimum ΔL</button>
-                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted, marginLeft: "auto" }}>
-                  now {fmt(depth, 0)} mm{depthEqualising ? ` · ΔL estimate ≈ ${fmt(depthEqualising, 0)} mm` : ""}
-                </span>
-              </div>
-              {dlSolve && (
-                <div style={{ marginTop: 5, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
-                  {dlSolve.ok
-                    ? <><span style={{ color: C.inkMuted }}>min ΔL → depth </span>
-                        <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
-                        <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></>
-                    : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}
-                </div>
-              )}
-              <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 5, lineHeight: 1.45 }}>
-                Pick any <strong style={{ color: C.inkDim }}>two of three</strong> — f_c, mouth size, ΔL-optimal depth — never all three: the ΔL rule
-                ties depth to the mouth radius while the expansion law ties mouth area to path length. This solve takes the ΔL leg, which leaves f_c
-                to fall out of the geometry as a readout. It resets the straight runs to 0 first, so it is a repeatable reference point.
-                {" "}The mouth area and the expansion ratio do not move with depth at all — both are set by the coverage arcs — so depth buys path
-                length and nothing else.
-              </div>
+      <div style={{ display: "flex", gap: 2, padding: "8px 12px 0", flex: "none" }}>
+        {views.map(([k, l]) => (
+          <button key={k} onClick={() => setView(k)} style={tabBtn(view === k)}>{l}</button>
+        ))}
+      </div>
+      <div style={{ margin: "0 12px", background: C.panel, border: `1px solid ${C.border}`, borderRadius: "0 4px 4px 4px", flex: "none", padding: 6 }}>
+        {view === "ducts" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", padding: "0 4px 4px" }}>
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>drag to orbit · scroll to zoom · what the STL and STEP export</span>
+              {solidsStale && <Solving label="building solids" />}
             </div>
-
-            <div style={{ opacity: stale ? 0.35 : 1, marginTop: 6 }}>{crossSVG()}</div>
+            {solids3d
+              ? <DuctPreview ducts={solids3d.ducts} dim={solidsStale} />
+              : <div style={{ fontSize: 11, color: C.inkMuted, padding: 20 }}>No duct solids — the mapping needs the H-grid.</div>}
+          </div>
+        )}
+        {view === "section" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", padding: "0 4px 4px" }}>
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>middle row · centrelines and duct extent · the view that explains ΔL</span>
+            </div>
+            <div style={{ opacity: stale ? 0.35 : 1 }}>{crossSVG()}</div>
             <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 2, flexWrap: "wrap", fontSize: 10 }}>
               <span style={{ color: C.series5 }}>━ shorter than mean</span>
               <span style={{ color: C.series4 }}>━ near mean</span>
               <span style={{ color: C.series1 }}>━ longer than mean</span>
             </div>
-            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 8, lineHeight: 1.5 }}>
-              Watch this while moving <strong style={{ color: C.inkDim }}>axial depth</strong>. Shallow, and the mouth curves away from the
-              throat so the outer cells reach further — they are the long ones. Deep, and the mouth flattens out ahead of the throat so the
-              centre cell becomes the long one. Between the two there is a depth where the mouth's curvature centre sits ON the throat, the
-              mouth is momentarily a sphere about it, and <strong style={{ color: C.inkDim }}>every cell is the same distance away</strong>.
-              Measured at 90°×40° with a 600 mm arc, ΔL falls from 81 mm at 200 mm depth to <strong style={{ color: C.inkDim }}>2.0 mm at
-              425 mm</strong> — from 38× the phase budget to about 1×, with no path manipulation at all.
-              {" "}It needs <em>both</em> mouth radii to land together, so the aspect ratio is not free: ΔL is lowest near
-              arc<sub>h</sub>/arc<sub>v</sub> ≈ Θh/Θv, and rises steeply away from it (2.4 mm at matched radii, 9.2 mm at aspect 1.4 for
-              90°×40°). The minimum is broad, so near enough is enough.
-            </div>
           </div>
+        )}
+        {view === "cells" && (
+          <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: C.mono, fontSize: 11 }}>
+              <thead><tr>{["cell", "open mm²", "aspect", "f₁ kHz", "model", "path mm", "turn°", "twist°",
+                ...(map && map.lengthen ? ["bow mm"] : []),
+                ...(profileT != null && map ? ["f_c Hz", "k max", "gap mm"] : [])].map((h) => (
+                <th key={h} style={{ textAlign: "right", padding: "6px 9px", borderBottom: `1px solid ${C.borderStrong}`, color: C.inkDim, fontSize: 10, fontWeight: 500, position: "sticky", top: 0, background: C.panel, whiteSpace: "nowrap" }}>{h}</th>
+              ))}</tr></thead>
+              <tbody>
+                {throat.cells.map((cc, i) => {
+                  const r = map && map.rows.find((x) => x.id === cc.id);
+                  const isMin = cc.id === throat.f1minCell.id;
+                  const td = (v, col) => <td style={{ textAlign: "right", padding: "3px 9px", color: col || C.ink, whiteSpace: "nowrap" }}>{v}</td>;
+                  return (
+                    <tr key={i} onMouseEnter={hoverEnter(cc.id)} onMouseLeave={() => setHover(null)}
+                      style={{ background: hover === cc.id ? C.panelAlt : i % 2 ? C.page + "60" : "transparent" }}>
+                      {td(cc.label, isMin ? C.series5 : C.inkDim)}
+                      {td(fmt(cc.open, 2), C.series1)}
+                      {td(fmt(cc.aspect, 2), cc.aspect > 2.5 ? C.series1 : C.ink)}
+                      {td(fmt(cc.f1 / 1000, 2), isMin ? C.series5 : C.series4)}
+                      <td style={{ textAlign: "right", padding: "3px 9px", color: C.inkMuted, fontSize: 10, whiteSpace: "nowrap" }}>
+                        {cc.f1model}{cc.curvatureSensitive ? " ⚠" : ""}
+                      </td>
+                      {td(r ? fmt(r.Lpath, 2) : "—", C.inkDim)}
+                      {td(r ? fmt(r.turnDeg, 1) : "—", C.inkDim)}
+                      {td(r ? fmt(r.twistDeg, 1) : "—", C.inkDim)}
+                      {map && map.lengthen && td(r && r.snakeAmp > 1e-9 ? fmt(r.snakeAmp, 1) : "0", r && r.snakeAmp > 1e-9 ? C.series1 : C.inkMuted)}
+                      {profileT != null && map && <>
+                        {td(r && r.profFc != null ? fmt(r.profFc, 0) : "—", C.series4)}
+                        {td(r && r.profScaleMax != null ? fmt(r.profScaleMax, 3) : "—",
+                          r && r.profScaleMax > 1 + 1e-6 ? C.series5 : C.inkDim)}
+                        {td(clearance && clearance.perCell.has(cc.id)
+                          ? fmt(clearance.perCell.get(cc.id), 3) : "—",
+                          clearance && clearance.perCell.get(cc.id) < 1e-3 ? C.series5 : C.inkDim)}
+                      </>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
-          <div style={{ ...card, marginBottom: 0 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
-              <span style={{ ...secTitle, marginBottom: 0 }}>Duct solids · what the STL exports</span>
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>drag to orbit · scroll to zoom</span>
-              {solidsStale && <Solving label="building solids" />}
-            </div>
-            {solids3d && <DuctPreview ducts={solids3d.ducts} dim={solidsStale} />}
-            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-              The {throat.N} ducts exactly as the STL carries them — inset by half the divider thickness where the dividers run, tapering to
-              nothing where they stop. The gaps the expansion profile opens, the bows path lengthening adds, and any contact the clearance
-              warnings report are all visible here: the numbers elsewhere are the measurement, this is the picture. Throat at the {" "}
-              <em>front</em> view's near side; <em>top</em> looks down the vertical axis.
-            </div>
-          </div>
+      <div style={{ ...(narrow ? {} : { flex: 1, overflowY: "auto", minHeight: 0 }), padding: "4px 12px 24px" }}>
+        <div style={vGroup}>Acoustic behaviour</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 7 }}>
+          {limits && limits.fcLo != null && (
+            <Metric label="Flare cutoff f_c" value={`${fmt(limits.fcLo, 0)}–${fmt(limits.fcHi, 0)} Hz`}
+              sub={`m·c/2π, the expansion rate alone${map && map.fcDecomp ? ` · spread ${fmt(map.fcDecomp.full, 1)}%` : ""}`} color={C.series3} />
+          )}
+          {limits && (
+            <Metric label="Loading limit" value={`${fmt(limits.loadHz, 0)} Hz`}
+              sub={`⌀${fmt(limits.dEq, 0)} mm equivalent · circumference = λ`} color={C.series4} />
+          )}
+          {limits && map && (
+            <Metric label={`Pattern holds · ${fmt(thetaH, 0)}° H`}
+              value={limits.patH ? `${fmt(limits.patH, 0)} Hz` : "flat axis"}
+              sub={`λ/sin(Θ/2) over the ${fmt(map.mouthWEff, 0)} mm chord`} color={C.series1} />
+          )}
+          {limits && map && (
+            <Metric label={`Pattern holds · ${fmt(thetaV, 0)}° V`}
+              value={limits.patV ? `${fmt(limits.patV, 0)} Hz` : "flat axis"}
+              sub={`over the ${fmt(map.mouthHEff, 0)} mm chord — widen arc v to lower it`} color={C.series2} />
+          )}
+          <Metric label="f₁ min" value={`${fmt(throat.f1min / 1000, 2)} kHz`}
+            sub={`cell ${throat.f1minCell.label} · ${throat.f1minCell.f1model}`} color={C.series4} />
+          {pathNeeded && map && (
+            <Metric label={`Path needed for ${fmt(fcWanted, 0)} Hz`}
+              value={pathNeeded.hi - pathNeeded.lo < 0.5 ? `${fmt(pathNeeded.lo, 0)} mm` : `${fmt(pathNeeded.lo, 0)}–${fmt(pathNeeded.hi, 0)} mm`}
+              sub={pathNeeded.clears
+                ? `have ${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} — every cell clears it, worst by ${fmt(-pathNeeded.worst, 0)} mm`
+                : `have ${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} — worst cell short by ${fmt(pathNeeded.worst, 0)} mm`}
+              color={pathNeeded.clears ? C.series4 : C.series5} />
+          )}
+          {map && (
+            <Metric label="ΔL" value={`${fmt(map.dL, 2)} mm`}
+              sub={`${fmt(map.dL / (map.lambda / 8), 1)}× the λ/8 budget at ${fmt(fTarget / 1000, 1)} kHz`}
+              color={map.band === "ok" ? C.series4 : map.band === "warn" ? C.series1 : C.series5} />
+          )}
+          {map && (
+            <Metric label="Wall spread" value={`${fmt(map.wallSpreadMax, 1)} mm`}
+              sub={`longest vs shortest wall fibre · λ/8 = ${fmt(map.lambda / 8, 2)} mm`}
+              color={map.wallSpreadMax > map.lambda / 8 ? C.series1 : C.series4} />
+          )}
+          {map && map.fcDecomp && (
+            <Metric label="f_c spread, decomposed" value={`${fmt(map.fcDecomp.full, 2)}%`}
+              sub={`length alone ${fmt(map.fcDecomp.fromLength, 2)}% · ratio alone ${fmt(map.fcDecomp.fromRatio, 2)}% — they partially cancel`}
+              color={map.fcDecomp.full > 3 ? C.series5 : C.ink} />
+          )}
         </div>
-      )}
+
+        <div style={vGroup}>Physical form</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 7 }}>
+          {map && (
+            <Metric label="Mouth" value={`${fmt(map.mouthAreaTotal / 100, 0)} cm²`}
+              sub={`chord ${fmt(map.mouthWEff, 0)} × ${fmt(map.mouthHEff, 0)} mm · ${fmt(Math.sqrt(map.mouthAreaTotal / throat.openTotal), 2)}× on radius`} />
+          )}
+          {map && (
+            <Metric label="Body" value={`${fmt(depth, 0)} mm`}
+              sub={`paths ${fmt(map.Lmin, 0)}–${fmt(map.Lmax, 0)} mm developed`} />
+          )}
+          {map && profileT != null && (
+            <Metric label="Duct separation"
+              value={!clearance ? "measuring…" : clearance.overlap > 0 ? `−${fmt(clearance.overlap, 2)} mm` : `${fmt(clearance.minMid, 2)} mm`}
+              sub={!clearance ? "deferred off the render pass"
+                : clearance.overlap > 0
+                  ? `ducts interpenetrate at station ${clearance.overlapAt} · k ${fmt(map.profScaleMin, 2)}–${fmt(map.profScaleMax, 2)}`
+                  : `narrowest gap at station ${clearance.minMidAt} · widest ${fmt(clearance.max, 1)} mm`}
+              color={!clearance ? C.inkMuted : clearance.overlap > 0 || clearance.minMid < 1e-3 ? C.series5 : C.series4} />
+          )}
+          <Metric label="Shell" value={`⌀ ${fmt(fab.dShell, 2)} mm`}
+            sub={`+${fmt(fab.oversize, 2)} mm on ⌀${fmt(exitDia, 1)} to give the blocked area back`} />
+          <Metric label="Divider blockage" value={`${fmt(throat.blockage * 100, 1)}%`}
+            sub={`${fmt(throat.dividerTotal, 0)} mm of centreline at ${fmt(thickness, 2)} mm`}
+            color={throat.blockage > 0.12 ? C.series1 : C.ink} />
+          <Metric label="Cells" value={`${throat.N}`}
+            sub={`worst aspect ${fmt(throat.aspectMax, 2)} · ${throat.nonConvex} non-convex · ${throat.curvatureFlagged} curvature-flagged`}
+            color={throat.nonConvex || throat.curvatureFlagged ? C.series1 : C.ink} />
+        </div>
+
+        {map && (
+          <>
+            <div style={vGroup}>Routing</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 7 }}>
+              <Metric label="Max turning" value={`${fmt(map.turnMax, 1)}°`} sub="gross centreline turning — wall spread is the phase metric" />
+              <Metric label="Max twist" value={`${fmt(map.twistMax, 1)}°`} sub="cross-section rotation, throat to mouth" />
+              <Metric label="Max aim error" value={`${fmt(map.aimMax, 2)}°`} sub={`tolerance ≈ λ/(4d) = ${fmt(map.aimLimitDeg, 1)}°`}
+                color={map.aimMax > map.aimLimitDeg ? C.series5 : C.ink} />
+              <Metric label="Bend centroid" value={fmt(map.bendCentroidMean, 3)}
+                sub="0 = all turning at the throat, 1 = at the mouth" color={map.bendCentroidMean < 0.5 ? C.series4 : C.inkDim} />
+            </div>
+          </>
+        )}
+
+        <div style={{ ...vGroup, opacity: 0.55 }}>Coped joints — appears with stage 7</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 7, opacity: 0.55 }}>
+          <Metric label="Double-counted area" value="—" sub="sum vs union of bulged tiles" />
+          <Metric label="Knife edges" value="—" sub="first-touch station per pair · engagement depth" />
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{
+      background: C.page, color: C.ink, fontFamily: C.sans, boxSizing: "border-box",
+      ...(narrow ? { minHeight: "100vh" } : { height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }),
+    }}>
+      <style>{SPIN_CSS}</style>
+      <div style={{
+        padding: "7px 16px", borderBottom: `1px solid ${C.borderStrong}`, background: C.panelAlt,
+        display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap", flex: "none",
+      }}>
+        <h1 style={{ fontFamily: C.mono, fontSize: 14, fontWeight: 600, color: C.accent, margin: 0, letterSpacing: "0.05em" }}>
+          GINKGO MULTICELL HORN
+        </h1>
+        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+          equal-area partition of a compression driver exit · per-cell ducts under an imposed Hypex expansion · biradial coverage mouth
+        </span>
+      </div>
+      <div style={narrow
+        ? {}
+        : { flex: 1, display: "grid", gridTemplateColumns: "minmax(430px, 53fr) minmax(430px, 47fr)", minHeight: 0 }}>
+        {leftPane}
+        {rightPane}
+      </div>
 
       {/* HOVER READOUT — fixed to the viewport, out of flow; see hoverEnter */}
       {hoverCell && (
@@ -1778,505 +2093,6 @@ export default function GinkgoHorn() {
           </>}
         </div>
       )}
-
-      {/* PATHS */}
-      {map && (
-        <div style={card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <span style={secTitle}>Developed path length per cell against the ΔL budget</span>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, color: C.inkMuted }}>divergence run</span>
-              <input type="range" min={0} max={40} step={0.5} value={divergeLen} onChange={(e) => setDivergeLen(parseFloat(e.target.value))}
-                style={{ width: 110, accentColor: C.series7 }} />
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(divergeLen, 1)} mm</span>
-              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 4 }}>arrival run</span>
-              <input type="range" min={0} max={60} step={0.5} value={arriveLen} onChange={(e) => setArriveLen(parseFloat(e.target.value))}
-                style={{ width: 110, accentColor: C.series7 }} />
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{fmt(arriveLen, 1)} mm</span>
-            </div>
-          </div>
-          <div style={{ opacity: stale ? 0.35 : 1 }}>{pathSVG()}</div>
-          <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 4, lineHeight: 1.5 }}>
-            Padding lengthens short paths — it cannot shorten long ones, so the longest cell sets the budget for every other cell.
-            ≤ λ/8 is about −0.7 dB on the worst-case pair summation; λ/8 to λ/4 is the amber band; past λ/4 the cells are fighting each other.
-            {" "}Divergence run is a straight launch of that exact length, along the local wavefront normal, before any bend starts — direction
-            only, it does not hold the cross-section at its throat size; the profile expands from the very first station regardless.
-            {" "}The <strong style={{ color: C.inkDim }}>arrival run</strong> is its mirror at the mouth. Lengthening it holds the path straight
-            off the aperture and forces the turning back toward the throat — which is where you want it, because the section is small there and
-            large at the mouth.
-            {" "}Bend tightness — the two Hermite tangent magnitudes — is <strong style={{ color: C.inkDim }}>fixed at 0.5</strong> and no longer a
-            control: the measured optimum sits at 0.45–0.55 on every well-posed geometry and the curve is flat between them. It is not safe at the
-            bottom of its old range, which is why it is pinned rather than minimised: 0.25 measures 8.50 mm of wall spread against 0.5's 5.63, and
-            12.7 mm of ΔL against 2.4, because the tangents also set where each cell's path length lands. Above 0.8 it collapses outright — 1.0
-            gives a 1 mm minimum bend radius and 17 mm of duct overlap.
-            {" "}Both depth solves <strong style={{ color: C.inkDim }}>reset the two runs to 0</strong> as their reference state, so a solve is
-            repeatable; adjust the runs afterwards to experiment from that point.
-          </div>
-
-          {/* PATH LENGTHENING */}
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ ...secTitle, marginBottom: 0 }}>Path lengthening</span>
-              <button onClick={() => setLengthenOn(!lengthenOn)} style={btn(lengthenOn, C.series1)}>
-                {lengthenOn ? "equalising to the longest cell" : "off — bare geometry"}
-              </button>
-              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>lobes</span>
-              {[1, 2].map((n) => (
-                <button key={n} onClick={() => setLengthLobes(n)} disabled={!lengthenOn}
-                  style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
-              ))}
-              <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>bow direction</span>
-              {[["radial", "radial out"], ["short", "short axis"]].map(([v, l]) => (
-                <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
-                  style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
-              ))}
-              {/* the whole trade is discrete and small, so it can simply be
-                  enumerated and measured rather than dialled by hand */}
-              <button disabled={!lengthenOn} onClick={() => {
-                const lobeSet = lobesLocked ? [lengthLobes] : [1, 2];
-                const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, { lobeSet });
-                setBowSolve({ ...r, lockedTo: lobesLocked ? lengthLobes : null });
-                if (r.ok) { setLengthDir(r.best.dir); setLengthLobes(r.best.lobes); setBowFrom(r.best.uStart); setBowTo(r.best.uEnd); }
-              }} style={{ ...btn(false, C.series3), opacity: lengthenOn ? 1 : 0.4 }}>solve the bow</button>
-              {/* the count is a shape decision as much as an acoustic one, so
-                  the solver is not allowed to overrule it unless asked */}
-              <button disabled={!lengthenOn} onClick={() => setLobesLocked(!lobesLocked)}
-                style={{ ...btn(lobesLocked, C.series6), opacity: lengthenOn ? 1 : 0.4 }}>
-                {lobesLocked ? `lobes locked at ${lengthLobes}` : "lobes free to solve"}
-              </button>
-              {lengthenOn && map && map.lengthen && map.lengthen.onAxis > 0 && (
-                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.series5 }}>
-                  {map.lengthen.onAxis} duct(s) on the axis — no symmetric bow exists for them
-                </span>
-              )}
-            </div>
-
-            {/* WHERE THE BOW SITS */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: lengthenOn ? 1 : 0.4 }}>
-              <span style={{ fontSize: 10, color: C.inkMuted }}>bow region</span>
-              <input type="range" min={0} max={0.9} step={0.01} value={bowFrom} disabled={!lengthenOn}
-                onChange={(e) => setBowFrom(Math.min(parseFloat(e.target.value), bowTo - 0.1))}
-                style={{ width: 110, accentColor: C.series1 }} />
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowFrom.toFixed(2)}</span>
-              <span style={{ fontSize: 10, color: C.inkMuted }}>to</span>
-              <input type="range" min={0.1} max={1} step={0.01} value={bowTo} disabled={!lengthenOn}
-                onChange={(e) => setBowTo(Math.max(parseFloat(e.target.value), bowFrom + 0.1))}
-                style={{ width: 110, accentColor: C.series1 }} />
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowTo.toFixed(2)}</span>
-              {/* Presets all start at the throat and differ only in how far
-                  down the path they run. "divider region" is gone with the
-                  station it named: the inset now tapers linearly to zero at
-                  the mouth, so there is no fraction of the path at which the
-                  dividers stop and nothing for [0, 0.35] to have meant. The
-                  fractions replacing it say exactly what they are. */}
-              {[["throat half", 0, 0.5], ["throat third", 0, 1 / 3],
-                ["throat quarter", 0, 0.25], ["throat fifth", 0, 0.2]].map(([l, a, b]) => (
-                <button key={l} onClick={() => { setBowFrom(a); setBowTo(b); }} disabled={!lengthenOn}
-                  style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
-              ))}
-            </div>
-
-            {lengthenOn && map && map.lengthen && (
-              <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
-                <span><span style={{ color: C.inkMuted }}>target </span>{fmt(map.lengthen.target, 1)} mm
-                  <span style={{ color: C.inkMuted }}> · {map.lengthen.cells} bowed</span></span>
-                <span><span style={{ color: C.inkMuted }}>max amplitude </span>
-                  <span style={{ color: map.lengthen.ampMax > 25 ? C.series5 : map.lengthen.ampMax > 15 ? C.series1 : C.series4 }}>
-                    {fmt(map.lengthen.ampMax, 1)} mm</span></span>
-                <span><span style={{ color: C.inkMuted }}>ΔL now </span>
-                  <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : C.series5 }}>{fmt(map.dL, 3)} mm</span></span>
-                <span><span style={{ color: C.inkMuted }}>longest wall runs longer than the shortest by </span>
-                  <span style={{ color: map.wallSpreadMax > map.lambda / 8 ? C.series1 : C.series4 }}>
-                    {fmt(map.wallSpreadMax, 2)} mm</span>
-                  <span style={{ color: C.inkMuted }}> vs λ/8 = {fmt(map.lambda / 8, 2)}</span></span>
-              </div>
-            )}
-
-            {bowSolve && (
-              <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
-                {bowSolve.ok
-                  ? <div><span style={{ color: C.inkMuted }}>solved: </span>
-                      <span style={{ color: C.series3 }}>{bowSolve.best.dir}, {bowSolve.best.lobes} lobe{bowSolve.best.lobes > 1 ? "s" : ""}, region [{bowSolve.best.uStart}, {bowSolve.best.uEnd}]</span>
-                      <span style={{ color: C.inkMuted }}> — lowest wall spread that stays inside the overlap floor</span></div>
-                  : <div style={{ color: C.series5 }}>no candidate qualified — {bowSolve.reason}</div>}
-                <div style={{ color: C.inkMuted }}>
-                  {bowSolve.lockedTo == null
-                    ? "searched direction × lobes × region — the lobe count was free to move"
-                    : `searched direction × region at ${bowSolve.lockedTo} lobe${bowSolve.lockedTo > 1 ? "s" : ""} — the count was held, not solved`}
-                  {" "}· {bowSolve.considered} built, {bowSolve.measured.length} taken through to clearance
-                </div>
-                {/* the whole measured set, so the trade is visible rather than
-                    hidden behind one answer */}
-                {bowSolve.measured.map((m, k) => (
-                  <div key={k} style={{ color: bowSolve.best && m === bowSolve.measured[0] ? C.ink : C.inkMuted }}>
-                    {"  "}{m.dir.padEnd(7)} {m.lobes} lobe · [{m.uStart}, {m.uEnd}] · wall spread {fmt(m.wallSpread, 2)} mm ·
-                    {" "}amplitude {fmt(m.amp, 1)} mm · overlap {m.overlap == null ? "not measured" : fmt(m.overlap, 2) + " mm"}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-              Each cell shorter than the longest is <strong style={{ color: C.inkDim }}>bowed sideways</strong> until its centreline reaches the
-              longest cell's length — the deficit map decides which cells move, and the longest cell is never touched, because a bow can only add.
-              The window is sin²(π·u) over the <strong style={{ color: C.inkDim }}>bow region</strong>: zero value <em>and</em> zero slope at both
-              ends of its support, so the throat mating face, the mouth tiling, the launch and arrival directions and everything outside the region
-              all survive exactly. The straight runs are cut out of the region automatically, per cell — a run you asked to be straight is not a
-              place to put a bow. Narrowing the region concentrates the turning where you put it: amplitude falls as √span and curvature rises as
-              span<sup>−1.5</sup>, so a tighter region is a <em>smaller</em> bow that turns harder. Note the geometry, though — the ducts tile at the
-              throat and the profile already has them touching through the first third, while 16 mm of gap sits unused around u ≈ 0.8.
-              <br />
-              <strong style={{ color: C.inkDim }}>Radial out</strong> bows each duct along its own outward ray from the horn axis;
-              {" "}<strong style={{ color: C.inkDim }}>short axis</strong> bows it across the narrow dimension of its own section. Both are
-              mirror-covariant, so a cell and its mirror image get mirrored bows and the horn stays symmetric about both planes (6×10⁻¹¹ mm) — a fixed
-              world axis does not, and is not offered. Short axis is the cheaper turn acoustically: a duct of width w turning through θ puts w·θ more
-              length on its outer wall than its inner, so bending across the short dimension of a 2:1 cell nearly halves that — measured 29.1 mm
-              against radial's 37.1 mm. It buys that with clearance, which is why both are here and why the readout above shows them together.
-              <br />
-              <strong style={{ color: C.inkDim }}>Solve the bow</strong> builds every combination of those knobs, measures each one, ranks them on
-              wall spread and then measures duct clearance on the best four, taking the lowest-spread candidate that stays under 2 mm of overlap and
-              actually reaches the target length. With <strong style={{ color: C.inkDim }}>lobes locked</strong> it searches direction and region at
-              the count you set and leaves that count alone; unlocked it also tries the other count, and will almost always come back with 2, because
-              wall spread prefers more lobes on every geometry measured. That preference is real but partial: wall spread is the length each wall
-              fibre has run <em>by the mouth</em>, and a reversing bend cancels in that total whether or not the wavefront recovered in between,
-              while the second hump sits further down the passage where the section is wider. Measured at 6×3, 90°×40°, 480 mm arc, depth 320 mm the
-              lock costs about a fifth: the same winning direction and region — short axis, [0.30, 0.95] — at 5.37 mm of wall spread against 4.42,
-              with 13.8 mm of bow amplitude against 7.0 and the same 1.9 mm of overlap.
-            </div>
-          </div>
-
-          {/* SECTION CONSTRUCTION */}
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ ...secTitle, marginBottom: 0 }}>Section construction</span>
-              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>swept — per-cell planes</span>
-              {map.sweptRollMax != null && (
-                <span style={{ fontFamily: C.mono, fontSize: 10 }}>
-                  <span style={{ color: C.inkMuted }}>imposed roll </span>
-                  <span style={{ color: C.ink }}>{fmt(map.sweptRollMax, 1)}°</span>
-                  <span style={{ color: C.inkMuted }}> · lands to {map.sweptAimMax.toExponential(0)}°</span>
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-              Each cell's sections are built in planes <strong style={{ color: C.inkDim }}>specified</strong> along its own centreline — ẑ at the
-              throat, blending through the tangent to the aperture normal — with the residual roll <strong style={{ color: C.inkDim }}>imposed and
-              distributed</strong> so the section lands on the mouth quad rather than arriving rotated. Both end rings are still shared exactly, so
-              the driver face stays flat and the mouth still tiles; only the interior is free. That freedom is the point: it is what makes a cell's
-              centreline movable, and moving centrelines is the only mechanism that can lengthen an interior cell's path. The interpenetration
-              below is its price, and is not yet resolved. Note <em>k</em> ≤ 1 proves nothing here — read the measured clearance.
-            </div>
-          </div>
-
-          {/* EXPANSION PROFILE */}
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ ...secTitle, marginBottom: 0 }}>Per-cell realisation</span>
-              {<>
-                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
-                  T {fmt(profileT, 2)} · f_c {fmt(fcWanted, 0)} Hz set above
-                </span>
-                <button onClick={() => setProfileArea(profileArea === "open" ? "gross" : "open")}
-                  style={btn(profileArea === "open", C.series6)}>
-                  on {profileArea} area
-                </button>
-                {map.profFcMin != null && (
-                  <span style={{ fontFamily: C.mono, fontSize: 10, marginLeft: 6 }}>
-                    <span style={{ color: C.inkMuted }}>f_c </span>
-                    <span style={{ color: C.series4 }}>{fmt(map.profFcMin, 0)}–{fmt(map.profFcMax, 0)} Hz</span>
-                  </span>
-                )}
-              </>}
-            </div>
-            {profileT != null && !clearance && <div style={{ marginTop: 6 }}><Solving label="measuring clearance" /></div>}
-            {profileT != null && clearance && (
-              <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
-                {/* The NARROWEST gap is the one that says whether you have separate
-                    ducts at all. The widest is next to it because it is the one the
-                    eye reads off the section plot, and on its own it is reassuring
-                    while the ducts are touching somewhere else entirely. */}
-                {clearance.overlap > 0
-                  ? <span><span style={{ color: C.inkMuted }}>ducts INTERPENETRATE </span>
-                      <span style={{ color: C.series5 }}>{fmt(clearance.overlap, 3)} mm deep</span>
-                      <span style={{ color: C.inkMuted }}> at station {clearance.overlapAt}, {clearance.overlapStations} station(s)</span></span>
-                  : <span><span style={{ color: C.inkMuted }}>narrowest duct gap </span>
-                      <span style={{ color: clearance.minMid < 1e-3 ? C.series5 : C.series4 }}>
-                        {fmt(clearance.minMid, 3)} mm</span>
-                      <span style={{ color: C.inkMuted }}> at station {clearance.minMidAt}</span></span>}
-                <span><span style={{ color: C.inkMuted }}>widest </span>
-                  <span style={{ color: C.ink }}>{fmt(clearance.max, 2)} mm</span>
-                  <span style={{ color: C.inkMuted }}> at {clearance.maxAt}</span></span>
-                <span><span style={{ color: C.inkMuted }}>section scale k </span>
-                  <span style={{ color: map.profScaleMax > 1 + 1e-6 ? C.series5 : C.ink }}>
-                    {fmt(map.profScaleMin, 3)} – {fmt(map.profScaleMax, 3)}</span></span>
-              </div>
-            )}
-            {/* WHERE THE fc SPREAD COMES FROM. Freezing one variable at its mean
-                separates the two contributions. They partially cancel — an outer
-                cell has both a longer path and a larger ratio, which move fc in
-                opposite directions — so the full spread sits below the larger term
-                and quoting either alone misleads. */}
-            {profileT != null && thickness > 0 && map.rows[0].profRatioGross && (
-              <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
-                <span><span style={{ color: C.inkMuted }}>expansion ratio </span>
-                  <span style={{ color: C.series4 }}>{fmt(map.rows[0].profRatio, 3)}</span>
-                  <span style={{ color: C.inkMuted }}> · gross would read {fmt(map.rows[0].profRatioGross, 3)}</span></span>
-                <span><span style={{ color: C.inkMuted }}>ratio spread </span>
-                  <span style={{ color: map.ratioSpread < 0.5 ? C.series4 : C.series5 }}>{fmt(map.ratioSpread, 3)}%</span>
-                  <span style={{ color: C.inkMuted }}> · gross {fmt(map.ratioSpreadGross, 2)}%</span></span>
-              </div>
-            )}
-            {profileT != null && map.fcDecomp && (
-              <div style={{ marginTop: 6, display: "flex", gap: 18, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
-                <span><span style={{ color: C.inkMuted }}>f_c spread </span>
-                  <span style={{ color: C.ink }}>{fmt(map.fcDecomp.full, 2)}%</span></span>
-                <span><span style={{ color: C.inkMuted }}>from path length alone </span>
-                  <span style={{ color: C.series1 }}>{fmt(map.fcDecomp.fromLength, 2)}%</span></span>
-                <span><span style={{ color: C.inkMuted }}>from area ratio alone </span>
-                  <span style={{ color: C.series3 }}>{fmt(map.fcDecomp.fromRatio, 2)}%</span></span>
-                {map.fcDecomp.full < map.fcDecomp.fromLength - 0.01 && (
-                  <span style={{ color: C.inkMuted }}>— the two partially cancel</span>
-                )}
-              </div>
-            )}
-            {profileT != null && map.profFcMin != null && (
-              <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontSize: 10, color: C.inkMuted }}>to reach f_c = {fmt(fcWanted, 0)} Hz</span>
-                {/* m is solved from the geometry, so fc is a RESULT. Until path length
-                    is independently controllable, the honest way to ask for an fc is
-                    to show the path length that would deliver it against the length
-                    the cells actually have. */}
-                <span style={{ fontFamily: C.mono, fontSize: 11 }}>
-                  <span style={{ color: C.inkMuted }}>needs path </span>
-                  {fcReq.ok ? <>
-                    <span style={{ color: C.ink }}>{fmt(fcReq.lo, 1)}–{fmt(fcReq.hi, 1)} mm</span>
-                    <span style={{ color: C.inkMuted }}> vs {fmt(map.Lmin, 1)}–{fmt(map.Lmax, 1)} actual · </span>
-                    <span style={{ color: Math.abs(fcReq.shortfall) < 1 ? C.series4 : C.series5 }}>
-                      {fcReq.shortfall > 0 ? `${fmt(fcReq.shortfall, 1)} mm short` : `${fmt(-fcReq.shortfall, 1)} mm spare`}</span>
-                  </> : <span style={{ color: C.inkMuted }}>unreachable at this T</span>}
-                </span>
-                {/* THE INVERSION lives with the other depth solve, up in the
-                    horizontal-section card: both spend the same knob, so they
-                    sit together rather than at opposite ends of the page. */}
-                <span style={{ fontSize: 10, color: C.inkMuted }}>
-                  — solve depth for it in the horizontal-section card above
-                </span>
-              </div>
-            )}
-            <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.5 }}>
-              {<>m is <strong style={{ color: C.inkDim }}>solved</strong>, not asked for: (f_c, T) and the geometry are over-determined, so m is
-                  set to land each cell exactly on its own mouth area at its own path length. That makes the scale <em>k</em> = 1 at both ends,
-                  leaving the throat mating face and the mouth tiling untouched, and turns f_c into a readout of the loading you got.
-                  {" "}The law is written on the <strong style={{ color: C.inkDim }}>open</strong> passage — the cell outline less the half-divider
-                  on each shared side — because that is what the wave travels through. The gross outline includes wall the wave never sees, so keying
-                  on it understates the expansion and reports f_c low. Since the equal-area solve equalises <em>open</em> area, this also makes the
-                  throat reference identical across cells, which is what collapses the ratio spread. Note it is not a change of reference constant:
-                  the inset is a fixed offset, not a proportion, so the scale is solved per station inside the divider region — the outline is
-                  enlarged to give back what the wall takes, exactly the shell-oversize argument applied station by station.
-                  {" "}Leaving the <strong style={{ color: C.inkDim }}>axial depth</strong> free turns f_c from a readout into an input: solve depth
-                  for the cutoff you want.
-                  {" "}The gap between ducts is not a separate feature: it is the convex profile dipping below the near-linear fan of the centrelines,
-                  which are pinned together at both ends. T sets both — but only up to a point. Raising T flattens the dip, and past the T where
-                  the profile starts asking for more area than the tiling configuration has (<em>k</em> &gt; 1) the ducts come back into contact
-                  near the throat and then interpenetrate. Read the <strong style={{ color: C.inkDim }}>narrowest</strong> gap for that, never the
-                  widest: the widest keeps reporting several mm while the ducts are already touching somewhere else.</>}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* METRICS */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(158px, 1fr))", gap: 8, marginBottom: 14 }}>
-        <Metric label="Cells N" value={`${throat.N}`} sub={shown.family === "hgrid" ? `${shown.nc} × ${shown.nr}` : shown.rings.join(" + ")} />
-        <Metric label="Open area / cell" value={`${fmt(throat.openMean, 2)} mm²`} sub={`gross ${fmt(throat.areaMean, 2)} mm²`} />
-        <Metric label="Open-area spread" value={throat.spread < 1e-6 ? `${throat.spread.toExponential(1)}%` : `${fmt(throat.spread, 3)}%`}
-          sub={throat.spread < 1e-6 ? "achieved, not assumed" : "no equal-area solution"} color={throat.spread < 1e-6 ? C.series4 : C.series5} />
-        <Metric label="f₁ min" value={`${fmt(throat.f1min / 1000, 2)} kHz`} sub={`cell ${throat.f1minCell.label} · ${throat.f1minCell.f1model}`} color={C.series4} />
-        <Metric label="Isodiametric ceiling" value={`${fmt(throat.f1ceiling / 1000, 2)} kHz`} sub={`c·√N/(2D) · ${fmt((1 - throat.f1min / throat.f1ceiling) * 100, 0)}% left on the table`} />
-        <Metric label="Undivided exit" value={`${fmt(throat.fUndividedAz / 1000, 2)} kHz`} sub={`radial mode ${fmt(throat.fUndividedRad / 1000, 2)} kHz`} color={C.inkDim} />
-        <Metric label="Gain vs undivided" value={`${fmt(throat.f1min / throat.fUndividedAz, 2)}×`} sub={`ceiling is ${fmt(throat.f1ceiling / throat.fUndividedAz, 2)}×`} />
-        <Metric label="Worst aspect" value={fmt(throat.aspectMax, 2)} sub="equal area forbids all-square cells" />
-        {family === "hgrid" && <>
-          <Metric label="Free parameters" value={`${cfg.nParams}`}
-            sub={`${cfg.nLon + cfg.nLat} line shapes × (position + ${cfg.orders.length}) + α`} />
-          <Metric label="Spare freedom" value={`${cfg.spare}`}
-            sub={`${cfg.nConstraints} independent constraints`} color={cfg.spare > 0 ? C.ink : C.series5} />
-          <Metric label="Slider correction" value={fmt(solve.correction, 4)}
-            sub="‖p − p_requested‖_W" color={solve.correction > 0.2 ? C.series1 : C.ink} />
-        </>}
-        <Metric label="Divider blockage" value={`${fmt(throat.blockage * 100, 1)}%`} sub={`${fmt(throat.dividerTotal, 0)} mm of centreline at ${fmt(thickness, 2)} mm`} color={throat.blockage > 0.12 ? C.series1 : C.ink} />
-        <Metric label="Shell oversize" value={`⌀ ${fmt(fab.dShell, 2)} mm`} sub={`+${fmt(fab.oversize, 2)} mm on ⌀${fmt(exitDia, 1)} to give the area back`} />
-        <Metric label="Non-convex cells" value={`${throat.nonConvex}`} sub="Payne–Weinberger does not apply to these" color={throat.nonConvex ? C.series1 : C.ink} />
-        <Metric label="Curvature-flagged" value={`${throat.curvatureFlagged}`} sub="verify in ABEC" color={throat.curvatureFlagged ? C.series1 : C.ink} />
-        {map && <>
-          <Metric label="ΔL max" value={`${fmt(map.dL, 2)} mm`} sub={`λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz`}
-            color={map.band === "ok" ? C.series4 : map.band === "warn" ? C.series1 : C.series5} />
-          <Metric label="Max turning" value={`${fmt(map.turnMax, 1)}°`} sub="gross centreline turning — wall spread is the phase metric" />
-          <Metric label="Wall spread" value={`${fmt(map.wallSpreadMax, 1)} mm`}
-            sub={`longest vs shortest wall fibre · λ/8 = ${fmt(map.lambda / 8, 2)} mm`}
-            color={map.wallSpreadMax > map.lambda / 8 ? C.series1 : C.series4} />
-          <Metric label="Max twist" value={`${fmt(map.twistMax, 1)}°`} sub="cross-section rotation, throat to mouth" />
-          <Metric label="Max aim error" value={`${fmt(map.aimMax, 2)}°`} sub={`tolerance ≈ λ/(4d) = ${fmt(map.aimLimitDeg, 1)}°`} color={map.aimMax > map.aimLimitDeg ? C.series5 : C.ink} />
-        </>}
-        <Metric label="Speed of sound" value={`${fmt(c, 1)} m/s`} sub={`at ${temperature} °C`} />
-        {map && <Metric label="Bend centroid" value={fmt(map.bendCentroidMean, 3)}
-          sub="0 = all turning at the throat, 1 = at the mouth" color={map.bendCentroidMean < 0.5 ? C.series4 : C.inkDim} />}
-        <Metric label="Wavefront correction" value={fmt(2 / (1 + Math.cos(exitAngle * D2R)), 4)} sub="spherical / planar area, reported not applied" />
-      </div>
-
-      {/* EXPORTS */}
-      <div style={{ ...card, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ ...secTitle, marginBottom: 0 }}>Export</span>
-        <button style={expBtn} onClick={() => dl(`${stem}.dxf`, buildDXF(exportMap()), "application/dxf")}>DXF · one layer per station</button>
-        <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(exportMap()), "application/json")}>JSON cell definition</button>
-        <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(exportMap()), "text/csv")}>CSV · per cell</button>
-        <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(exportMap()), "text/csv")}>ΣA(x) CSV</button>
-        <button style={expBtn} disabled={!map} onClick={() => {
-          const solids = G.ductSolids(throat, exportMap(), { t: thickness });
-          if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
-        }}>STL · cell ducts</button>
-        <button style={expBtn} disabled={!map} onClick={() => {
-          const r = G.buildSTEP(throat, exportMap(), { t: thickness, name: stem });
-          if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
-          const integ = G.stepIntegrity(r.text);
-          const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
-          setStepNote({
-            ok,
-            msg: `${r.checks.ducts} solids · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
-              ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
-          });
-          if (ok) dl(`${stem}.step`, r.text, "application/step");
-        }}>STEP · B-spline solids</button>
-        <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center", marginLeft: 8 }}>
-          export stations
-          <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
-            style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
-        </label>
-        {stepNote && (
-          <span style={{ fontFamily: C.mono, fontSize: 10, color: stepNote.ok ? C.series4 : C.series5, flexBasis: "100%" }}>
-            STEP: {stepNote.msg}
-          </span>
-        )}
-        <span style={{ fontSize: 10, color: C.inkMuted, flex: "1 1 260px", lineHeight: 1.45 }}>
-          The STL carries the {throat.N} ducts as faceted closed solids — fine to print as-is or subtract from a lofted blank.
-          The <strong style={{ color: C.inkDim }}>STEP</strong> carries the same ducts as lofted B-spline solids — four wall faces split at the
-          section corners, interpolated through every sampled ring, plus two caps — which is the file to take into CAD when the ducts need
-          filleting, offsetting or joint cuts, because a kernel can boolean and feature real surfaces where it cannot a facet shell. The mouth
-          cap is a smooth fill of the mouth ring, not the aperture surface itself; it exists to close the solid. Exports build at the station
-          count set here; the on-screen preview runs at {PREVIEW_STATIONS} so the sliders stay responsive. DXF is 2-D per plane, so only the
-          throat layer will import as a sketch.
-        </span>
-      </div>
-
-      {/* CELL TABLE */}
-      <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden", marginBottom: 14 }}>
-        <div style={{ padding: "8px 12px", borderBottom: `1px solid ${C.border}` }}>
-          <span style={secTitle}>Cells · {throat.N} total</span>
-        </div>
-        <div style={{ overflowX: "auto", maxHeight: 360 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: C.mono, fontSize: 11 }}>
-            <thead><tr>{["cell", "open mm²", "L_long", "L_short", "aspect", "⌀", "convex", "P–W kHz", "f₁ kHz", "model", "path mm", "pad", "turn°", "twist°", "aim°",
-              ...(map && map.lengthen ? ["bow mm"] : []),
-              ...(profileT != null ? ["f_c Hz", "k max", "gap mm"] : [])].map((h) => (
-              <th key={h} style={{ textAlign: "right", padding: "6px 9px", borderBottom: `1px solid ${C.borderStrong}`, color: C.inkDim, fontSize: 10, fontWeight: 500, position: "sticky", top: 0, background: C.panel, whiteSpace: "nowrap" }}>{h}</th>
-            ))}</tr></thead>
-            <tbody>
-              {throat.cells.map((cc, i) => {
-                const r = map && map.rows.find((x) => x.id === cc.id);
-                const isMin = cc.id === throat.f1minCell.id;
-                const td = (v, col) => <td style={{ textAlign: "right", padding: "3px 9px", color: col || C.ink, whiteSpace: "nowrap" }}>{v}</td>;
-                return (
-                  <tr key={i} onMouseEnter={hoverEnter(cc.id)} onMouseLeave={() => setHover(null)}
-                    style={{ background: hover === cc.id ? C.panelAlt : i % 2 ? C.page + "60" : "transparent" }}>
-                    {td(cc.label, isMin ? C.series5 : C.inkDim)}
-                    {td(fmt(cc.open, 2), C.series1)}
-                    {td(fmt(cc.Llong, 2))}
-                    {td(fmt(cc.Lshort, 2))}
-                    {td(fmt(cc.aspect, 2), cc.aspect > 2.5 ? C.series1 : C.ink)}
-                    {td(fmt(cc.dia, 2))}
-                    {td(cc.convex ? "yes" : "no", cc.convex ? C.inkMuted : C.series1)}
-                    {td(cc.pwFloor ? fmt(cc.pwFloor / 1000, 2) : "—", cc.pwFloor ? C.inkDim : C.inkMuted)}
-                    {td(fmt(cc.f1 / 1000, 2), isMin ? C.series5 : C.series4)}
-                    <td style={{ textAlign: "right", padding: "3px 9px", color: C.inkMuted, fontSize: 10, whiteSpace: "nowrap" }}>
-                      {cc.f1model}{cc.curvatureSensitive ? " ⚠" : ""}
-                    </td>
-                    {td(r ? fmt(r.Lpath, 2) : "—", C.inkDim)}
-                    {td(r ? fmt(r.pad, 2) : "—", C.inkDim)}
-                    {td(r ? fmt(r.turnDeg, 1) : "—", C.inkDim)}
-                    {td(r ? fmt(r.twistDeg, 1) : "—", C.inkDim)}
-                    {td(r ? fmt(r.aimErrDeg, 2) : "—", r && r.aimErrDeg > map.aimLimitDeg ? C.series5 : C.inkDim)}
-                    {map && map.lengthen && td(r && r.snakeAmp > 1e-9 ? fmt(r.snakeAmp, 1) : "0", r && r.snakeAmp > 1e-9 ? C.series1 : C.inkMuted)}
-                    {profileT != null && <>
-                      {td(r && r.profFc != null ? fmt(r.profFc, 0) : "—", C.series4)}
-                      {td(r && r.profScaleMax != null ? fmt(r.profScaleMax, 3) : "—",
-                        r && r.profScaleMax > 1 + 1e-6 ? C.series5 : C.inkDim)}
-                      {td(clearance && clearance.perCell.has(cc.id)
-                        ? fmt(clearance.perCell.get(cc.id), 3) : "—",
-                        clearance && clearance.perCell.get(cc.id) < 1e-3 ? C.series5 : C.inkDim)}
-                    </>}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* NOTES */}
-      <div style={{ fontSize: 10, color: C.inkMuted, lineHeight: 1.6, padding: "0 4px", fontFamily: C.sans }}>
-        <strong style={{ color: C.inkDim }}>Why lines, and why they bend individually</strong> · A fixed square-to-disc map with adjustable u and v
-        division values offers (n_cols−1)+(n_rows−1) knobs against n_cols·n_rows−1 area constraints — for 6×3 that is a tensor-product grid with
-        4 parameters against 5 independent constraints, and it is <em>not solvable</em>. The tool will tell you so if you ask for it. Each line therefore
-        carries its own Chebyshev coefficients, which is far more freedom than two division vectors and far less than free nodes:
-        {" "}{family === "hgrid" ? `${cfg.nParams} free parameters against ${cfg.nConstraints} constraints here, leaving ${cfg.spare} spare` : "a handful of parameters rather than hundreds"}.
-        Only even orders appear under mirror symmetry — odd orders break it — and T₀ is a constant already absorbed into the line position.
-        <br />
-        <strong style={{ color: C.inkDim }}>Whole-line curvature can genuinely run out</strong> · Free nodes could always reach equal area. A line has to
-        stay one curve, so an equal-area grid may not exist for a given corner angle and bow request, and the honest answer is to say which constraint is
-        binding rather than to return a converged-looking distorted grid. Feasibility tightens as m falls, as α moves away from the equal-arc default, and
-        as the mouth aspect ratio departs from the grid aspect ratio. Non-crossing is checked on 64 samples in parameter space, which is enough: Φ is a
-        diffeomorphism, so lines that keep their order in the square keep it in the disc.
-        <br />
-        <strong style={{ color: C.inkDim }}>Singular vertices are not a layout failure</strong> · Mapping a rectangular index onto a disc must produce
-        vertices where the number of cells meeting is not four. The H-grid puts its four on the rim, exactly where the cells are already most distorted;
-        they are unavoidable for any rectangular index on a disc, so the question is only where they land, not whether they exist.
-        <br />
-        <strong style={{ color: C.inkDim }}>Rows, not columns</strong> · f₁_min is set by the row-direction edge length. Adding columns makes every cell
-        narrower — raising its aspect ratio — while L_long barely moves, so a 6×3 and an 8×3 land within a few percent of each other despite a third more
-        cells. Adding a row is what moves the number. Worth knowing before spending divider count on the wrong axis.
-        <br />
-        <strong style={{ color: C.inkDim }}>Shape distortion is mandatory here</strong> · An equal-area map cannot also be conformal unless it is a rigid
-        motion, so the residual aspect ratios are the price of the area constraint and not a solver deficiency. The conformal seed shows the best shapes
-        available — locally square cells, with the wrong areas; the equal-area solve then buys correct areas by spending exactly that squareness. Curvature is
-        applied in <em>parameter</em> space and pushed through the seed map, so the seed still governs cell shape quality: the same bow coefficients give
-        better-shaped cells on the conformal seed than on the elliptical one.
-        <br />
-        <strong style={{ color: C.inkDim }}>What the truncation costs</strong> · Line shapes stop at order 2m, so shapes needing finer structure are simply
-        unreachable. Raising m widens the feasible set and shrinks the correction the solver has to apply to your request — but it also adds parameters the
-        optimiser has to search. The area solve itself is exact to quadrature tolerance; the spread readout above is the ground truth, not an assumption of
-        equality.
-        <br />
-        <strong style={{ color: C.inkDim }}>What the first-mode number is, and is not</strong> · For a curved quadrilateral, f₁ ≈ c/(2·max(L_long, L_short))
-        with each L the mean of an opposing pair of edge arc lengths. That is a flat-rectangle approximation whose error is O((L/r_curv)²) <em>with the sign not
-        established</em> — strongly curved cells are flagged, not corrected. Where a closed form exists it is used instead and the cell says so: the full disc at
-        j′(1,1)·c/πD, and a circular sector at min(j′(π/β,1), j′(0,1))·c/2πa. The sector case is why a pure-sector layout saturates at the disc's own radial
-        mode for N ≥ 6 — a radial cut lies along a nodal line of that mode and cannot remove it, no matter how many more you add.
-        <br />
-        <strong style={{ color: C.inkDim }}>Where the dividers end, and why the tool no longer asks</strong> · Dividers raise the cutoff only over the length
-        they exist, so where they stop the cells recombine and the array of cell mouths becomes a discrete source distribution. The tool used to evaluate that
-        at an adjustable divider-end station and ask for three evanescent decay lengths of straight run beyond it. That station was removed, because this
-        geometry does not have one: the cells tile at the throat and tile again at the mouth, but the expansion profile pulls the ducts <em>apart</em> in
-        between — around 11 mm at mid-path — so there is no shared wall to end. The inset now tapers linearly from a full half-thickness at the throat to
-        nothing at the mouth, which is the only place both tiling conditions are actually true. The recombination analysis is worth restoring the moment ducts
-        are made to <em>meet</em>, because then there is a real wall and a real station at which it stops.
-        <br />
-        <strong style={{ color: C.inkDim }}>Assumptions carried in this build</strong> · Open-area correction is first order (t/2 per shared edge; corner
-        overlaps ≈ t²/4 ignored, which makes the open area very slightly pessimistic). Areas are throat-plane, not spherical-wavefront — the correction factor
-        2/(1+cos θ) is reported and never applied. Thermoviscous loss uses the wide-tube Kirchhoff approximation for a smooth wall; against FDM roughness
-        of Ra 15–40 µm and a boundary layer of order 20 µm at 15 kHz, that figure is a <em>lower bound</em>. Moser's construction and semi-discrete optimal
-        transport are exact in the continuum; discretised, any of them carries the integrator's error, which is why the achieved area spread is reported above
-        rather than equality being asserted.
-      </div>
     </div>
   );
 }

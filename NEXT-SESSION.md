@@ -1,24 +1,32 @@
 # Ginkgo Multicell Horn — immediate tasks
 
-## The cockpit layout comparison (2026-09-01) — awaiting the owner's pick
+## Done in the 2026-09-01 layout session
 
-`ginkgo-cockpit.html` is the SAME tool in the proposed two-pane layout,
-built as a deliberate duplicate (`src/GinkgoCockpit.jsx`) so the owner can
-compare it against the classic page before committing. Left pane scrolls:
-eight numbered stages in design chronology (driver → throat partition →
-coverage & mouth → expansion law → depth & path → path lengthening → a
-ghost slot for the coped joints → export), with the throat and mouth
-diagrams inside their own stages at the owner's call. Right pane is pinned:
-horn header, warnings, a tabbed viewport (3-D ducts / horizontal section /
-path lengths / cell table), and an independently scrolling verdict strip
-(acoustic behaviour · physical form · routing). Below ~1020 px it stacks
-back to one column.
-
-Rules while both pages exist (also in CLAUDE.md): the classic page is
-canonical; everything above `return (` is copied verbatim between the two
-files and any numeric/behaviour change lands in BOTH; layout changes belong
-to the cockpit alone. When the owner picks, the loser is DELETED — this
-duplication is a comparison rig, not a permanent fork.
+- **The tool is now a TWO-PANE layout and the single scrolling column is
+  GONE.** Both were built and compared side by side (`ginkgo-cockpit.html`
+  carried the candidate); the owner picked the two-pane version, so it was
+  promoted into the canonical `ginkgo-horn.html` / `GinkgoHorn.jsx` and the
+  comparison page, its mount script and its component were deleted. The
+  cockpit URL 404s in production, like the other retired URLs.
+  Left pane scrolls: eight numbered stages in design chronology — driver →
+  throat partition (throat plan inside it) → coverage & mouth (mouth plan
+  inside it) → expansion law → depth & path → path lengthening (the
+  path-length chart inside it) → ghost slot for the coped joints → export.
+  Right pane is pinned: horn header with solve status, warnings, a tabbed
+  viewport (3-D ducts / horizontal section / cell table) and a verdict strip
+  scrolling independently (acoustic behaviour · physical form · routing).
+  Stacks to one column below ~1020 px.
+- **The path-length chart lives with the inputs, not in the pinned pane**
+  (owner). Each bar is one cell's developed path against the longest, which
+  is exactly what stage 6 equalises; in the pinned pane it said nothing the
+  ΔL verdict did not already say.
+- **THE FORK DIVERGED WITHIN A DAY, and the diff caught it.** The bow-solver
+  session (lobe lock) landed in the classic file while the comparison copy
+  sat untouched, so the surviving file was assembled from the CLASSIC head
+  (newest logic, lobe lock included) plus the new render layer — not by
+  keeping the copy wholesale, which would have silently reverted that
+  session's work. Recorded in CLAUDE.md as the lesson: diff the shared half
+  before merging a fork, and keep forks short-lived.
 
 Updated by the UI session of 2026-09-01 (Hypex readout audit + mouth
 dimensions + duct-preview bug), on top of the 2026-08-31 build session (STEP

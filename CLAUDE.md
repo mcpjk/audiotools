@@ -37,7 +37,6 @@ annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
 ginkgo-horn.html          → src/ginkgo-main.jsx      → GinkgoHorn
-ginkgo-cockpit.html       → src/ginkgo-cockpit-main.jsx → GinkgoCockpit
 src/hgrid-model.js        that tool's physics, split out so node can test it
 src/palette.js            shared theme tokens — see below
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -50,13 +49,20 @@ Each tool is its own real HTML entry point. There is **no client-side router**,
 and that is deliberate: direct links, bookmarks and refreshes work with no
 server rewrite rules. Do not introduce one.
 
-**`ginkgo-cockpit.html` is a DELIBERATE DUPLICATE of the Ginkgo tool** — the
-same physics, state and readouts in a two-pane "cockpit" layout, kept as a
-separate page so the owner can compare the two before choosing one. The
-classic page stays canonical until that choice; a change to any NUMBER or
-BEHAVIOUR must land in both files (everything above `return (` is copied
-verbatim between them — keep it that way), while layout changes belong to
-the cockpit alone. When the owner picks, the loser is deleted, not kept.
+**The Ginkgo tool is a TWO-PANE layout**, chosen over the original single
+scrolling column after both were built and compared side by side. The left
+pane scrolls and carries the inputs as eight numbered stages in design
+chronology, each housing its own diagram; the right pane is pinned and
+carries the horn — status, warnings, a tabbed viewport and a verdict strip
+that scrolls independently. Below ~1020 px the panes stack into one column.
+The comparison page `ginkgo-cockpit.html` was DELETED once the choice was
+made and now 404s in production, the same accepted fate as the URLs below.
+
+**The duplication taught one lesson worth keeping**: the two files diverged
+within a day — a bow-solver change landed in one and not the other, and was
+only caught by diffing before the delete. If a tool is ever forked for
+comparison again, diff the shared half before merging, and keep the fork
+short-lived.
 
 ## Commands
 
