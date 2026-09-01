@@ -253,6 +253,62 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **THE FLARE CUTOFF AND THE LOADING LIMIT READOUTS ARE ARITHMETICALLY
+  CORRECT, and each carries a convention worth knowing before quoting it.**
+  Audited against an independent re-solve, never against the tool's own
+  output. FLARE CUTOFF prints `profFcMin-profFcMax`, the per-cell fc =
+  m·c/2pi with m the bisection root of hypexR(L,1,m,T) = ratio: re-solving
+  cell 0 from its own (ratio, L) reproduced the reported fc to every printed
+  digit at both depth 150 and 425, and hypexR(L) returned the ratio to 6
+  decimals. It reads WIDE at the tool's default depth — 643-913 Hz at depth
+  150, 42% spread — and that is the recorded equal-area cost, not an error:
+  the same geometry at depth 425 reads 329-342 Hz, 0.5% spread, because dL
+  collapses there. **A wide fc range is a signal to move depth, not a bug.**
+  LOADING LIMIT is c/(pi·dEq) with dEq the equivalent diameter of
+  `mouthAreaTotal` — and `mouthAreaTotal` is the SUMMED CELL AREA ON THE
+  CURVED CAP, not the projected aperture. So the criterion is stated on a
+  surface larger than the hole the wave leaves through, and it always
+  flatters: measured 996.8 cm² of surface against a 901.9 cm² chord
+  rectangle at 90x40 (1.105x), giving 312 Hz where the projection gives 328;
+  at 120x90 it is 1.192x, 173 Hz against 189. Two further conventions ride
+  in it: it is an equivalent-AREA circle, so a genuinely rectangular mouth's
+  own perimeter says something else again (1281.7 mm -> 272 Hz at the
+  defaults), and dEq has no per-axis form at all, which is why PATTERN is
+  reported separately per axis. All of this is the standard 1-D convention
+  and matches the horn tool; it is recorded because "312 Hz" is otherwise
+  read as a property of the aperture rather than of the cap.
+- **A DEAD TERNARY PINNED THE REFERENCE HORN AT 90 DEG.** `hypexReference`
+  was called with `coverageDeg: mouthMode === "arc" ? thetaH : 90`, written
+  while "arc" was a live mouth mode. `mouthMode` has been the constant
+  `"biradial"` since the apex was removed, so the condition was permanently
+  false and Th_h never reached the reference. It fed diaDirectivity =
+  lambda/sin(Th/2) and through it "Mouth area needed", "Minimum horn
+  length", `governedBy` and the two diameters quoted in the card's prose.
+  Measured at the default throat, fc 500, T 0.7: Th_h 60 wants 15308 cm² over
+  432 mm and was shown 7654 cm² over 393 mm — 2x under; Th_h 120 wants 5103
+  and was shown the same 7654 — 1.5x over. Fixed to read `thetaH`. **The
+  general lesson is that removing a mode leaves its ternaries behind as
+  branches that always take one side**, and the compiler cannot see it —
+  grep for the other removed mode names when one is retired.
+- **A HANDLER BOUND ONCE CANNOT CLOSE OVER RENDER STATE, and in `DuctPreview`
+  that silently reverted the 3-D preview to the geometry it opened with.**
+  The pointer listeners are attached in a `useEffect` with no deps —
+  deliberately, since rebinding them on every geometry change would drop a
+  drag in progress — so they captured the FIRST render's `requestDraw`, which
+  captured the first render's `draw`, which closed over the first `geom`. The
+  preview tracked the sliders correctly right up until it was touched, and
+  then the first drag or scroll repainted the ORIGINAL horn and every later
+  frame stayed there. Fixed with a `drawRef` updated in a bare effect
+  (declared BEFORE the `[geom]` effect, so it is current when that one
+  fires), and `requestDraw` calling `drawRef.current()`.
+  **The test is a ZERO-pixel drag**: mousedown, mousemove with dx = dy = 0,
+  mouseup. The view is untouched, so the only thing that can move the image
+  is which geometry the redraw reached for, and a canvas-pixel hash then
+  decides it outright. Verified in both directions — against the unfixed
+  build the hash returned to exactly the opening hash, against the fix it
+  stayed on the current one, and a real 40x12 drag still moved it. A test
+  that dragged by a real distance could not have told the two apart.
+
 - **BEND TIGHTNESS IS PINNED AT 0.5, and the minimum is NOT the safe end.**
   The two Hermite tangent magnitudes are the cubic's only remaining freedom
   and the measured optimum barely moves: wallSpread bottoms at 0.45-0.55 on
