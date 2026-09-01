@@ -142,6 +142,25 @@ appeared twice in this file by paste accident, now deduplicated.)
   so at a depth far from the ΔL optimum the metric stops discriminating —
   read amplitude and overlap there.
 
+## Done in the 2026-09-01 defaults + throat-boundary session
+
+- **New default geometry** (owner's numbers): exit half-angle 16.55 deg,
+  mouth 90x0 deg / 560x250 mm, axial depth 300 mm, bow region the throat
+  fifth. Better on every reported metric than the old set; the comparison
+  table and the caveat that depth 300 is a CHOICE (the dL optimum is
+  360.8 mm) are in `CLAUDE.md`.
+- **The clearance metric has a throat boundary now** (`throatFloor`), the
+  mirror of the mouth's joint walk-back that was missing. The minimum-gap
+  input defines it: the throat run is where the ducts are still within one
+  minimum of touching and have not yet opened by one. Off by default, so
+  nothing else in the suite moved. 9 new checks (385 total).
+  **What is NOT done**: the separation solver now measures on the corrected
+  set, so at the current defaults it reports "already clear" — the horn has
+  no defect once the knife edge stops being counted as one. That is the
+  right answer, but it means the solver is now exercised only on geometries
+  pushed away from the defaults, and its tests are the only thing keeping it
+  honest. Worth a deliberate check the next time the defaults move.
+
 ## Done in the 2026-09-01 bow-solver session
 
 - **The bow solver no longer chooses the lobe count by default.** "lobes

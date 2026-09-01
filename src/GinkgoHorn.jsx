@@ -370,7 +370,7 @@ export default function GinkgoHorn() {
 
   // ── driver ──
   const [exitDia, setExitDia] = useState(35.5);
-  const [exitAngle, setExitAngle] = useState(8);
+  const [exitAngle, setExitAngle] = useState(16.55);
   const [temperature, setTemperature] = useState(30);
   const [thickness, setThickness] = useState(0.4);
   const [process, setProcess] = useState("FDM");
@@ -388,7 +388,7 @@ export default function GinkgoHorn() {
   const [request, setRequest] = useState(null);    // p_requested, or null for nominal
 
   // ── mouth ──
-  const [depth, setDepth] = useState(150);
+  const [depth, setDepth] = useState(300);
   const [divergeLen, setDivergeLen] = useState(0);
   const [arriveLen, setArriveLen] = useState(0);
   // BEND TIGHTNESS IS FIXED, NOT DIALLED. The two Hermite tangent
@@ -411,9 +411,9 @@ export default function GinkgoHorn() {
   // either axis is a flat one.
   const mouthMode = "biradial";
   const [thetaH, setThetaH] = useState(90);
-  const [thetaV, setThetaV] = useState(40);
-  const [arcH, setArcH] = useState(480);
-  const [arcV, setArcV] = useState(213);
+  const [thetaV, setThetaV] = useState(0);
+  const [arcH, setArcH] = useState(560);
+  const [arcV, setArcV] = useState(250);
   const [dlSolve, setDlSolve] = useState(null);
   // ── per-cell path lengthening ──
   // Off by default: it is a correction to apply after depth has done what it
@@ -424,8 +424,12 @@ export default function GinkgoHorn() {
   // WHERE the bow sits, as a fraction of each cell's own path. The straight
   // runs are excised from this on top, per cell, inside the model — a run
   // asked to be straight is not a place to put a bow.
+  // Defaults to the throat fifth: a narrower region is a SMALLER bow that
+  // turns harder (amplitude goes as sqrt(span), curvature as span^-1.5), and
+  // the measured wall spread falls with it too — 17.44 mm at throat half
+  // against 15.16 at throat fifth, for 46.8 mm of amplitude against 25.6.
   const [bowFrom, setBowFrom] = useState(0);
-  const [bowTo, setBowTo] = useState(0.5);
+  const [bowTo, setBowTo] = useState(0.2);
   // ONE lobe by default, at the owner's call: three humps read as a
   // corrugation rather than a duct and are not commercially acceptable, and
   // one is the shape a real part wants. Two is offered because the measured
@@ -679,7 +683,12 @@ export default function GinkgoHorn() {
     if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setClr(null); return; }
     const id = setTimeout(() => setClr({
       of: map,
-      value: G.ductClearance(map.rows, { jointAware: !!map.bulge, thinBand: sepFloor }),
+      // `sepFloor` is the one minimum-gap number: it is the thin-wall band,
+      // the separation target, AND the throat knife-edge boundary — the run
+      // over which the ducts have not yet opened to it is not a defect.
+      value: G.ductClearance(map.rows, {
+        jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
+      }),
     }), 30);
     return () => clearTimeout(id);
   }, [map, sepFloor]);
@@ -872,6 +881,8 @@ export default function GinkgoHorn() {
       w.push(`The narrowest duct-to-duct gap is ${fmt(clearance.minMid, 4)} mm at station ${clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
     if (map && map.bulge && clearance && clearance.joint && clearance.joint.engaged < clearance.joint.pairs)
       w.push(`The coped joints are on but only ${clearance.joint.engaged} of ${clearance.joint.pairs} neighbour pairs actually meet — the bulge is too small to reach across the gap on the rest, so those edges end blunt, not coped. Raise the bulge amplitude, or lower T to shrink the gap the profile opens.`);
+    if (map && clearance && clearance.throat && clearance.throat.saturated > 0)
+      w.push(`${clearance.throat.saturated} of ${clearance.throat.pairs} neighbour pairs never open to the ${fmt(sepFloor, 1)} mm minimum anywhere along the path, so the throat knife-edge run would have swallowed the whole duct — it is capped, and the gap reported is the best those pairs actually have. Lower the minimum, or give the profile more room (lower T, or more depth).`);
     if (map && clearance && clearance.thin && clearance.thin.count > 0 && !(clearance.overlap > 1e-3))
       w.push(`${clearance.thin.count} spot(s) between ducts carry a wall sliver thinner than ${fmt(sepFloor, 1)} mm (worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at}) — separate ducts that close will not print as two walls. Solve the separation in stage 6, or let them merge by raising the bulge.`);
     if (map && map.lengthen && map.lengthen.shortfall > 0.1)
@@ -1836,6 +1847,14 @@ export default function GinkgoHorn() {
             single knob cannot fix the geometry. <em>Per-duct nudge</em> resolves each over-packed row and column as a contact chain and
             moves every duct individually — a few seconds, and the field keeps both mirrors by construction. Both leave the throat face and
             the mouth tiling untouched, and lengthening re-equalises the separated paths if it is on.
+            <br />
+            The minimum also sets <strong style={{ color: C.inkDim }}>where it starts applying</strong>. The cells tile at the throat exactly
+            as they tile at the mouth, so the first stations are a knife edge too, and asking for a gap there asks the ducts for room they have
+            had no path length to open. Each pair's <strong style={{ color: C.inkDim }}>throat run</strong> is the stretch from the throat over
+            which the gap is still within one minimum of touching — inside it, contact is the knife edge; after it, a gap under the minimum is
+            the defect it always was. The band is symmetric, and the negative half is what keeps this honest: a duct driven <em>through</em> its
+            neighbour by more than the minimum ends the run and is reported, so the profile's own interpenetration can never be filed away as a
+            knife edge. Whatever contact the run does contain is reported beside it, never hidden.
           </div>
         </div>
       </Stage>
@@ -2150,7 +2169,10 @@ export default function GinkgoHorn() {
               sub={!clearance ? "deferred off the render pass"
                 : clearance.overlap > 0
                   ? `ducts interpenetrate at station ${clearance.overlapAt} · k ${fmt(map.profScaleMin, 2)}–${fmt(map.profScaleMax, 2)}`
-                  : `narrowest gap at station ${clearance.minMidAt} · widest ${fmt(clearance.max, 1)} mm`}
+                  : `narrowest gap at station ${clearance.minMidAt} · widest ${fmt(clearance.max, 1)} mm`
+                    + (clearance.throat && clearance.throat.runs
+                      ? ` · measured past the throat knife edge, ${clearance.throat.knifeMax} of ${clearance.throat.stations} stations in`
+                      : "")}
               color={!clearance ? C.inkMuted : clearance.overlap > 0 || clearance.minMid < 1e-3 ? C.series5 : C.series4} />
           )}
           {map && profileT != null && (
