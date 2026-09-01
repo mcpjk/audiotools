@@ -705,6 +705,39 @@ exists.
   2 reads +0.046 mm, still under any usable floor, because the ducts have
   not had path length to open yet. The boundary wanted is "where the ducts
   have separated", not a fixed station count.
+- **THE THROAT BOUNDARY IS NOW BUILT (`throatFloor`), AND THE FLOOR DEFINES
+  IT — one number, not two.** A pair's THROAT RUN is the contiguous run from
+  station 0 over which the gap stays inside the band (-floor, +floor): still
+  within one tolerance of touching, and not yet separated by one. Defect
+  statistics start after it. So raising the minimum moves the boundary with
+  it, which is the point — measured live in the UI at the defaults, floor
+  0.5 / 2 / 5 mm reads the worst gap at station 2 / 4 / 6 of 24, at 0.53 /
+  2.02 / 5.13 mm.
+  **THE BAND IS SYMMETRIC, AND THE NEGATIVE HALF IS THE WHOLE DESIGN.** The
+  obvious rule — mirror the mouth's joint walk-back, i.e. walk while in
+  contact — is WRONG at the throat: the mouth's overlap is a deliberate
+  bulge, the throat's is the profile's own interpenetration, and a contact
+  walk would file the most important defect away as a knife edge. What
+  separates them is scale, measured: the near-throat wobble runs 0.002-0.24
+  mm, a real interpenetration dives to -1.5 mm by station 1 and -3.6 mm by
+  station 5. So a dive past -floor ENDS the run. Verified both ways — at the
+  old defaults, depth 150, T 0.7 and 1.0, minMid stays -2.955 and -3.640 mm
+  at the same stations with the rule on as with it off.
+  **THE WOBBLE DOES NOT REFINE AWAY, which is why a station COUNT could not
+  have worked**: measured -0.002 / -0.122 / -0.241 / -0.122 mm at 24 / 32 /
+  48 / 64 stations, non-monotone, i.e. the sampled minimum near the throat
+  depends on where the stations land. Keyed to the floor instead, the answer
+  is stable: 0.528 / 0.513 / 0.513 / 0.513 mm across the same four.
+  Two guards, both tested. The run is capped two stations short of the joint
+  so the defect set can never be EMPTY — a floor of 40 mm on this horn would
+  otherwise return minMid = Infinity and read as "clear"; it now reports the
+  best gap it has (9.25 mm) with `throat.saturated` at 27/27 pairs, and the
+  UI warns. And `throat.worst` reports the deepest contact found INSIDE the
+  run, exactly as `joint.engageMax` does at the mouth, so the classification
+  can never hide a magnitude. `throatFloor: 0` is the default and reproduces
+  the boundary-less form to the last bit, every statistic and the whole
+  per-station profile — asserted, because every other clearance test in the
+  suite is written against that form.
 - **THE SEPARATION SOLVER IS A CONTACT-CHAIN ITERATION, because pairwise
   pushes diffuse and one shared knob is non-monotone.** Three measured
   facts drove the design. (1) Uniform radial spread improves the worst gap
