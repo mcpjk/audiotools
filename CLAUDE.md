@@ -257,7 +257,9 @@ other leg of the pick-two-of-three — and the signed clearance is separable
 render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
 the longest cell's length in swept mode, and the tool previews the exported
 duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
-rule stands).
+rule stands). The physical horn ships as a shell STEP kit — blanks plus
+cutters, boolean in CAD (`buildShellSTEP`; see the shell finding below) —
+and the same canvas can show the blanks (the "horn" view).
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -619,6 +621,36 @@ exists.
   Face orientation is MEASURED at the patch centre, never assumed: the two
   caps' natural u x v normals point the same axial way, so any assumed
   winding gets exactly one of them wrong.
+- **THE HORN SHELL IS EXPORTED AS BLANKS PLUS CUTTERS, because the material's
+  topology CHANGES along the path and no single loft can carry it.** Near the
+  throat the material is one block threaded by 18 passages, mid-path it is
+  separate tubes (the classic multicell bundle), at the mouth the walls taper
+  to the knife edges — that transition is what a CAD kernel's booleans exist
+  to resolve. `buildShellSTEP` emits two solids per cell and states the
+  recipe: union the blanks, subtract the cutters. A BLANK is the duct's own
+  rings pushed OUTWARD through the same mitred-offset machinery as the
+  divider inset (negative d): full `wall` on rim sides, max(wall − t/2·taper,
+  0) on shared sides, so blank-plus-inset composes to max(wall, t/2·taper) —
+  the max() is what guarantees adjacent blanks always reach the tiling
+  outline and the union can never trap a missing-material sliver between two
+  dividers. The dividers between passages therefore stay at the LAYOUT t near
+  the throat whatever the shell wall is, because the cutters carve the
+  passages back out of whatever the blanks put there; the shell wall sets
+  only the outer skin and the mid-path tubes, which merge where ducts run
+  closer than 2·wall. A CUTTER is the duct extended past both end faces —
+  without that, the blank's cap and the duct's cap are two different fills of
+  nearly the same ring (the cap-fill ambiguity finding above), and the
+  subtraction leaves a MEMBRANE over the passage wherever the blank's fill
+  lies in front; the default 3 mm clears the ~1 mm sag difference. Two exact
+  identities pin the construction and are tested as closed forms: the mitred
+  offset is exactly invertible (out then in returns every line, measured
+  1e-14 at the throat, where the outset segments lie ON the offset lines),
+  and a ring translated along its own unit vector-area normal spans a prism
+  of exactly |A_vec|·ext whatever caps it, so the extension's added volume is
+  ext·(|A_throat|+|A_mouth|) to 1e-9 relative — and the throat ring's
+  vector-area normal is exactly −z (planar ring), so the cutter's throat cap
+  is exactly planar in z = −ext. The 3-D viewport's "horn" option shows the
+  BLANKS — the outer form — never the boolean result, and says so.
 - **A CAPPED DUCT'S VOLUME DEPENDS ON THE CAP FILL, and that explains the
   whole brep-vs-STL volume difference.** The mouth ring is NON-PLANAR in
   every mouth mode — rect included, its ring spans ~1.7 mm of z — so the
