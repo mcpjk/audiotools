@@ -2732,6 +2732,75 @@ head("Aperture surface, horn body, shell orientation");
     check("the bow leaves the mouth ring on the aperture", dM, 0, 1e-9, "mm");
   }
 
+  // ── THE BANDED KIT: blocks where the ducts tile, tubes and webs where they
+  // do not, and no two positive solids ever graze ───────────────────────────
+  // The union of per-cell blanks failed in CAD because every neighbouring
+  // pair passes through exact tangential contact (overlapping at both ends,
+  // apart mid-path — 54 crossings at the defaults). The kit partitions the
+  // horn by what the material IS at each station, measured on the duct gaps.
+  {
+    const bands = M.shellBands(th, map, { t, wall, margin: 2, ov: 2 });
+    checkTrue("the tube band is found where every pair clears 2·wall + margin", !!bands.tubes && bands.tubes.qC - bands.tubes.qB > 6,
+      bands.tubes ? `stations ${bands.tubes.qB}-${bands.tubes.qC} of ${bands.S - 1}, threshold ${bands.threshold} mm` : "no band");
+    let below = 0;
+    for (let q = bands.tubes.qB; q <= bands.tubes.qC; q++) if (bands.gapMin[q] < bands.threshold) below++;
+    check("inside the band no adjacent pair is under the threshold", below, 0, 0, "stations");
+    checkTrue("outside the band the ducts are close: the blocks are blocks",
+      bands.gapMin[0] < 1 && bands.gapMin[bands.S - 1] < 1e-6, `throat ${bands.gapMin[0].toFixed(2)} mm, mouth ${bands.gapMin[bands.S - 1].toExponential(1)} mm`);
+    const kit = M.bandedShell(th, map, { t, wall, R });
+    const c = kit.checks;
+    check("the kit has two blocks", c.blocks, 2, 0, "");
+    check("one tube per duct", c.tubes, th.cells.length, 0, "");
+    check("one web per adjacent pair (6x3: 15 row + 12 column)", c.webs, 27, 0, "");
+    // no two tubes touch: measured on the tube rings, not inferred from the ducts
+    checkTrue("tubes clear each other by at least the margin everywhere in the band", c.tubeClear >= 2,
+      `${c.tubeClear.toFixed(2)} mm at ${c.tubeClearAt.pair}, station ${c.tubeClearAt.q}`);
+    checkTrue("webs are never thinner than the margin", c.webWidth >= 2, `${c.webWidth.toFixed(2)} mm`);
+    // the blocks contain every duct by the wall over their bands, in 3-D
+    checkTrue("the throat block holds the wall round every duct (3-D)", c.throatBlock.worst > 0.75 * wall,
+      `min ${c.throatBlock.worst.toFixed(2)} mm at station ${c.throatBlock.at}, cell ${c.throatBlock.cell}`);
+    checkTrue("the mouth block holds the wall round every duct (3-D)", c.mouthBlock.worst > 0.75 * wall,
+      `min ${c.mouthBlock.worst.toFixed(2)} mm at station ${c.mouthBlock.at}, cell ${c.mouthBlock.cell}`);
+    // the joins overlap: the blocks reach `ov` stations into the tube band
+    const b1 = kit.solids.find((x) => x.label === "throat block"), b3 = kit.solids.find((x) => x.label === "mouth block");
+    const tube = kit.solids.find((x) => x.label.startsWith("tube "));
+    check("the throat block reaches into the tube band", b1.sections.length - 1, bands.tubes.qB + 2, 0, "stations");
+    check("the mouth block starts inside the tube band", (bands.S - 1) - (b3.sections.length - 1), bands.tubes.qC - 2, 0, "stations");
+    check("tubes span exactly the band", tube.sections.length - 1, bands.tubes.qC - bands.tubes.qB, 0, "stations");
+    // block ends: the throat face is the exact circle, the mouth face on the aperture
+    let rT = 0, zT = 0, dM = 0;
+    for (const p of b1.sections[0].pts) { rT = Math.max(rT, Math.abs(Math.hypot(p[0], p[1]) - (R + wall))); zT = Math.max(zT, Math.abs(p[2])); }
+    for (const p of b3.sections[b3.sections.length - 1].pts) dM = Math.max(dM, Math.abs(ap.deviation(p)));
+    check("the throat block's face is the circle R + wall", rT, 0, 1e-9, "mm");
+    check("and planar in z = 0", zT, 0, 1e-12, "mm");
+    check("the mouth block's face lies on the aperture", dM, 0, 1e-9, "mm");
+    // a web is buried m inside each tube's wall: its side runs sit wall - m
+    // from the duct, the tube's face wall from it
+    const w = kit.solids.find((x) => x.label.startsWith("web "));
+    const [la, lb] = w.label.slice(4).split("|");
+    const dA = M.ductSections(th.cells.find((x) => x.label === la), map.rows.find((r) => r.id === th.cells.find((x) => x.label === la).id), { t });
+    const q = 5, ring = w.sections[q].pts, per = ring.length / 4;
+    let dmin = Infinity;
+    for (let k = 0; k < per; k++) { const p = ring[k]; for (const d of dA[bands.tubes.qB + q].pts) dmin = Math.min(dmin, Math.hypot(p[0] - d[0], p[1] - d[1], p[2] - d[2])); }
+    checkTrue("a web's side run sits wall - m from its duct, i.e. m inside the tube wall", Math.abs(dmin - (wall - kit.m)) < 0.3,
+      `${dmin.toFixed(2)} mm against ${(wall - kit.m).toFixed(2)}`);
+    // the STEP: positives first, cutters last, every solid valid
+    const out = M.buildShellSTEP(th, map, { t, wall, mode: "bands", name: "bandstest" });
+    checkTrue("bands mode emits blocks, tubes, webs and cutters as separate solids",
+      !!out && out.mode === "bands" && out.checks.ducts === 2 + 18 + 27 + 18 && out.checks.edgePairing,
+      out ? `${out.checks.ducts} solids, pairing ${out.checks.edgePairing}` : "no output");
+    check("every kit surface passes through its samples", out.checks.residual, 0, 1e-9, "mm");
+    checkTrue("the file is referentially intact", M.stepIntegrity(out.text).ok, "");
+    // degenerate case: a wall too thick for any pair to clear gives ONE block
+    // from throat to mouth — the construction becomes the envelope skin, valid
+    // precisely because everything then counts as tiled
+    const one = M.bandedShell(th, map, { t, wall: 12, R });
+    checkTrue("a wall no pair can clear yields one block and no tubes", one.checks.blocks === 1 && one.checks.tubes === 0 && one.checks.webs === 0,
+      `${one.checks.blocks} block(s), ${one.checks.tubes} tubes`);
+    checkTrue("and that block still holds its wall round every duct", one.checks.throatBlock.worst > 0.75 * 12,
+      `${one.checks.throatBlock.worst.toFixed(2)} mm against 12`);
+  }
+
   // ── orientation: ONE decision, and it must come out outward ──────────────
   // A shell whose faces are oriented by a per-face radial proxy can disagree
   // with itself; the body is where that happened. The whole-shell integral

@@ -686,8 +686,73 @@ exists.
   Face orientation is MEASURED at the patch centre, never assumed: the two
   caps' natural u x v normals point the same axial way, so any assumed
   winding gets exactly one of them wrong.
-- **THE HORN SHELL IS EXPORTED AS ONE BODY PLUS CUTTERS, because unioning
-  per-cell blanks is ILL-POSED BY CONSTRUCTION.** This supersedes the
+- **THE HORN SHELL IS EXPORTED AS BLOCKS, TUBES AND WEBS (mode `"bands"`,
+  the default since 2026-09-02), BECAUSE THE TWO EARLIER FORMS FAILED FOR
+  OPPOSITE REASONS.** Per-cell blanks needed a union, and the union grazes:
+  measured at the defaults, wall 3, all 27 adjacent pairs pass through exact
+  tangential contact TWICE — the column pairs at u = 0.056-0.125, the row
+  pairs near u = 0.30, everything again at u = 0.970-0.976 (blank contact is
+  where the duct gap equals 2·wall) — and the default bow moves the row
+  crossings to u = 0.28-0.34 and HALVES their rate, which is more degenerate.
+  The one-piece wrapped body needed no union but its outline had to be found
+  by a discrete search at every station (raster, trace, resample), and noise
+  that does not correlate station to station lofts into surface texture; the
+  owner rejected it on sight. The ducts are built from stations too and are
+  clean, because their rings are EVALUATED from a smooth map with fixed
+  correspondence, never derived. So the kit uses each construction only where
+  it is exact, partitioned by what the material IS, measured (`shellBands`:
+  the minimum adjacent-pair gap at every station, and the longest contiguous
+  run where it clears 2·wall + 2 mm):
+  (1) BLOCKS where the ducts tile — the throat, and the mouth (with a bulge
+  the whole engagement lives inside the mouth block, so the coped joint
+  never meets a union). A block's station is the CONVEX HULL of every duct
+  point in the loop's best-fit plane, offset outward by the wall with a true
+  ROUND at each hull vertex (a convex polygon plus a disc: edges and arcs,
+  nothing mitred — a mitred offset of the 1-3 mm notch between two rim
+  ducts' outer sides self-intersects, measured 1.8 mm under the wall).
+  The offset is wall/|e·n| (e the offset direction, n the duct flank, cap
+  3x) because a rim duct leaving obliquely sees only cos(phi) of an in-plane
+  offset, and hulling only the rim sides let a short-axis bow turn a shared
+  corner past them (0.17 mm of wall). Throat face the exact circle R + wall,
+  mouth face on the aperture. Runs split at the four singular rim vertices.
+  (2) TUBES where every adjacent pair clears 2·wall + 2 mm: each duct's own
+  rings offset by exactly the wall in their own planes (swept sections are
+  normal to the centreline, so the in-plane offset IS the perpendicular
+  wall). By the band's definition no two tubes can touch, and the kit
+  measures it on the tube rings anyway: 2.15 mm plain, 2.72 with the bow.
+  (3) WEBS between every adjacent pair: a curved box between the middle
+  `webFrac` (default 0.5) of the two facing sides, each side run offset by
+  wall - m so the web is BURIED m = min(1, wall/3) inside each tube's wall —
+  its side faces are parallel to the tube faces and never coincident, its
+  top and bottom cross the tube faces transversally. Webs are structural,
+  not cosmetic: without them band 2 is eighteen tubes joined only through
+  the end blocks. Adding webs into space is the robust direction; carving
+  slots out of a monolith (the old Task F) risked slivers and kept the
+  monolith skin.
+  (4) THE BLOCKS REACH `ov` = 2 STATIONS INTO THE TUBE BAND, and their offset
+  rises by m over the block toward the band, so every block-tube and
+  block-web join is a transversal interpenetration and no block rim ever
+  coincides with a tube rim. Cutters unchanged (`extendSections`).
+  Measured at the 2026-09-02 defaults, wall 3, 48 stations: band 2 =
+  stations 18-46 (u 0.375-0.958), 2 blocks + 18 tubes + 27 webs + 18
+  cutters = 65 solids, 17-18 MB; block wall in 3-D 2.89 plain / 2.41 with
+  the default bow / 2.37 half-path bow (the last few percent are the cubic
+  loft where the bow starts), mouth block 2.96-2.99; webs ≥ 4.6 mm wide. A
+  horn whose pairs never clear the threshold (bulge 5 + short-axis bow at
+  these defaults) gets ONE block throat to mouth — the envelope skin, valid
+  precisely because everything then counts as tiled — and reports its wall
+  honestly (0.03 mm there: that bow runs a rim duct nearly parallel to the
+  stations, which no station-based skin can hold). CAD: one union of every
+  positive solid, then the subtractions. `skinClearance` now signs by the
+  RING'S OWN-PLANE containment, not the nearest triangle's normal (a point
+  inside a block sat on the outward side of a notch flank and read 12 mm
+  outside) and not xy (a tilted non-planar ring read 11 mm), and takes its
+  wall sense from a majority vote of wall normals, not the cap-pattern
+  volume integral (a block chained the other way flipped it).
+  What follows is the record of the two earlier forms, kept because their
+  measurements still hold.
+- **THE ONE-BODY FORM (mode `"solid"`), superseded: unioning per-cell blanks
+  is ILL-POSED BY CONSTRUCTION.** This supersedes the
   blanks-plus-cutters default recorded below, which the owner's first CAD
   round trip failed on: the unions would not run. The cause is geometry, not
   a tolerance. Adjacent blanks OVERLAP near both ends (the ducts nearly tile

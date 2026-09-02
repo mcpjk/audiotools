@@ -5734,12 +5734,11 @@ function polishThroat(ring, want, tol = 0.3) {
 // smallest clearance (negative = outside the horn); `deficits` lists the
 // (station, vertex) bins where it falls under the wall, for the feedback
 // loop above.
-export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall = 0, reach = 1, step = 2 } = {}) {
+export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall = 0, reach = 1, step = 2, qMin = 1, qMax = null, ringOf = null } = {}) {
   const secs = body.sections, S = secs.length, N = secs[0].pts.length;
   const ap = body.surf ? apertureFrame(body.surf) : null;
   const br = ductBrep(secs, { capMouthPts: ap ? apertureCapGrid(secs[S - 1].pts, ap) : null });
   if (!br) return null;
-  const sgn = brepShellOrientation(br).outward ? 1 : -1;
   const n = br.n, NU = n * ku, NV = (S - 1) * kv;
   const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -5773,10 +5772,32 @@ export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall =
   const grid = new Map();
   const gk = (ix, iy, iz) => `${ix},${iy},${iz}`;
   const gi = (v) => Math.floor(v / cellSz);
-  const tris = [];
+  // THE OUTWARD SENSE OF THE WALLS is one bit for the whole shell, decided
+  // by majority vote of every wall triangle's natural normal against the
+  // ray from its station's ring centroid. The whole-shell volume integral
+  // (brepShellOrientation) assumes the caps' senses relative to the walls
+  // in the duct rings' winding; a block whose rim chain winds the other way
+  // let its far cap dominate the sum and read every wall backwards, and a
+  // duct 12 mm inside the skin measured 12 mm outside it.
+  const ringCtr = secs.map((sec) => { const c = [0, 0, 0]; for (const p of sec.pts) { c[0] += p[0] / N; c[1] += p[1] / N; c[2] += p[2] / N; } return c; });
+  const grids = [];
+  let vote = 0;
   for (let wI = 0; wI < 4; wI++) {
     const w = br.walls[wI], g = [];
     for (let i = 0; i <= NU; i++) { const row = []; for (let j = 0; j <= NV; j++) row.push(evalBsplineSurf(w, br.uKnots, br.vKnots, i / NU, j / NV)); g.push(row); }
+    grids.push(g);
+    for (let i = 0; i < NU; i++)
+      for (let j = 0; j < NV; j++) {
+        const A = g[i][j], B = g[i + 1][j], C = g[i + 1][j + 1];
+        const nr = cross(sub(B, A), sub(C, A)), ctr = ringCtr[Math.min(S - 1, Math.round(j / kv))];
+        const cc = [(A[0] + B[0] + C[0]) / 3 - ctr[0], (A[1] + B[1] + C[1]) / 3 - ctr[1], (A[2] + B[2] + C[2]) / 3 - ctr[2]];
+        vote += Math.sign(dot(nr, cc));
+      }
+  }
+  const sgn = vote >= 0 ? 1 : -1;
+  const tris = [];
+  for (let wI = 0; wI < 4; wI++) {
+    const g = grids[wI];
     for (let i = 0; i < NU; i++)
       for (let j = 0; j < NV; j++) {
         const A = g[i][j], B = g[i + 1][j], C = g[i + 1][j + 1], D = g[i][j + 1];
@@ -5822,13 +5843,32 @@ export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall =
   // fallback for points the grid cannot see: the polar test against the
   // matched-station ring, which is crude but only has to answer "grossly
   // outside, and by how much" for a point the skin has not reached yet
+  // each ring in ITS OWN best-fit plane: the containment test below is a
+  // polar test in that plane, not in xy — a tilted, strongly non-planar
+  // ring (a block station over a bowed horn) projects to xy with its
+  // off-plane points shifted, and a duct 3 mm inside read 11 mm outside
   const ringFrames = secs.map((sec) => {
-    const P = sec.pts, ctr = [0, 0, 0];
-    for (const q of P) { ctr[0] += q[0] / N; ctr[1] += q[1] / N; ctr[2] += q[2] / N; }
-    return { P, ctr };
+    const P0 = sec.pts, ctr = [0, 0, 0];
+    for (const q of P0) { ctr[0] += q[0] / N; ctr[1] += q[1] / N; ctr[2] += q[2] / N; }
+    let ax = 0, ay = 0, az = 0;
+    for (let k = 0; k < N; k++) {
+      const a = P0[k], b = P0[(k + 1) % N];
+      ax += (a[1] - ctr[1]) * (b[2] - ctr[2]) - (a[2] - ctr[2]) * (b[1] - ctr[1]);
+      ay += (a[2] - ctr[2]) * (b[0] - ctr[0]) - (a[0] - ctr[0]) * (b[2] - ctr[2]);
+      az += (a[0] - ctr[0]) * (b[1] - ctr[1]) - (a[1] - ctr[1]) * (b[0] - ctr[0]);
+    }
+    const nl = Math.hypot(ax, ay, az) || 1, Nn = [ax / nl, ay / nl, az / nl];
+    let e1 = [P0[0][0] - ctr[0], P0[0][1] - ctr[1], P0[0][2] - ctr[2]];
+    const dp0 = e1[0] * Nn[0] + e1[1] * Nn[1] + e1[2] * Nn[2];
+    e1 = [e1[0] - dp0 * Nn[0], e1[1] - dp0 * Nn[1], e1[2] - dp0 * Nn[2]];
+    const l1 = Math.hypot(...e1) || 1; e1 = e1.map((v) => v / l1);
+    const e2 = [Nn[1] * e1[2] - Nn[2] * e1[1], Nn[2] * e1[0] - Nn[0] * e1[2], Nn[0] * e1[1] - Nn[1] * e1[0]];
+    const to2 = (p) => { const d = [p[0] - ctr[0], p[1] - ctr[1], p[2] - ctr[2]]; return [d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2], d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2], 0]; };
+    return { P: P0.map(to2), ctr: [0, 0, 0], to2 };
   });
-  const polarExcess = (p, q) => {
-    const { P, ctr } = ringFrames[q];
+  const polarExcess = (p3, q) => {
+    const { P, ctr, to2 } = ringFrames[q];
+    const p = to2(p3);
     const dx = p[0] - ctr[0], dy = p[1] - ctr[1], r = Math.hypot(dx, dy);
     if (r < 1e-9) return -Infinity;
     const ux = dx / r, uy = dy / r;
@@ -5845,8 +5885,9 @@ export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall =
     }
     return r - rh;
   };
-  const vertexByAngle = (p, q) => {
-    const { P, ctr } = ringFrames[q];
+  const vertexByAngle = (p3, q) => {
+    const { P, ctr, to2 } = ringFrames[q];
+    const p = to2(p3);
     const a = Math.atan2(p[1] - ctr[1], p[0] - ctr[0]);
     let best = 0, bd = Infinity;
     for (let k = 0; k < N; k++) {
@@ -5865,16 +5906,29 @@ export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall =
     if (!row) continue;
     const d = ductSections(cellRec, row, { t });
     if (!d) continue;
-    for (let q = 1; q < d.length - 1; q++)
+    const qHi = qMax == null ? d.length - 2 : qMax;
+    for (let q = qMin; q <= qHi; q++)
       for (let k = 0; k < d[q].pts.length; k += step) {
         const p = d[q].pts[k];
         const bt = nearest(p, RAD);
-        // the skin may carry more rings than the duct has stations; the
-        // ring of the same PATH FRACTION is the one to compare against
-        const qRing = Math.round((q / (d.length - 1)) * (S - 1));
+        // the skin may carry more rings than the duct has stations, or
+        // cover only a band of them; the ring of the same PATH FRACTION (or
+        // the caller's own mapping) is the one to compare against
+        const qRing = ringOf ? Math.max(0, Math.min(S - 1, ringOf(q))) : Math.round((q / (d.length - 1)) * (S - 1));
         let clr;
         if (bt) {
-          clr = dot(sub(p, bt.f), bt.tr.nrm) > 0 ? -bt.d : bt.d;
+          // the SIGN is the ring's containment, the MAGNITUDE the nearest
+          // triangle: a point deep inside the solid can still lie on the
+          // outward side of a nearby concave flank (the notch between two
+          // rim ducts' outer sides), and the triangle's own normal then read
+          // a duct 12 mm inside the block as 12 mm outside it
+          // ... but the ring test has its own failure (a bowl-shaped ring
+          // projects a point near its rim outside), so the two are combined:
+          // the triangle's side stands unless the point is deeper inside the
+          // ring than it is from the surface, which no outside point can be
+          const triIn = dot(sub(p, bt.f), bt.tr.nrm) <= 0;
+          const ins = triIn || polarExcess(p, Math.min(qRing, S - 1)) < -Math.max(1, bt.d);
+          clr = ins ? bt.d : -bt.d;
         } else {
           // beyond the grid's reach: inside (the common case) unless the
           // matched ring says it is grossly out, in which case that excess
@@ -5948,6 +6002,390 @@ export function extendSections(sections, ext = 3) {
   const shift = (pts, n) => pts.map((p) => [p[0] + n[0] * ext, p[1] + n[1] * ext, p[2] + n[2] * ext]);
   const clone = (sec, n) => ({ s: sec.s, area: sec.area, pts: shift(sec.pts, n), origin: sec.origin });
   return [clone(sections[0], nT), ...sections, clone(sections[Q], nM)];
+}
+
+// ── THE BANDED SHELL KIT: blocks where the ducts tile, tubes and webs where
+// they do not, every join a transversal overlap ─────────────────────────────
+//
+// WHY. Two solids that overlap at one end of the horn and stand apart at the
+// other must touch exactly once in between, and at that station their facing
+// walls are parallel with nothing between them: the kernel is asked to
+// classify a face-to-face contact rather than a crossing. Measured at the
+// tool's defaults, wall 3: all 27 adjacent pairs cross twice — the column
+// pairs at u = 0.056-0.125, the row pairs near u = 0.30, everything again at
+// u = 0.970-0.976 — and the default bow moves the row crossings to u = 0.28-
+// 0.34 and halves their rate, which is more degenerate, not less. A one-piece
+// skin avoided the union but its outline had to be found by a discrete search
+// at every station (a raster, a trace, a resample), and noise that does not
+// correlate from one station to the next lofts into surface texture. The
+// ducts are built from stations too and come out clean, because their rings
+// are EVALUATED from a smooth map with fixed correspondence rather than
+// derived. So: use each construction only where it is exact.
+//
+//   band 1, the throat: the ducts tile or nearly so, so the material is one
+//     block and its outline at a station is ONE closed curve — the rim ducts'
+//     rim sides chained and offset by the wall — with fixed correspondence
+//     and no search. Its throat face is the exact circle R + wall.
+//   band 2, mid-path: every adjacent pair of ducts stands more than
+//     2·wall + margin apart, so each duct's TUBE (its own rings offset by the
+//     wall in their own planes, exact) clears every other tube by at least
+//     the margin. Neighbouring tubes are joined by WEB plates: a curved box
+//     between the two facing sides over the middle fraction of their height,
+//     buried a fixed depth inside each tube's wall so its faces are never
+//     coincident with a tube face and its top and bottom cross the tube
+//     faces transversally.
+//   band 3, the mouth: the ducts tile again (and with a bulge they engage),
+//     so it is a block, and its mouth face lies on the aperture.
+//   The blocks extend a few stations INTO band 2, so every block-tube and
+//   block-web join is a transversal interpenetration, and the block's offset
+//   tapers up by the same burial depth toward the band so its rim never
+//   coincides with a tube's rim in the overlap.
+//
+// The bands are MEASURED, not assumed: the minimum adjacent-pair gap at every
+// station, and band 2 is the longest contiguous run above the threshold. A
+// horn whose ducts never separate that far gets one block from throat to
+// mouth — the construction degrades into the envelope skin, which is exact
+// precisely when everything tiles. Then eighteen cutters, unchanged.
+//
+// The CAD work: union every positive solid in one operation, subtract the
+// cutters. No tangency exists anywhere for it to fail on, and the tool
+// measures that before writing: tube-tube clearance over band 2, the
+// blocks' containment of every duct over their bands, web widths.
+
+// minimum distance between two closed space polygons (point-to-segment, both ways)
+function ringGap(P, Q) {
+  const seg = (p, A, B) => {
+    const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+    let s = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+    s = Math.max(0, Math.min(1, s));
+    return Math.hypot(p[0] - A[0] - ab[0] * s, p[1] - A[1] - ab[1] * s, p[2] - A[2] - ab[2] * s);
+  };
+  let m = Infinity;
+  for (const p of P) for (let k = 0; k < Q.length; k++) m = Math.min(m, seg(p, Q[k], Q[(k + 1) % Q.length]));
+  for (const q of Q) for (let k = 0; k < P.length; k++) m = Math.min(m, seg(q, P[k], P[(k + 1) % P.length]));
+  return m;
+}
+
+// the adjacent pairs of an H-grid layout, by label "col,row"
+function gridPairs(throat) {
+  const byLabel = new Map(throat.cells.map((c, i) => [c.label, i]));
+  const pairs = [];
+  for (const c of throat.cells) {
+    const [col, row] = c.label.split(",").map(Number);
+    for (const [dc, dr] of [[1, 0], [0, 1]]) {
+      const nb = `${col + dc},${row + dr}`;
+      if (byLabel.has(nb)) pairs.push({ a: byLabel.get(c.label), b: byLabel.get(nb), la: c.label, lb: nb, kind: dc ? "row" : "column" });
+    }
+  }
+  return pairs;
+}
+
+// Where the ducts stand apart: the minimum gap over all adjacent pairs at
+// every station, and the longest contiguous run of stations where it clears
+// 2·wall + margin — the band where tubes cannot touch. `ov` stations of
+// overlap are reserved at each end for the blocks.
+export function shellBands(throat, map, { t = 0, wall = 3, margin = 2, ov = 2 } = {}) {
+  const ducts = throat.cells.map((c) => ductSections(c, map.rows.find((r) => r.id === c.id), { t }));
+  if (ducts.some((d) => !d)) return null;
+  const S = ducts[0].length, pairs = gridPairs(throat);
+  const gapMin = new Array(S).fill(Infinity), gapAt = new Array(S).fill(null);
+  for (let q = 0; q < S; q++)
+    for (const pr of pairs) {
+      const g = ringGap(ducts[pr.a][q].pts, ducts[pr.b][q].pts);
+      if (g < gapMin[q]) { gapMin[q] = g; gapAt[q] = `${pr.la}-${pr.lb}`; }
+    }
+  const threshold = 2 * wall + margin;
+  let best = null, run = null;
+  for (let q = 0; q < S; q++) {
+    if (gapMin[q] >= threshold) { if (!run) run = [q, q]; else run[1] = q; }
+    else run = null;
+    if (run && (!best || run[1] - run[0] > best[1] - best[0])) best = run.slice();
+  }
+  // the tubes need room for the overlaps at both ends and a stretch between
+  const tubes = best && best[1] - best[0] >= 2 * ov + 2 ? { qB: best[0], qC: best[1] } : null;
+  return { S, pairs, gapMin, gapAt, threshold, margin, ov, tubes, ducts };
+}
+
+// The rim loop of the layout: the rim sides of the rim cells chained into
+// one closed loop, split into four runs at the H-grid's four singular rim
+// vertices. Returns the chain order (a list of {i: duct index, s: side,
+// rev}) and the run starts, chained at station 0.
+function rimChain(throat, ducts) {
+  const N0 = ducts[0][0].pts.length, per0 = N0 / 4;
+  const segs = [];
+  throat.cells.forEach((cell, i) => {
+    const rim = cell.rimSide || [];
+    for (let sd = 0; sd < 4; sd++) if (rim[sd]) segs.push({ i, s: sd, rev: false });
+  });
+  if (segs.length < 4) return null;
+  const raw = (seg, q) => {
+    const P = ducts[seg.i][q].pts, out = [];
+    for (let j = 0; j <= per0; j++) out.push(P[(seg.s * per0 + j) % N0]);
+    return seg.rev ? out.reverse() : out;
+  };
+  const d3 = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]);
+  const order = [segs[0]];
+  let pool = segs.slice(1), chainErr = 0;
+  while (pool.length) {
+    const end = raw(order[order.length - 1], 0)[per0];
+    let best = -1, bd = Infinity, rev = false;
+    pool.forEach((sg, k) => {
+      const p = raw({ ...sg, rev: false }, 0);
+      const a = d3(p[0], end), b = d3(p[per0], end);
+      if (a < bd) { bd = a; best = k; rev = false; }
+      if (b < bd) { bd = b; best = k; rev = true; }
+    });
+    chainErr = Math.max(chainErr, bd);
+    const sg = pool.splice(best, 1)[0]; sg.rev = rev; order.push(sg);
+  }
+  const K = order.length;
+  const isCorner = (k) => order[k].i === order[(k + 1) % K].i;
+  const starts = [];
+  for (let k = 0; k < K; k++) if (isCorner(k)) starts.push((k + 1) % K);
+  if (starts.length !== 4) return null;
+  return { order, starts, isCorner, raw, per0, N0, chainErr };
+}
+
+// A BLOCK over stations [q0, q1]: at each station the CONVEX HULL of the rim
+// ducts' rim-side points, in the loop's best-fit plane, offset outward by the
+// wall with a true ROUND at every hull vertex (the Minkowski sum of a convex
+// polygon with a disc: offset edges and arcs, nothing mitred). The hull is
+// the point: a block is the smallest solid that contains the tiled group, and
+// the notches between neighbouring rim ducts' outer sides (1-3 mm wide near
+// the throat, deepening toward the band) are exactly where a mitred offset
+// self-intersects — measured 1.8 mm under the wall at a bowed rim cell. The
+// offset at a vertex is wall / |e·n| (e the offset direction, n the duct
+// flank there), capped at 3x, because a rim duct leaving obliquely sees only
+// cos(phi) of an in-plane offset; it rises by `m` toward the band end so the
+// block's rim clears the tubes' rims where they overlap. Runs split at the
+// H-grid's four singular rim vertices. Throat end the exact circle R + wall
+// (planar), mouth end on the aperture.
+export function blockSections(throat, map, ducts, { wall = 3, m = 1, q0, q1, end, R = 0, per = 48, ov = 2 } = {}) {
+  const chain = rimChain(throat, ducts);
+  if (!chain) return null;
+  const { order, starts, raw, per0, N0 } = chain;
+  const S = ducts[0].length;
+  const ap = map.mouthSurf ? apertureFrame(map.mouthSurf) : null;
+  const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1e-12; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  // the unit direction of the vertex line through duct i's ring point k
+  const lineAt = (i, k, q) => {
+    const d = ducts[i];
+    const qa = Math.max(0, q - 1), qb = Math.min(S - 1, q + 1);
+    return unit([0, 1, 2].map((c) => d[qb].pts[k][c] - d[qa].pts[k][c]));
+  };
+  const smooth = (x) => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
+  const out = [];
+  for (let q = q0; q <= q1; q++) {
+    // EVERY duct point with its flank normal (a bowed duct can turn a shared
+    // side's corner past its own rim side — measured 0.17 mm of wall with a
+    // short-axis bow when only the rim sides were hulled), and the 4
+    // singular rim corners
+    const P = [], F = [], corners = [];
+    ducts.forEach((d, i) => { for (let k = 0; k < N0; k++) { P.push(d[q].pts[k]); F.push(lineAt(i, k, q)); } });
+    for (const oi of starts) { const seg = order[oi]; corners.push(seg.i * N0 + ((seg.s * per0 + (seg.rev ? per0 : 0)) % N0)); }
+    // best-fit plane
+    const n = P.length, o = [0, 0, 0];
+    for (const p of P) { o[0] += p[0] / n; o[1] += p[1] / n; o[2] += p[2] / n; }
+    let ax = 0, ay = 0, az = 0;
+    for (let k = 0; k < n; k++) {
+      const a = P[k], b = P[(k + 1) % n];
+      ax += (a[1] - o[1]) * (b[2] - o[2]) - (a[2] - o[2]) * (b[1] - o[1]);
+      ay += (a[2] - o[2]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[2] - o[2]);
+      az += (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    }
+    const nl = Math.hypot(ax, ay, az) || 1;
+    const Nn = [ax / nl, ay / nl, az / nl];
+    let e1 = [P[0][0] - o[0], P[0][1] - o[1], P[0][2] - o[2]];
+    const dp = e1[0] * Nn[0] + e1[1] * Nn[1] + e1[2] * Nn[2];
+    e1 = unit([e1[0] - dp * Nn[0], e1[1] - dp * Nn[1], e1[2] - dp * Nn[2]]);
+    const e2 = cross3(Nn, e1);
+    const flat = P.map((p) => { const d = [p[0] - o[0], p[1] - o[1], p[2] - o[2]]; return [d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2], d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2], d[0] * Nn[0] + d[1] * Nn[1] + d[2] * Nn[2]]; });
+    // convex hull (monotone chain), counter-clockwise, as indices into P
+    const idx = flat.map((_, i) => i).sort((i, j) => flat[i][0] - flat[j][0] || flat[i][1] - flat[j][1]);
+    const cr = (O, A, B) => (flat[A][0] - flat[O][0]) * (flat[B][1] - flat[O][1]) - (flat[A][1] - flat[O][1]) * (flat[B][0] - flat[O][0]);
+    const lower = [], upper = [];
+    for (const i of idx) { while (lower.length >= 2 && cr(lower[lower.length - 2], lower[lower.length - 1], i) <= 1e-9) lower.pop(); lower.push(i); }
+    for (let k = idx.length - 1; k >= 0; k--) { const i = idx[k]; while (upper.length >= 2 && cr(upper[upper.length - 2], upper[upper.length - 1], i) <= 1e-9) upper.pop(); upper.push(i); }
+    const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+    const H = hull.length;
+    // the offset with rounds: wall (+ m toward the band end). Each hull
+    // vertex is a duct point through which a vertex LINE runs at direction
+    // T; the sheet meets the cylinder of radius w about that line at an
+    // ellipse, radius w / sqrt(1 - (e·T)^2) in direction e — the same
+    // section the sleeves used. On a smooth flank it equals w / |e·n|; at a
+    // duct corner, where no single flank normal exists (a straddling chord
+    // gave |e·n| = 0.04 and a 3x round at the throat), it is exact. Cap 3x.
+    const span = Math.max(1, q1 - q0 - ov);
+    const frac = end === "throat" ? (q - q0) / span : (q1 - q) / span;
+    const w = wall + m * smooth(frac);
+    const ring2 = [], ring3 = [], vertexOf = [];
+    for (let h = 0; h < H; h++) {
+      const ia = hull[(h - 1 + H) % H], ib = hull[h], ic = hull[(h + 1) % H];
+      const a = flat[ia], b = flat[ib], c = flat[ic];
+      const t1 = [b[0] - a[0], b[1] - a[1]], t2 = [c[0] - b[0], c[1] - b[1]];
+      const l1 = Math.hypot(t1[0], t1[1]) || 1e-12, l2 = Math.hypot(t2[0], t2[1]) || 1e-12;
+      const n1 = [t1[1] / l1, -t1[0] / l1], n2 = [t2[1] / l2, -t2[0] / l2];   // outward for a CCW hull
+      const a1 = Math.atan2(n1[1], n1[0]);
+      let dth = Math.atan2(n2[1], n2[0]) - a1;
+      if (dth > Math.PI) dth -= 2 * Math.PI; if (dth < -Math.PI) dth += 2 * Math.PI;
+      const steps = Math.max(1, Math.ceil(Math.abs(dth) / (Math.PI / 12)));
+      const fl = F[ib];
+      for (let j = 0; j <= steps; j++) {
+        const th = a1 + (dth * j) / steps, u2 = [Math.cos(th), Math.sin(th)];
+        const e3 = [u2[0] * e1[0] + u2[1] * e2[0], u2[0] * e1[1] + u2[1] * e2[1], u2[0] * e1[2] + u2[1] * e2[2]];
+        const cT = e3[0] * fl[0] + e3[1] * fl[1] + e3[2] * fl[2];
+        const d = w / Math.max(Math.sqrt(Math.max(0, 1 - cT * cT)), 1 / 3);
+        const qx = b[0] + u2[0] * d, qy = b[1] + u2[1] * d;
+        ring2.push([qx, qy]);
+        ring3.push([o[0] + qx * e1[0] + qy * e2[0] + b[2] * Nn[0], o[1] + qx * e1[1] + qy * e2[1] + b[2] * Nn[1], o[2] + qx * e1[2] + qy * e2[2] + b[2] * Nn[2]]);
+        vertexOf.push(ib);
+      }
+    }
+    // run boundaries: the ring point of the hull vertex nearest each singular corner
+    const bounds = corners.map((ci) => {
+      let best = 0, bd = Infinity;
+      ring2.forEach((_, k) => { const v = flat[vertexOf[k]]; const dd = Math.hypot(v[0] - flat[ci][0], v[1] - flat[ci][1]); if (dd < bd) { bd = dd; best = k; } });
+      // the middle of that vertex's round
+      let lo = best, hi = best;
+      while (lo > 0 && vertexOf[lo - 1] === vertexOf[best]) lo--;
+      while (hi < ring2.length - 1 && vertexOf[hi + 1] === vertexOf[best]) hi++;
+      return (lo + hi) >> 1;
+    }).sort((x, y) => x - y);
+    if (new Set(bounds).size !== 4) return null;
+    const M = ring3.length, pts = [];
+    for (let r = 0; r < 4; r++) {
+      const b0 = bounds[r], b1 = bounds[(r + 1) % 4];
+      const run = [];
+      for (let k = b0; ; k = (k + 1) % M) { run.push(ring3[k]); if (k === b1) break; }
+      const L = [0];
+      for (let i = 0; i < run.length - 1; i++) L.push(L[i] + Math.hypot(run[i + 1][0] - run[i][0], run[i + 1][1] - run[i][1], run[i + 1][2] - run[i][2]));
+      const tot = L[L.length - 1] || 1e-12;
+      for (let k = 0; k < per; k++) {
+        const target = (tot * k) / per; let i = 0;
+        while (i < run.length - 2 && L[i + 1] < target) i++;
+        const u = (target - L[i]) / Math.max(L[i + 1] - L[i], 1e-12), A = run[i], B = run[i + 1];
+        pts.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u, A[2] + (B[2] - A[2]) * u]);
+      }
+    }
+    let ring = pts;
+    if (q === 0) { ring = ring.map((p) => [p[0], p[1], 0]); if (R > 0) ring = polishThroat(ring, R + wall, 0.5 * wall + 0.5); }
+    if (q === S - 1 && ap) ring = ring.map(ap.snap);
+    out.push({ s: ducts[0][q].s, area: polyArea3(ring), pts: ring, origin: ducts[0][q].origin });
+  }
+  return out;
+}
+
+// A TUBE: the duct's own rings offset outward by the wall on every side, in
+// their own planes — swept sections are normal to the duct's centreline, so
+// the in-plane offset is the wall measured perpendicular to the flanks —
+// over stations [q0, q1].
+export function tubeSections(duct, { wall = 3, q0, q1 } = {}) {
+  const out = [];
+  for (let q = q0; q <= q1; q++) {
+    const st = duct[q];
+    const pts = insetSection3(st.pts, [-wall, -wall, -wall, -wall]);
+    out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
+  }
+  return out;
+}
+
+// A WEB between two neighbouring ducts over stations [q0, q1]: run 0 is the
+// middle `frac` of A's facing side, offset outward by wall - m (buried m
+// inside A's tube wall); run 2 the same on B, reversed; runs 1 and 3 the
+// straight connectors. Four runs of `per` points, corners at multiples of
+// `per`, as ductBrep wants.
+export function webSections(dA, dB, { wall = 3, m = 1, frac = 0.5, q0, q1, per = 48 } = {}) {
+  const N = dA[0].pts.length, per0 = N / 4;
+  const cen = (P) => { const c = [0, 0, 0]; for (const p of P) { c[0] += p[0] / P.length; c[1] += p[1] / P.length; c[2] += p[2] / P.length; } return c; };
+  const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  // the facing sides: the side of each whose midpoint is nearest the other's centroid, at q0
+  const facing = (d, other) => {
+    const co = cen(other[q0].pts);
+    let best = 0, bd = Infinity;
+    for (let sd = 0; sd < 4; sd++) { const mid = d[q0].pts[(sd * per0 + (per0 >> 1)) % N]; const x = d3(mid, co); if (x < bd) { bd = x; best = sd; } }
+    return best;
+  };
+  const sA = facing(dA, dB), sB = facing(dB, dA);
+  const side = (ring, sd) => { const o = []; for (let j = 0; j <= per0; j++) o.push(ring[(sd * per0 + j) % N]); return o; };
+  // the middle fraction of a polyline, as per+1 points inclusive
+  const middle = (P, f) => {
+    const L = [0];
+    for (let i = 0; i < P.length - 1; i++) L.push(L[i] + d3(P[i], P[i + 1]));
+    const tot = L[L.length - 1] || 1e-12, lo = tot * (0.5 - f / 2), hi = tot * (0.5 + f / 2);
+    const at = (s) => { let i = 0; while (i < P.length - 2 && L[i + 1] < s) i++; const u = (s - L[i]) / Math.max(L[i + 1] - L[i], 1e-12); return [0, 1, 2].map((c) => P[i][c] + (P[i + 1][c] - P[i][c]) * u); };
+    const o = []; for (let k = 0; k <= per; k++) o.push(at(lo + ((hi - lo) * k) / per));
+    return o;
+  };
+  // per points from a toward b, b excluded
+  const line = (a, b) => { const o = []; for (let k = 0; k < per; k++) { const u = k / per; o.push([0, 1, 2].map((c) => a[c] + (b[c] - a[c]) * u)); } return o; };
+  const out = [];
+  let width = Infinity;
+  for (let q = q0; q <= q1; q++) {
+    const dd = [-(wall - m), -(wall - m), -(wall - m), -(wall - m)];
+    const oA = insetSection3(dA[q].pts, dd), oB = insetSection3(dB[q].pts, dd);
+    const a = middle(side(oA, sA), frac);
+    let b = middle(side(oB, sB), frac).reverse();
+    // orient B's run so the connectors do not cross
+    if (d3(a[per], b[0]) + d3(b[per], a[0]) > d3(a[per], b[per]) + d3(b[0], a[0])) b = b.reverse();
+    width = Math.min(width, d3(a[per], b[0]), d3(b[per], a[0]));
+    const pts = [...a.slice(0, per), ...line(a[per], b[0]), ...b.slice(0, per), ...line(b[per], a[0])];
+    out.push({ s: dA[q].s, area: polyArea3(pts), pts, origin: dA[q].origin });
+  }
+  return { sections: out, width, sA, sB };
+}
+
+// THE KIT: the solids and the measurements that prove them union-safe.
+export function bandedShell(throat, map, {
+  t = 0, wall = 3, ext = 3, margin = 2, m = null, webFrac = 0.5, per = 48, R = 0, ov = 2,
+} = {}) {
+  if (m == null) m = Math.min(1, wall / 3);
+  const bands = shellBands(throat, map, { t, wall, margin, ov });
+  if (!bands) return null;
+  const { S, ducts, tubes, pairs } = bands;
+  const surf = map.mouthSurf || null;
+  const solids = [], checks = { tubeClear: Infinity, tubeClearAt: null, webWidth: Infinity, webs: 0, tubes: 0, blocks: 0 };
+  const push = (label, sections, opts = {}) => solids.push({ label, sections, ...opts });
+  const contain = (sections, q0, q1, useSurf) => {
+    const clr = skinClearance(throat, map, { sections, surf: useSurf ? surf : null }, { t, ku: 2, kv: 3, wall: 0, reach: 1, step: 2, qMin: Math.max(1, q0 + 1), qMax: Math.min(S - 2, q1 - 1), ringOf: (q) => q - q0 });
+    return clr ? { worst: clr.worst, at: clr.at, cell: clr.cell } : null;
+  };
+  if (!tubes) {
+    const block = blockSections(throat, map, ducts, { wall, m: 0, q0: 0, q1: S - 1, end: "throat", R, per, ov });
+    if (!block) return null;
+    push("horn block", block, { capZ: 0, mouth: true });
+    checks.blocks = 1;
+    checks.throatBlock = contain(block, 0, S - 1, true);
+  } else {
+    const { qB, qC } = tubes;
+    const b1 = blockSections(throat, map, ducts, { wall, m, q0: 0, q1: qB + ov, end: "throat", R, per, ov });
+    const b3 = blockSections(throat, map, ducts, { wall, m, q0: qC - ov, q1: S - 1, end: "mouth", R, per, ov });
+    if (!b1 || !b3) return null;
+    push("throat block", b1, { capZ: 0 });
+    push("mouth block", b3, { mouth: true });
+    checks.blocks = 2;
+    checks.throatBlock = contain(b1, 0, qB + ov, false);
+    checks.mouthBlock = contain(b3, qC - ov, S - 1, true);
+    const tubeSecs = ducts.map((d) => tubeSections(d, { wall, q0: qB, q1: qC }));
+    tubeSecs.forEach((ts, i) => { push(`tube ${throat.cells[i].label}`, ts); checks.tubes++; });
+    // no two tubes touch anywhere in the band: measured on the tube rings
+    for (const pr of pairs)
+      for (let q = 0; q < tubeSecs[pr.a].length; q++) {
+        const g = ringGap(tubeSecs[pr.a][q].pts, tubeSecs[pr.b][q].pts);
+        if (g < checks.tubeClear) { checks.tubeClear = g; checks.tubeClearAt = { pair: `${pr.la}-${pr.lb}`, q: qB + q }; }
+      }
+    for (const pr of pairs) {
+      const w = webSections(ducts[pr.a], ducts[pr.b], { wall, m, frac: webFrac, q0: qB, q1: qC, per: 16 });
+      push(`web ${pr.la}|${pr.lb}`, w.sections);
+      checks.webs++;
+      checks.webWidth = Math.min(checks.webWidth, w.width);
+    }
+  }
+  const positives = solids.length;
+  for (let i = 0; i < throat.cells.length; i++)
+    push(`duct cutter ${throat.cells[i].label}`, extendSections(ducts[i], ext), { capZ: -ext, cutter: true });
+  return { solids, positives, bands: { ...bands, ducts: undefined }, checks, m, margin, webFrac, wall };
 }
 
 // Signed volume of a closed triangle soup, by the divergence theorem. Positive
@@ -6781,7 +7219,7 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
 // grazes — see the body comment for the measured tangency. Offered, warned
 // about, not the default.
 export function buildShellSTEP(throat, map, {
-  t = 0, wall = 3, ext = 3, mode = "solid", body = null, name = "ginkgo_horn_shell",
+  t = 0, wall = 3, ext = 3, mode = "solid", body = null, name = "ginkgo_horn_shell", bands = {},
 } = {}) {
   if (!map) return null;
   const surf = map.mouthSurf || null;
@@ -6791,6 +7229,19 @@ export function buildShellSTEP(throat, map, {
     return apertureCapGrid(sections[sections.length - 1].pts, ap);
   };
   const solidsSpec = [];
+  if (mode === "bands") {
+    const kit = bandedShell(throat, map, { t, wall, ext, R: throat.R || 0, ...bands });
+    if (!kit) return null;
+    for (const sd of kit.solids)
+      solidsSpec.push({ label: sd.label, sections: sd.sections, capZ: sd.capZ == null ? null : sd.capZ, capMouthPts: sd.mouth ? capOf(sd.sections) : null });
+    const out = stepEmit({
+      name, solidsSpec,
+      desc: "ginkgo multicell horn: blocks, tubes and webs, then duct cutters",
+      fileDesc: `ginkgo multicell horn shell kit: union the first ${kit.positives} solids (blocks, tubes, webs) in one operation, then subtract the ${throat.cells.length} duct cutters`,
+    });
+    if (out) { out.mode = "bands"; out.kit = kit; }
+    return out;
+  }
   const useBody = mode === "solid" && body && body.sections;
   if (mode === "solid" && !useBody) return null;
   if (useBody)
@@ -6824,6 +7275,18 @@ export function buildShellSTEP(throat, map, {
   });
   if (out) out.mode = useBody ? "solid" : "bundle";
   return out;
+}
+
+// Emit an arbitrary list of solids — the kit's own parts, or any subset of
+// them — so a test file of two tubes and their web can be written without
+// the rest of the horn.
+export function buildSolidsSTEP(solids, { name = "ginkgo_solids", desc = "ginkgo solids", surf = null } = {}) {
+  const ap = surf ? apertureFrame(surf) : null;
+  const solidsSpec = solids.map((sd) => ({
+    label: sd.label, sections: sd.sections, capZ: sd.capZ == null ? null : sd.capZ,
+    capMouthPts: sd.mouth && ap ? apertureCapGrid(sd.sections[sd.sections.length - 1].pts, ap) : null,
+  }));
+  return stepEmit({ name, solidsSpec, desc, fileDesc: desc });
 }
 
 // Referential integrity of an emitted file: every #id referenced in the DATA

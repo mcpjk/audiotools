@@ -510,7 +510,8 @@ export default function GinkgoHorn() {
   // mid-path, so every pair passes through exact tangential contact on the
   // way. Solid is the default because that tangency is geometry, not a
   // tolerance, and no kernel setting makes it well posed.
-  const [shellMode, setShellMode] = useState("solid");
+  const [shellMode, setShellMode] = useState("bands");
+  const [webFrac, setWebFrac] = useState(0.5);
   // The live mapping at 64 stations cost ~136 ms per slider tick (~7 fps on
   // a drag); at 24 it is ~60 ms, and every readout that matters on a drag —
   // path lengths, dL, fc — comes from the centreline sampling, which is a
@@ -1956,25 +1957,37 @@ export default function GinkgoHorn() {
               cont = G.bodyContainment(throat, em, body, { t: thickness, wall: shellWall });
             }
             const r = G.buildShellSTEP(throat, em, {
-              t: thickness, wall: shellWall, mode: shellMode, body, name: `${stem}_shell`,
+              t: thickness, wall: shellWall, mode: shellMode, body, name: `${stem}_shell`, bands: { webFrac },
             });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
-            const what = r.mode === "solid"
-              ? `1 body + ${r.checks.ducts - 1} cutters — subtract only`
-              : `${r.checks.ducts / 2} blanks + ${r.checks.ducts / 2} cutters — union then subtract`;
+            let what, extra = "";
+            if (r.mode === "bands") {
+              const k = r.kit, c = k.checks, b = k.bands;
+              const N = throat.N;
+              what = b.tubes
+                ? `${c.blocks} blocks + ${c.tubes} tubes + ${c.webs} webs, then ${N} cutters — union the first ${k.positives} in one operation, subtract the ${N}`
+                : `1 block + ${N} cutters — the ducts never stand ${fmt(b.threshold, 0)} mm apart, so there is no tube band; subtract only`;
+              const blk = [c.throatBlock, c.mouthBlock].filter(Boolean).map((x) => x.worst);
+              extra = ` · min block wall ${fmt(Math.min(...blk), 2)} mm (3-D)`
+                + (b.tubes ? ` · tubes clear each other by ≥ ${fmt(c.tubeClear, 2)} mm over stations ${b.tubes.qB}–${b.tubes.qC} of ${b.S - 1} · webs ≥ ${fmt(c.webWidth, 1)} mm wide, buried ${fmt(k.m, 1)} mm` : "");
+            } else {
+              what = r.mode === "solid"
+                ? `1 body + ${r.checks.ducts - 1} cutters — subtract only`
+                : `${r.checks.ducts / 2} blanks + ${r.checks.ducts / 2} cutters — union then subtract`;
+              if (cont) extra = ` · min outer wall ${fmt(cont.minWall, 2)} mm (3-D) · fairing radius ${fmt(body.fair, 0)} mm${body.fairNeeded > 2 * shellWall ? ` (${fmt(body.fairNeeded, 0)} needed to keep station ${body.fairAt} of ${body.sections.length - 1} in one piece)` : ""} · ${body.sections.length - 1} skin stations`;
+            }
             setStepNote({
               ok,
-              msg: `${what} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
-                cont ? ` · min outer wall ${fmt(cont.minWall, 2)} mm (3-D) · fairing radius ${fmt(body.fair, 0)} mm${body.fairNeeded > 2 * shellWall ? ` (${fmt(body.fairNeeded, 0)} needed to keep station ${body.fairAt} of ${body.sections.length - 1} in one piece)` : ""} · ${body.sections.length - 1} skin stations` : ""} · ${
+              msg: `${what} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${extra} · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
             if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
             }, 30);
           }}>STEP · horn shell</button>
           <div style={{ display: "flex", gap: 4 }}>
-            {[["solid", "one body"], ["bundle", "per-cell blanks"]].map(([v, l]) => (
+            {[["bands", "blocks + tubes"], ["solid", "one body"], ["bundle", "per-cell blanks"]].map(([v, l]) => (
               <button key={v} onClick={() => setShellMode(v)} style={btn(shellMode === v, C.series2)}>{l}</button>
             ))}
           </div>
@@ -1983,6 +1996,13 @@ export default function GinkgoHorn() {
             <input type="number" value={shellWall} min={0.5} max={20} step={0.5} onChange={(e) => setShellWall(Math.max(0.5, Math.min(20, parseFloat(e.target.value) || 3)))}
               style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
           </label>
+          {shellMode === "bands" && (
+            <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
+              web height (of the facing wall)
+              <input type="number" value={webFrac} min={0.1} max={1} step={0.1} onChange={(e) => setWebFrac(Math.max(0.1, Math.min(1, parseFloat(e.target.value) || 0.5)))}
+                style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
+            </label>
+          )}
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             export stations
             <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
@@ -2001,7 +2021,16 @@ export default function GinkgoHorn() {
           The <strong style={{ color: C.inkDim }}>horn shell</strong> is the material around that air, and it ships as solids to boolean
           because the material's topology <em>changes</em> along the path — one block threaded by passages at the throat, separate tubes
           mid-path, knife edges at the mouth — which no single loft can carry.
-          {shellMode === "solid" ? <>
+          {shellMode === "bands" ? <>
+            {" "}<strong style={{ color: C.inkDim }}>Blocks + tubes</strong> uses each construction only where it is exact. Where the ducts
+            tile — the throat, and the mouth — the material is one <em>block</em> whose skin is the convex hull of the ducts offset by the wall
+            with true rounds. Where every neighbouring pair stands more than 2 × wall + 2 mm apart (measured, station by station) each duct
+            gets its own <em>tube</em>, its rings offset by exactly the wall, and neighbours are tied by <em>web</em> plates over the middle{" "}
+            {fmt(webFrac * 100, 0)}% of their facing height, buried 1 mm inside each tube's wall. The blocks reach a few stations into the
+            tube band, so every join is a transversal overlap and no two solids ever graze — that grazing is what made the earlier union fail.
+            In CAD: <strong style={{ color: C.inkDim }}>select every positive solid and union once, then subtract the {throat.N} cutters</strong>.
+            The tube band's boundary faces are flat and ready to be joint faces for a multi-part print.
+          </> : shellMode === "solid" ? <>
             {" "}<strong style={{ color: C.inkDim }}>One body</strong> emits the horn as a single solid plus one cutter per duct: in CAD you{" "}
             <strong style={{ color: C.inkDim }}>subtract the {throat.N} cutters and union nothing</strong>. The passages leave the layout's{" "}
             {fmt(thickness, 1)} mm divider at the throat and a knife edge at the mouth, because what is left between two passages is exactly
