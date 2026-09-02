@@ -5203,6 +5203,30 @@ function followDucts(throat, map, body, { wall, t, ap }) {
     const ang = poly.map((p) => Math.atan2(p[1], p[0]));
     return { ctr, n, U, V, half, to2, poly, ang };
   });
+  // the ring's boundary radius at an angle in its own plane, and the vertex
+  // nearest an angle — used to place a deficit radially outside the point
+  const hitAt = (poly, ux, uy) => {
+    let rh = 0, hit = -1;
+    for (let k = 0; k < N; k++) {
+      const A = poly[k], B = poly[(k + 1) % N];
+      const den = (B[0] - A[0]) * uy - (B[1] - A[1]) * ux;
+      if (Math.abs(den) < 1e-12) continue;
+      const sPar = (A[0] * uy - A[1] * ux) / -den;
+      if (sPar < -1e-9 || sPar > 1 + 1e-9) continue;
+      const proj = (A[0] + (B[0] - A[0]) * sPar) * ux + (A[1] + (B[1] - A[1]) * sPar) * uy;
+      if (proj > rh) { rh = proj; hit = k; }
+    }
+    return { rh, hit };
+  };
+  const nearestVertex = (fr, a) => {
+    let best = 0, bd = Infinity;
+    for (let k = 0; k < N; k++) {
+      let d = Math.abs(a - fr.ang[k]); if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  };
+
   // The field starts EMPTY and is grown only from measured deficits. A first
   // version seeded it by projecting duct points into each ring's plane slab;
   // near the mouth the rings are far from planar (the aperture is a curved
@@ -5298,11 +5322,46 @@ function followDucts(throat, map, body, { wall, t, ap }) {
     body.clearance = clr;
     if (!clr || clr.deficits.length === 0) break;
     done = prof(`round ${round} shape+apply`);
-    for (const { q, k, deficit, nrm } of clr.deficits) {
-      const rd = radialOf(q, k);
-      const cosine = nrm ? Math.max(0.5, Math.abs(nrm[0] * rd[0] + nrm[1] * rd[1] + nrm[2] * rd[2])) : 1;
-      const want = E[q][k] + (deficit + 0.03 * wall) / cosine;
-      if (want > E0[q][k]) E0[q][k] = want;
+    for (const { q, deficit, nrm, p } of clr.deficits) {
+      // WHERE THE MATERIAL GOES: radially over the point, in the planes of
+      // the TWO rings that bracket it along the horn. The nearest skin point
+      // to a duct sticking out of a flaring horn lies further ALONG the horn
+      // (the skin comes back toward the duct as it flares), so any push
+      // placed at that foot lands one to three stations ahead of the bow,
+      // oblique and over-sized — measured 10.5 mm of wall at stations 6-7
+      // against 3.4 at the bow's peak, which the owner saw as a second hill.
+      // Both bracketing rings, or the loft between them dips under the wall
+      // where the point actually is.
+      //
+      // HOW MUCH: a point OUTSIDE the skin takes the in-plane excess
+      // r + wall - r_ring in each ring's own plane; a point inside but under
+      // the wall is a flank or a dip between rings, and takes the measured
+      // 3-D residual over the flank cosine n·r̂ on top of the push it has.
+      let bq = -1, bd = Infinity, bz = 0;
+      for (let qq = Math.max(1, q - 3); qq <= Math.min(S - 2, q + 3); qq++) {
+        const w = frames[qq].to2(p);
+        if (Math.abs(w[2]) < bd) { bd = Math.abs(w[2]); bq = qq; bz = w[2]; }
+      }
+      if (bq < 0) continue;
+      const other = bz >= 0 ? bq + 1 : bq - 1;
+      const rings = [bq, other].filter((qq) => qq >= 1 && qq <= S - 2);
+      const outside = deficit > wall;
+      for (const qq of rings) {
+        const fr = frames[qq], w = fr.to2(p), r = Math.hypot(w[0], w[1]);
+        if (r < 1e-9) continue;
+        const kk = nearestVertex(fr, Math.atan2(w[1], w[0]));
+        let want;
+        if (outside) {
+          const { rh, hit } = hitAt(fr.poly, w[0] / r, w[1] / r);
+          if (hit < 0) continue;
+          want = r + wall * 1.03 - rh;                       // against the BASE ring
+        } else {
+          const rd = radialOf(qq, kk);
+          const cosine = nrm ? Math.max(0.5, Math.abs(nrm[0] * rd[0] + nrm[1] * rd[1] + nrm[2] * rd[2])) : 1;
+          want = E[qq][kk] + (deficit + 0.03 * wall) / cosine;
+        }
+        if (want > E0[qq][kk]) E0[qq][kk] = want;
+      }
     }
     reset();
     E = shape(E0);
@@ -5480,7 +5539,8 @@ export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall =
             const nrm = bt ? bt.tr.nrm : null;
             const kkey = qb * N + kk;
             const prev = deficitMap.get(kkey);
-            if (!prev || wall - clr > prev.deficit) deficitMap.set(kkey, { q: qb, k: kk, deficit: wall - clr, nrm });
+            if (!prev || wall - clr > prev.deficit)
+              deficitMap.set(kkey, { q: qb, k: kk, deficit: wall - clr, nrm, p, foot: bt ? bt.f : null });
           }
         }
       }
