@@ -1,5 +1,38 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-02 rebuild — the skin is wrapped round the ducts
+
+The push-and-hull skin went through four CAD round trips (protruding duct,
+wrinkles, a second hill, knuckles, then thick outer walls mid-path) and the
+owner asked for a clean rebuild: "radius = wall, skin follows ducts". That
+is what ships now, and `hornBodySections` is a different construction:
+stations are the FLOW'S LEVEL SETS (fitted, saturated beyond the envelope),
+every duct is cut by every sheet along its vertex lines, each cut is grown
+into a SLEEVE by the wall measured perpendicular to the duct (flank offsets
+by 1/|e·n|, elliptical corners), the sleeves are closed by a ROLLING BALL of
+the smallest radius that keeps each station in one piece, and the ring is
+traced off a distance field. Nothing is pushed, hulled or fitted
+afterwards. The skin has its own station count (max(48, 2 x map), cap 96).
+Measured at the defaults: min 3-D outer wall 2.92 plain / 2.74 default bow
+/ 3.00 bulge + short bow, flanks 3.0-3.9 mm, spline within 0.12 mm of the
+loft, 8-12 s per export. The export note now prints the fairing radius and
+the skin station count beside the min wall. Full rules and the numbers
+that drove each are in the CLAUDE.md shell finding (five numbered rules).
+
+**Owner-side next:** export a solved horn and run the boolean. What to look
+at in the section views: ONE smooth sleeve over a bowed duct (no knuckles,
+no second hill), the outer wall reading ~3 mm along the sides mid-path
+(not 18-35), concave fillets of the reported fairing radius between rows,
+and the throat face still the exact circle. The fairing radius is the
+number to question if the body looks fat: it is the smallest that joins
+the rows at the widest station, so a geometry whose rows stand far apart
+mid-path gets a big radius everywhere.
+
+**Knobs not yet exposed:** the fairing radius (`fair`) can be passed to
+`hornBodySections` to override the automatic one — a fixed radius is
+refused rather than raised if it leaves a station in pieces; the ring
+resolution (`per`, 48 per run). Neither has a UI control yet.
+
 ## Done in the 2026-09-02 second CAD round trip — the skin over a bow
 
 The owner exported a fully solved horn and found the bowed duct PROTRUDING

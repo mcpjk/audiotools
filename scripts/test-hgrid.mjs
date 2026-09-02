@@ -2591,11 +2591,12 @@ head("Aperture surface, horn body, shell orientation");
   // ── the cap interior lies on the surface too, not on a chord ──────────────
   // A Coons blend of a boundary that lies on a curved cap falls BEHIND the
   // surface inside; blending in (a, e) and evaluating cannot.
-  const body = M.hornBodySections(th, opts, { wall, stations: ST, map, t });
+  const body = M.hornBodySections(th, opts, { wall, map, t });
   checkTrue("the rim loop chains and closes exactly",
     body && body.chainErr < 1e-6 && body.closeErr < 1e-9,
     body ? `chain ${body.chainErr.toExponential(1)} mm, closure ${body.closeErr.toExponential(1)} mm` : "no body");
-  const ring = body.sections[ST].pts;
+  const SB = body.sections.length - 1;
+  const ring = body.sections[SB].pts;
   const grid = M.apertureCapGrid(ring, ap);
   let gDev = 0, gEdge = 0;
   const nB = ring.length / 4;
@@ -2632,95 +2633,103 @@ head("Aperture surface, horn body, shell orientation");
   check("body throat ring planar in z = 0", zMax, 0, 1e-12, "mm");
   // it also grows monotonically, which is what makes it a horn and not a bulb
   let grows = true;
-  for (let q = 1; q <= ST; q++) if (body.sections[q].area <= body.sections[q - 1].area) grows = false;
+  for (let q = 1; q <= SB; q++) if (body.sections[q].area <= body.sections[q - 1].area) grows = false;
   checkTrue("the body's section area grows at every station", grows, "");
 
-  // ── the ducts are inside the body, BY THE WALL ────────────────────────────
-  // The tiling envelope alone leaves the corner cells near the throat under
-  // the wall (measured 0.9-1.4 mm against 3), and a radial bow bursts through
-  // it by 25.6 mm. With the live map supplied the skin follows the ducts, so
-  // the minimum outer wall is the specified wall in every case — the last
-  // few percent are the radial-vs-normal cosine of the offset.
-  // Measured in TRUE 3-D against the exported B-spline skin (skinClearance),
-  // never by station index in a projection: that proxy read +2.96 mm on a
-  // horn whose duct stood 20.6 mm outside the skin. The owner accepted a
-  // MINIMUM wall at these features rather than a constant one, and the
-  // slope-limited hill lands within a few percent of it.
+  // ── THE SKIN IS WRAPPED ROUND THE DUCTS ───────────────────────────────────
+  // Each station is a sheet — the flow's own level set, fitted — and on it
+  // every duct is grown by the wall (a sleeve: flank offsets and corner
+  // ellipses from the duct's own 3-D heading through the sheet) and the
+  // sleeves are closed by a rolling ball of the smallest radius that keeps
+  // the station in one piece. The skin has its own station count, finer
+  // than the ducts', because the loft between sheets is straight.
+  checkTrue("the skin carries its own, finer station count", SB === 48 && SB !== ST,
+    `${SB} skin stations over ${ST} duct stations`);
+  checkTrue("every vertex line of every duct crosses every sheet", Math.min(...body.validity) === 1,
+    `validity min ${Math.min(...body.validity)}`);
+  checkTrue("the fairing radius is reported, and never under twice the wall",
+    body.fair >= 2 * wall && body.fairNeeded >= 0,
+    `${body.fair} mm used, ${body.fairNeeded.toFixed(1)} mm needed at station ${body.fairAt}`);
+  // THE WALL IS A MINIMUM, measured in TRUE 3-D against the exported
+  // B-spline skin (skinClearance) — never by station index in a projection:
+  // that proxy read +2.96 mm on a horn whose duct stood 20.6 mm outside the
+  // skin. Sleeves are laid one pixel over the wall for the raster's sake; the
+  // few percent under come from the cubic loft between sheets.
   const cont = M.bodyContainment(th, map, body, { t, wall });
-  checkTrue("every duct sits inside the body's skin by the wall (3-D)", cont.minWall > 0.9 * wall,
-    `min outer wall ${cont.minWall.toFixed(2)} mm, hill ${body.pushMax.toFixed(1)} mm at station ${body.pushAt}, ${body.rounds} round(s)`);
-  checkTrue("and the plain horn needs almost no hill for it", body.pushMax < 3,
-    `${body.pushMax.toFixed(2)} mm — swept and flowed sections differ only near the throat`);
+  checkTrue("every duct sits inside the body's skin by the wall (3-D)", cont.minWall > 0.85 * wall,
+    `min outer wall ${cont.minWall.toFixed(2)} mm against ${wall}`);
+  // and the RINGS themselves hold the wall on the flanks: the median
+  // distance from a skin ring to the nearest duct surface is the wall plus
+  // the pixel allowance, at a station near the throat and one mid-path
+  {
+    const sub = (x, y) => [x[0] - y[0], x[1] - y[1], x[2] - y[2]], dot = (x, y) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+    const closestTri = (p, A, B, C) => {
+      const ab = sub(B, A), ac = sub(C, A), apv = sub(p, A); const d1 = dot(ab, apv), d2 = dot(ac, apv);
+      if (d1 <= 0 && d2 <= 0) return A;
+      const bp = sub(p, B), d3 = dot(ab, bp), d4 = dot(ac, bp); if (d3 >= 0 && d4 <= d3) return B;
+      const vc = d1 * d4 - d3 * d2; if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); return [A[0] + ab[0] * v, A[1] + ab[1] * v, A[2] + ab[2] * v]; }
+      const cp = sub(p, C), d5 = dot(ab, cp), d6 = dot(ac, cp); if (d6 >= 0 && d5 <= d6) return C;
+      const vb = d5 * d2 - d1 * d6; if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); return [A[0] + ac[0] * w, A[1] + ac[1] * w, A[2] + ac[2] * w]; }
+      const va = d3 * d6 - d5 * d4; if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); return [B[0] + (C[0] - B[0]) * w, B[1] + (C[1] - B[1]) * w, B[2] + (C[2] - B[2]) * w]; }
+      const den = 1 / (va + vb + vc), v = vb * den, w = vc * den; return [A[0] + ab[0] * v + ac[0] * w, A[1] + ab[1] * v + ac[1] * w, A[2] + ab[2] * v + ac[2] * w];
+    };
+    const tris = [];
+    for (const cell of th.cells) {
+      const d = M.ductSections(cell, map.rows.find((r) => r.id === cell.id), { t });
+      for (let j = 0; j < d.length - 1; j++) {
+        const Nn = d[j].pts.length;
+        for (let k = 0; k < Nn; k++) { const a = d[j].pts[k], b = d[j].pts[(k + 1) % Nn], c2 = d[j + 1].pts[(k + 1) % Nn], e = d[j + 1].pts[k]; tris.push([a, b, c2]); tris.push([a, c2, e]); }
+      }
+    }
+    const ringToDuct = (q) => {
+      const ds = body.sections[q].pts.map((p) => { let best = Infinity; for (const [A, B, C2] of tris) { if (Math.abs((A[2] + B[2] + C2[2]) / 3 - p[2]) > 40) continue; const f = closestTri(p, A, B, C2); best = Math.min(best, Math.hypot(...sub(p, f))); } return best; });
+      ds.sort((x, y) => x - y);
+      return { min: ds[0], median: ds[Math.floor(ds.length / 2)] };
+    };
+    const near = ringToDuct(4), mid = ringToDuct(24);
+    checkTrue("skin rings hold the wall on the flanks near the throat", near.min > 0.9 * wall && near.median < 1.35 * wall,
+      `ring 4: min ${near.min.toFixed(2)}, median ${near.median.toFixed(2)} mm`);
+    checkTrue("and mid-path, where the outer ducts cross the sheets obliquely", mid.min > 0.85 * wall && mid.median < 1.5 * wall,
+      `ring 24: min ${mid.min.toFixed(2)}, median ${mid.median.toFixed(2)} mm`);
+  }
   {
     const bowOpts = { ...opts, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } };
     const bowMap = M.mapThroatToMouth(th, bowOpts);
-    const bowBare = M.hornBodySections(th, bowOpts, { wall, stations: ST });
-    const bowBody = M.hornBodySections(th, bowOpts, { wall, stations: ST, map: bowMap, t });
+    const bowBare = M.hornBodySections(th, bowOpts, { wall, stations: 48 });
+    const bowBody = M.hornBodySections(th, bowOpts, { wall, map: bowMap, t });
     const cbb = M.bodyContainment(th, bowMap, bowBare, { t, wall });
     const cbf = M.bodyContainment(th, bowMap, bowBody, { t, wall });
     checkTrue("a radial bow bursts through the bare tiling envelope", cbb.worst > 10,
       `${cbb.worst.toFixed(1)} mm outside`);
-    checkTrue("and the following skin contains it by the wall (3-D)", cbf.minWall > 0.9 * wall,
-      `min outer wall ${cbf.minWall.toFixed(2)} mm, hill ${bowBody.pushMax.toFixed(1)} mm, ${bowBody.rounds} round(s)`);
-    // THE HILL IS SMOOTH ENOUGH FOR THE LOFT. The exported skin is a cubic
-    // through the rings; a spike in the rings rings on either side of it (the
-    // owner's wrinkles). With the excess slope-limited, the cubic stays close
-    // to the straight loft between rings everywhere — measured at the
-    // mid-station of every ring pair.
+    checkTrue("and the wrapped skin contains it by the wall (3-D)", cbf.minWall > 0.85 * wall,
+      `min outer wall ${cbf.minWall.toFixed(2)} mm, fairing radius ${bowBody.fair} mm`);
+    // THE LOFT IS SMOOTH. The exported skin is a cubic through the rings; a
+    // spike in the rings rings on either side of it (the owner's wrinkles).
+    // Built from a distance field and resampled by arc length plus turning,
+    // the cubic stays close to the straight loft between rings everywhere —
+    // measured at the mid-station of every ring pair.
     const apB = M.apertureFrame(bowMap.mouthSurf);
-    const brB = M.ductBrep(bowBody.sections, { capMouthPts: M.apertureCapGrid(bowBody.sections[ST].pts, apB) });
+    const SBB = bowBody.sections.length - 1;
+    const brB = M.ductBrep(bowBody.sections, { capMouthPts: M.apertureCapGrid(bowBody.sections[SBB].pts, apB) });
     let ripple = 0;
     for (let w = 0; w < 4; w++)
-      for (let q = 0; q < ST; q++)
+      for (let q = 0; q < SBB; q++)
         for (let i = 0; i <= brB.n; i++) {
-          const P = M.evalBsplineSurf(brB.walls[w], brB.uKnots, brB.vKnots, i / brB.n, (q + 0.5) / ST);
+          const P = M.evalBsplineSurf(brB.walls[w], brB.uKnots, brB.vKnots, i / brB.n, (q + 0.5) / SBB);
           const a = bowBody.sections[q].pts[(w * brB.n + i) % (4 * brB.n)], b = bowBody.sections[q + 1].pts[(w * brB.n + i) % (4 * brB.n)];
           ripple = Math.max(ripple, Math.hypot(P[0] - (a[0] + b[0]) / 2, P[1] - (a[1] + b[1]) / 2, P[2] - (a[2] + b[2]) / 2));
         }
-    checkTrue("the skin stays close to the straight loft through the hill", ripple < 2.5,
-      `worst ${ripple.toFixed(2)} mm mid-station, under a ${bowBody.pushMax.toFixed(0)} mm hill`);
-    // NO KNUCKLES. Grown from single deficit points the hill peaked at a
-    // duct's two outer corners with a valley between; every push is now a
-    // convex-hull fill in the ring's own plane, so a fitted ring can have no
-    // concave vertex where the envelope had none. Measured on the near-planar
-    // throat-side rings, where the projection is exact.
-    const concaveCount = (b, qMax) => {
-      let n = 0;
-      for (let q = 1; q <= qMax; q++) {
-        const P = b.sections[q].pts, Nn = P.length, ctr = [0, 0, 0];
-        for (const p of P) { ctr[0] += p[0] / Nn; ctr[1] += p[1] / Nn; ctr[2] += p[2] / Nn; }
-        let nx = 0, ny = 0, nz = 0;
-        for (let k = 0; k < Nn; k++) { const a = P[k], c2 = P[(k + 1) % Nn]; nx += (a[1] - c2[1]) * (a[2] + c2[2]); ny += (a[2] - c2[2]) * (a[0] + c2[0]); nz += (a[0] - c2[0]) * (a[1] + c2[1]); }
-        const L = Math.hypot(nx, ny, nz), nn = [nx / L, ny / L, nz / L];
-        const tt = Math.abs(nn[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
-        let U = [tt[1] * nn[2] - tt[2] * nn[1], tt[2] * nn[0] - tt[0] * nn[2], tt[0] * nn[1] - tt[1] * nn[0]];
-        const ul = Math.hypot(...U); U = U.map((v) => v / ul);
-        const V = [nn[1] * U[2] - nn[2] * U[1], nn[2] * U[0] - nn[0] * U[2], nn[0] * U[1] - nn[1] * U[0]];
-        const w = P.map((p) => { const d = [p[0] - ctr[0], p[1] - ctr[1], p[2] - ctr[2]]; return [d[0] * U[0] + d[1] * U[1] + d[2] * U[2], d[0] * V[0] + d[1] * V[1] + d[2] * V[2]]; });
-        let A = 0; for (let k = 0; k < Nn; k++) A += w[k][0] * w[(k + 1) % Nn][1] - w[(k + 1) % Nn][0] * w[k][1];
-        const sg = A > 0 ? 1 : -1;
-        for (let k = 0; k < Nn; k++) {
-          const a = w[(k - 1 + Nn) % Nn], b2 = w[k], d = w[(k + 1) % Nn];
-          const cr = (b2[0] - a[0]) * (d[1] - b2[1]) - (b2[1] - a[1]) * (d[0] - b2[0]);
-          const l1 = Math.hypot(b2[0] - a[0], b2[1] - a[1]), l2 = Math.hypot(d[0] - b2[0], d[1] - b2[1]);
-          if (cr * sg < -0.05 * l1 * l2) n++;
-        }
-      }
-      return n;
-    };
-    const cBare = concaveCount(bowBare, 12), cFit = concaveCount(bowBody, 12);
-    checkTrue("the fitted rings are as convex as the envelope — no knuckles", cFit <= cBare,
-      `concave vertices on the throat-side rings: envelope ${cBare}, fitted ${cFit}`);
-    // and the measurement is a real inversion of the push: with no map there
-    // is no hill, and the clearance reads whatever the envelope gives
-    checkTrue("the bare envelope reports no hill", bowBare.pushMax === 0 && bowBare.clearance === null, "");
-    // both ends are untouched by the push: the throat is still the exact
+    checkTrue("the skin stays close to the straight loft through the bow", ripple < 2,
+      `worst ${ripple.toFixed(2)} mm mid-station (1.33 measured on this half-path bow; 0.1-0.2 at the tool's defaults)`);
+    // the bare envelope form reports no clearance and no fairing
+    checkTrue("the bare envelope is the old form: no clearance measured", bowBare.clearance === null && bowBare.mode === "envelope", "");
+    // both ends are exact whatever the bow: the throat is still the exact
     // circle and the mouth ring still lies on the aperture
     let rT = 0, dM = 0;
     for (const p of bowBody.sections[0].pts) rT = Math.max(rT, Math.abs(Math.hypot(p[0], p[1]) - (R + wall)));
-    for (const p of bowBody.sections[ST].pts) dM = Math.max(dM, Math.abs(ap.deviation(p)));
-    check("the push leaves the throat circle exact", rT, 0, 1e-9, "mm");
-    check("the push leaves the mouth ring on the aperture", dM, 0, 1e-9, "mm");
+    for (const p of bowBody.sections[SBB].pts) dM = Math.max(dM, Math.abs(ap.deviation(p)));
+    check("the bow leaves the throat circle exact", rT, 0, 1e-9, "mm");
+    check("the bow leaves the mouth ring on the aperture", dM, 0, 1e-9, "mm");
   }
 
   // ── orientation: ONE decision, and it must come out outward ──────────────

@@ -708,78 +708,96 @@ exists.
   singular rim vertices — precisely the 4-sided topology `ductBrep` wants.
   The unprofiled envelope is deliberate: the profile pulls ducts inward, so a
   skin following them would waist in and out, and the material between
-  diverging ducts is what a multicell body IS. **But the skin must contain
-  the ducts AS BUILT, and the tiling envelope alone does not**: measured
-  0.9-1.4 mm of outer wall at the corner cells near the throat against a
-  specified 3, and a radial 1-lobe bow bursts through it by 25 mm — a duct
-  outside the horn. So when the live map is supplied, `followDucts` grows a
-  SLOPE-LIMITED HILL on the skin wherever a duct comes closer than the wall,
-  and the owner accepted the trade explicitly: a MINIMUM wall at these
-  features, smoothly, not a constant one. Three lessons from the first
-  version, which the owner's CAD caught (duct protruding, skin wrinkled):
-  (1) STATION INDEX IS NOT POSITION — swept duct sections and flow-mode body
-  rings are not co-planar near a bow, and comparing ring q with duct ring q
-  in a projection read +2.96 mm of wall on a horn whose duct stood 20.6 mm
-  OUTSIDE the skin; the number is now the true 3-D clearance of every duct
-  point against the exported B-spline surface (`skinClearance`), through a
-  spatial hash with a bounded radius — a band-indexed search near the curved
-  mouth found a far triangle first and its normal gave a false "outside" of
-  a metre. (2) A PUSHED VERTEX IS A SPIKE, and a cubic loft through a spike
-  rings on both sides — those were the wrinkles. The excess is a field over
-  (station, vertex), slope-limited to 1:1 along the ring and along the path
-  and then rounded, and the exported skin now sits within 1.3 mm of the
-  straight loft between rings under a 58 mm hill (0.3 mm on a plain horn).
-  (3) THE PUSH MUST BE FED BACK FROM THE MEASUREMENT, and exactly: a deficit
-  measured between two rings goes to BOTH (one alone closes half the gap
-  per round and stalls), divided by the flank cosine n·r̂ (a flat 15% factor
-  over-grew a 37 mm bow into a 110 mm hill), and seeded from nothing — a
-  first attempt seeded it by projecting duct points into each ring's plane
-  slab, and near the mouth, where the rings are far from planar, a point
-  three stations along read as 18 mm outside a skin it was well inside.
-  (4) WHERE THE MATERIAL GOES IS NOT WHERE THE SKIN IS NEAREST. The nearest
-  skin point to a duct sticking out of a flaring horn lies further ALONG
-  the horn — the skin comes back toward the duct as it flares — so a push
-  attributed to that foot's station landed one to three stations AHEAD of
-  the bow, oblique and over-sized: measured 10.5 mm of wall at stations 6-7
-  against 3.4 at the bow's peak, which the owner's section view showed as
-  a SECOND HILL after the one over the bow. Every deficit now goes radially
-  over its own point, on BOTH rings that bracket it along the horn (one
-  alone leaves the loft between them under the wall): a point outside the
-  skin takes the in-plane excess in each ring's plane, a point inside but
-  thin takes the 3-D residual over the flank cosine. No push is ever placed
-  at the foot. Measured at the tool's defaults, 64 stations, wall 3: min
-  outer wall 2.87 mm plain (hill 2.3 mm), 2.87 mm with the default
-  throat-fifth radial bow (hill 24 mm, ONE hump in the section), 2.82 mm
-  with a throat-half bow (hill 55 mm), 2.67 mm with a bulge and a
-  short-axis bow (hill 56 mm); 1-6 fitting rounds, ~3-5 s. One consequence
-  to know: a bow window that starts AT the throat (the default [0, 0.2])
-  makes the skin step up behind the throat face within one station,
-  because the bow is steeper there than the 1:1 slope limit and the throat
-  ring is pinned to the flange circle — the mating face is untouched, but
-  the body swells right behind it. A window starting a little after the
-  throat lets the skin rise smoothly; that is a design knob, not a build.
-  (5) EVERY PUSH IS A CONVEX HULL, or the hill grows KNUCKLES. Grown from
-  single deficit points, the skin peaked at a duct's two outer CORNERS with
-  a valley between — two ridges over one duct, which the owner's axial
-  section showed and rightly read as not following the duct. Pushing ring
-  vertices one at a time produces that whatever seeds the field, so a push
-  is now a point set the ring must enclose, and the ring becomes the convex
-  hull of itself with those points in its own plane: two corners are joined
-  by the duct's own flat side and faired into the skin by tangent lines.
-  The field is also seeded from the bowed ducts' SLEEVES (their own rings
-  offset by the wall — the bundle mode's blanks — gated on a duct measured
-  OUTSIDE the bare skin, and laid into the ring of the SAME PATH FRACTION,
-  never a plane slab: the rings of a flaring horn fan apart, and a slab
-  admitted sleeve points from three stations ahead as a 12 mm phantom hill
-  on a plain horn) and every shaped ring is re-hulled, because the path
-  slope limit copies a bump vertex by vertex and its clamp leaves concave
-  kinks. Measured: zero concave vertices on the throat-side rings in every
-  case; the polar profile at the peak reads 43-46-46-45-46-46-43 across the
-  duct (the 1 mm dip is its flat side). Thin spots — inside but under the
-  wall — are pushed at the measured foot (band and vertex column of the
-  nearest skin triangle), over-pushed by half; attributing them by ring
-  plane put the push beside the point on a non-planar ring and the loop
-  chased 1.3 mm for five rounds. It is
+  diverging ducts is what a multicell body IS — but a skin on that envelope
+  alone measured 0.9-1.4 mm of outer wall at the corner cells near the
+  throat against a specified 3, a radial bow burst through it by 25 mm, and
+  the envelope stood 18-35 mm off the ducts mid-path where the profile had
+  pulled them inward. So with the live map supplied the skin is WRAPPED ROUND
+  THE DUCTS (2026-09-02, a clean rebuild after four CAD round trips on the
+  push-and-hull version — protruding duct, wrinkles, a second hill, knuckles
+  — the owner's call: "radius = wall, skin follows ducts"). The rules, all
+  measured:
+  (1) THE STATIONS ARE SHEETS, AND THEY ARE THE FLOW'S OWN LEVEL SETS,
+  fitted. A station of the flow map is one level set of path fraction, and
+  every duct's own station sits on or near it whatever the duct has since
+  been made to do (a bow moves a section along that surface, not off it),
+  so the family is transverse to the ducts by construction: worst angle
+  between a vertex line and the sheet normal 39 deg plain, 52 deg with a
+  bulge and a short-axis bow, where the earlier family z = h(q) + w(q)·sag
+  read 61 and 79 deg and a bowed duct ran ALONG one of its sheets for 60 mm
+  and came out 0.1 mm from the skin. Each level set is fitted by an even
+  sixth-order polynomial in the aperture's arc-length coordinates (rH·a,
+  rV·e) — residual 0.3 mm on the flow's ~1150 points — with the coordinates
+  SATURATED at the data's extent so the sheet continues flat beyond the
+  envelope: with 30% of overshoot allowed, a flat near-throat level set
+  deepened 37 mm just outside its data, consecutive sheets crossed, and the
+  loft over a half-path bow folded (a duct 11 mm outside). Throat sheet =
+  the throat plane, mouth sheet = the aperture, both exact. Each duct is cut
+  by each sheet vertex line by vertex line (exact for the ruled loft the
+  STEP carries), taking the crossing NEAREST THE DUCT'S OWN STATION of that
+  path fraction — a bowed line crosses a bowl three times, and the first
+  crossing once put a cut 100 mm from its duct (a 51 mm fairing radius).
+  (2) THE SLEEVE IS THE DUCT GROWN BY A BALL OF RADIUS wall, CUT BY THE
+  SHEET — built directly as a 2-D polygon, not by morphology. Along a flank
+  the offset is wall / |e·n| along the edge's outward normal (e that
+  normal's own 3-D direction within the sheet, n the flank's), because a
+  flank inclined to the sheet sees only sin(phi) of an in-sheet offset: the
+  outer columns fan out at 40-65 deg mid-path while the sheet is still
+  nearly flat, and 3 mm in the sheet measured 1.4 mm of wall. Round a
+  convex corner the sheet meets the cylinder about the corner line at an
+  ELLIPSE — semi-minor the wall, semi-major wall / cos(phi) along the line's
+  heading; a circle of radius wall at a corner heading out at 65 deg
+  measured 2.2 mm. Offsets are capped at 3·wall, laid one pixel over
+  (measured on a square: the two thresholded raster steps land the outline
+  0.6 px under to 1.3 px over, so the allowance makes it never under), and
+  the polygon is filled NONZERO, because adjacent flanks asking for
+  different offsets leave small backward loops that even-odd punched into
+  slivers.
+  (3) THE FAIRING IS A ROLLING BALL, ONE RADIUS FOR THE WHOLE HORN: dilate
+  the sleeves by it, take the distance field to the complement, trace the
+  iso-line at the radius (Felzenszwalb EDT, marching squares, 0.2-0.6 mm
+  pixels). That is the morphological closing — concave fillets wherever two
+  sleeves come within twice the radius, the outermost sleeves followed at
+  exactly the wall everywhere else, including the SADDLE of this horn's
+  mid-path sections that a convex hull bridged with 18-35 mm of material.
+  The radius is the smallest that keeps EVERY station in one piece
+  (bisection on a coarse raster every fourth station, verified by winding
+  on the fine one and raised 10% + 1 mm if a station still comes out in
+  pieces), never under 2·wall: 17-19 mm at the tool's defaults (the rows
+  stand ~26 mm apart sleeve to sleeve mid-path, so a 12 mm ball left three
+  tubes), 60 mm with a bulge and a short-axis bow that opens a 100 mm void
+  in the middle row — an honest answer, reported in the export note, not a
+  bug. Where a bow carries a duct out through the skin it emerges as its
+  own sleeve through a concave fillet: the bump IS the duct.
+  (4) THE RING IS RESAMPLED BY ARC LENGTH PLUS 4·wall PER RADIAN OF TURNING,
+  read over ±1.5 mm on a trace smoothed over ±2 samples. At ~5 mm of plain
+  spacing a wall-radius round carried one vertex and the loft's chord across
+  it measured 0.9 mm of wall; the turning weight puts three or four there.
+  The window matters twice over: marching squares on a pixel-centre field
+  jitters (10 rad of spurious turning on a 247 mm near-circle, so the trace
+  is smoothed first), and a ±6 mm window let a round next to a fillet
+  cancel against it and lose its vertices. Runs are split at the flow
+  envelope's four corner rays, taking the OUTERMOST forward crossing of
+  each ray, since the outline is not star-shaped once the fillets are deep.
+  (5) THE SKIN HAS ITS OWN STATION COUNT — max(48, 2 x the map's), capped
+  at 96, when none is given; the UI passes its export-stations value (64)
+  for both, measured 2.84 mm in the browser at the defaults — because the loft between sheets is straight and a bowed duct that
+  travels 30 mm sideways between 12.5 mm sheets (the default throat-fifth
+  bow) measured 0.8 mm of wall; the ducts are cut wherever the sheets meet
+  their vertex lines, so their own count does not enter. `skinClearance`
+  compares a duct station with the ring of the same PATH FRACTION, never the
+  same index — its far-point fallback once read a duct 130 mm outside a
+  skin that had twice the rings.
+  Measured on the acceptance set (6x3, the 2026-09-02 defaults, wall 3, 48
+  duct stations, 96 skin stations): true 3-D minimum outer wall 2.92 mm
+  plain, 2.74 with the default throat-fifth radial bow, 2.49-2.92 with a
+  half-path radial bow, 3.00 with bulge 5 plus a short-axis bow; the true
+  side wall at the +y and +x flanks 3.0-3.9 mm; the spline within 0.12 mm of
+  the straight loft between rings; throat r = R + wall exact, mouth on the
+  aperture to 6e-14; 8-12 s per export. The last few percent under the wall
+  are the cubic loft between sheets near the throat, where the outline
+  changes fastest; the rings themselves hold the wall to within 0.2 mm. It
+  is
   still MEASURED afterwards (`bodyContainment`) and reported. What is left
   between two passages after the subtraction is exactly the duct-to-duct gap:
   the layout's t at the throat, a knife edge at the mouth, no per-cell wall
