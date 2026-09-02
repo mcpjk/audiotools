@@ -2510,8 +2510,8 @@ head("Horn shell export (blanks + cutters)");
     check("cutter throat ring planar in z = -ext", z, 0, 1e-9, "mm");
   }
 
-  // ── the emitted file ──────────────────────────────────────────────────────
-  const out = M.buildShellSTEP(th, map, { t, wall, ext, name: "shelltest" });
+  // ── the emitted file, bundle mode ─────────────────────────────────────────
+  const out = M.buildShellSTEP(th, map, { t, wall, ext, mode: "bundle", name: "shelltest" });
   checkTrue("two solids per cell: 18 blanks + 18 cutters", out.checks.ducts === 36, `${out.checks.ducts} solids`);
   check("shell surfaces pass through every sampled ring point", out.checks.residual, 0, 1e-9, "mm");
   checkTrue("every edge used exactly twice, opposite senses", out.checks.edgePairing, "");
@@ -2535,6 +2535,200 @@ head("Horn shell export (blanks + cutters)");
   const ss = M.shellSolids(th, map, { t, wall });
   checkTrue("shellSolids meshes every blank manifold",
     ss.length === 18 && ss.every((sd) => sd.manifold.ok), "");
+}
+
+head("Aperture surface, horn body, shell orientation");
+{
+  const t = 0.4, wall = 3, ST = 24;
+  const opts = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    sectionMode: "swept", stations: ST, depth: 320, profileT: 0.7,
+    keepGeometry: true, computeClearance: false,
+  };
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  const map = M.mapThroatToMouth(th, opts);
+  const ap = M.apertureFrame(map.mouthSurf);
+
+  // ── the inversion is exact, and it is an inversion ─────────────────────────
+  // Round-trip the surface's OWN parameters through param() and back: any
+  // point the forward map produces must come back with the same (a, e).
+  let rt = 0, fwd = 0;
+  for (let ia = -4; ia <= 4; ia++)
+    for (let ie = -3; ie <= 3; ie++) {
+      const a = (ia / 4) * (45 * Math.PI / 180), e = (ie / 3) * (20 * Math.PI / 180);
+      const P = ap.at(a, e), pr = ap.param(P);
+      rt = Math.max(rt, Math.abs(pr.a - a), Math.abs(pr.e - e));
+      fwd = Math.max(fwd, Math.abs(ap.deviation(P)));
+    }
+  check("aperture param inverts its own forward map", rt, 0, 1e-12, "rad");
+  check("a surface point measures zero deviation", fwd, 0, 1e-12, "mm");
+  // and the surface the DUCTS were built on is the same surface
+  let ductDev = 0;
+  for (const r of map.rows)
+    for (const p of r.sched[r.sched.length - 1].pts) ductDev = Math.max(ductDev, Math.abs(ap.deviation(p)));
+  check("duct mouth rings already lie on it", ductDev, 0, 1e-9, "mm");
+
+  // ── the shell mouth ring is put back ON the surface ───────────────────────
+  // Offsetting happens in the ring's best-fit plane, so it leaves the curved
+  // aperture by the local slope times the offset — and every cell fits its own
+  // plane, so the lips disagreed with each other too. Snapped, they cannot.
+  let unsnapped = 0, snapped = 0;
+  for (const cell of th.cells) {
+    const row = map.rows.find((r) => r.id === cell.id);
+    const a = M.shellSections(cell, row, { t, wall });
+    const b = M.shellSections(cell, row, { t, wall, surf: map.mouthSurf });
+    for (const p of a[a.length - 1].pts) unsnapped = Math.max(unsnapped, Math.abs(ap.deviation(p)));
+    for (const p of b[b.length - 1].pts) snapped = Math.max(snapped, Math.abs(ap.deviation(p)));
+  }
+  checkTrue("unsnapped blank lips leave the aperture measurably", unsnapped > 0.5,
+    `${unsnapped.toFixed(3)} mm off — the artifact this fixes`);
+  check("snapped blank lips lie on the aperture", snapped, 0, 1e-9, "mm");
+
+  // ── the cap interior lies on the surface too, not on a chord ──────────────
+  // A Coons blend of a boundary that lies on a curved cap falls BEHIND the
+  // surface inside; blending in (a, e) and evaluating cannot.
+  const body = M.hornBodySections(th, opts, { wall, stations: ST, map, t });
+  checkTrue("the rim loop chains and closes exactly",
+    body && body.chainErr < 1e-6 && body.closeErr < 1e-9,
+    body ? `chain ${body.chainErr.toExponential(1)} mm, closure ${body.closeErr.toExponential(1)} mm` : "no body");
+  const ring = body.sections[ST].pts;
+  const grid = M.apertureCapGrid(ring, ap);
+  let gDev = 0, gEdge = 0;
+  const nB = ring.length / 4;
+  for (const row of grid) for (const p of row) gDev = Math.max(gDev, Math.abs(ap.deviation(p)));
+  for (let i = 0; i <= nB; i++) {
+    gEdge = Math.max(gEdge, Math.hypot(...grid[i][0].map((v, k) => v - ring[i % ring.length][k])));
+    gEdge = Math.max(gEdge, Math.hypot(...grid[nB][i].map((v, k) => v - ring[(nB + i) % ring.length][k])));
+  }
+  check("every cap grid point lies on the aperture", gDev, 0, 1e-9, "mm");
+  check("the cap grid reproduces the ring on its boundary", gEdge, 0, 1e-9, "mm");
+  // the Coons alternative is measurably worse, which is why the grid exists
+  {
+    const bare = M.ductBrep(body.sections);
+    const withAp = M.ductBrep(body.sections, { capMouthPts: grid });
+    const at = (br, u, v) => M.evalBsplineSurf(br.capMouth, br.uKnots, br.uKnots, u, v);
+    let dC = 0, dG = 0;
+    for (let i = 1; i < 8; i++)
+      for (let j = 1; j < 8; j++) {
+        dC = Math.max(dC, Math.abs(ap.deviation(at(bare, i / 8, j / 8))));
+        dG = Math.max(dG, Math.abs(ap.deviation(at(withAp, i / 8, j / 8))));
+      }
+    checkTrue("the interpolated cap beats a Coons blend on the surface",
+      dG < 0.05 && dC > 1, `Coons ${dC.toFixed(1)} mm off, interpolated ${dG.toExponential(1)} mm`);
+  }
+
+  // ── the body's throat face is the driver disc plus the wall, exactly ──────
+  let rMin = Infinity, rMax = 0, zMax = 0;
+  for (const p of body.sections[0].pts) {
+    const r = Math.hypot(p[0], p[1]);
+    rMin = Math.min(rMin, r); rMax = Math.max(rMax, r); zMax = Math.max(zMax, Math.abs(p[2]));
+  }
+  check("body throat ring radius, min", rMin, R + wall, 1e-9, "mm");
+  check("body throat ring radius, max", rMax, R + wall, 1e-9, "mm");
+  check("body throat ring planar in z = 0", zMax, 0, 1e-12, "mm");
+  // it also grows monotonically, which is what makes it a horn and not a bulb
+  let grows = true;
+  for (let q = 1; q <= ST; q++) if (body.sections[q].area <= body.sections[q - 1].area) grows = false;
+  checkTrue("the body's section area grows at every station", grows, "");
+
+  // ── the ducts are inside the body, BY THE WALL ────────────────────────────
+  // The tiling envelope alone leaves the corner cells near the throat under
+  // the wall (measured 0.9-1.4 mm against 3), and a radial bow bursts through
+  // it by 25.6 mm. With the live map supplied the skin follows the ducts, so
+  // the minimum outer wall is the specified wall in every case — the last
+  // few percent are the radial-vs-normal cosine of the offset.
+  const cont = M.bodyContainment(th, map, body, { t, wall });
+  checkTrue("every duct sits inside the body's skin by the wall", -cont.worst > 0.95 * wall,
+    `min outer wall ${(-cont.worst).toFixed(2)} mm, skin pushed ${body.pushMax.toFixed(1)} mm at station ${body.pushAt}`);
+  {
+    const bare = M.hornBodySections(th, opts, { wall, stations: ST });
+    const cb = M.bodyContainment(th, map, bare, { t, wall });
+    checkTrue("without the map the tiling envelope is under the wall", -cb.worst < wall,
+      `${(-cb.worst).toFixed(2)} mm — why the push exists`);
+    const bowOpts = { ...opts, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } };
+    const bowMap = M.mapThroatToMouth(th, bowOpts);
+    const bowBare = M.hornBodySections(th, bowOpts, { wall, stations: ST });
+    const bowBody = M.hornBodySections(th, bowOpts, { wall, stations: ST, map: bowMap, t });
+    const cbb = M.bodyContainment(th, bowMap, bowBare, { t, wall });
+    const cbf = M.bodyContainment(th, bowMap, bowBody, { t, wall });
+    checkTrue("a radial bow bursts through the bare tiling envelope", cbb.worst > 10,
+      `${cbb.worst.toFixed(1)} mm outside`);
+    checkTrue("and the following skin contains it by the wall", -cbf.worst > 0.95 * wall,
+      `min outer wall ${(-cbf.worst).toFixed(2)} mm, skin pushed ${bowBody.pushMax.toFixed(1)} mm`);
+    // both ends are untouched by the push: the throat is still the exact
+    // circle and the mouth ring still lies on the aperture
+    let rT = 0, dM = 0;
+    for (const p of bowBody.sections[0].pts) rT = Math.max(rT, Math.abs(Math.hypot(p[0], p[1]) - (R + wall)));
+    for (const p of bowBody.sections[ST].pts) dM = Math.max(dM, Math.abs(ap.deviation(p)));
+    check("the push leaves the throat circle exact", rT, 0, 1e-9, "mm");
+    check("the push leaves the mouth ring on the aperture", dM, 0, 1e-9, "mm");
+  }
+
+  // ── orientation: ONE decision, and it must come out outward ──────────────
+  // A shell whose faces are oriented by a per-face radial proxy can disagree
+  // with itself; the body is where that happened. The whole-shell integral
+  // cannot, and its sign is the check.
+  {
+    const br = M.ductBrep(body.sections, { capMouthPts: grid });
+    const o = M.brepShellOrientation(br);
+    checkTrue("the body shell orients outward as assembled", o.outward,
+      `enclosed volume ${(o.volume / 1000).toFixed(0)} cm3`);
+    // Compare LIKE WITH LIKE. The mesh fans the mouth ring to its centroid;
+    // this brep closes it with the aperture surface, and on a ring this large
+    // and this curved (sagitta ~89 mm across the whole aperture) the two fills
+    // enclose genuinely different volumes — the cap-fill finding at full
+    // strength, not an error. Closing the brep walls with the same fan removes
+    // the freedom, and then only the walls differ and they must agree.
+    const dm = M.ductMesh(body.sections);
+    const vm = Math.abs(M.meshVolume(dm.verts, dm.tris));
+    const vFan = M.brepVolume(br, body.sections, 12, 48, "fan");
+    checkTrue("fan-capped, the brep body agrees with the meshed body",
+      Math.abs(vFan - vm) / vm < 0.01,
+      `${(vFan / 1000).toFixed(1)} vs ${(vm / 1000).toFixed(1)} cm3, ${(100 * Math.abs(vFan - vm) / vm).toFixed(3)}%`);
+    checkTrue("and the aperture cap holds more than the fan, as a curved cap must",
+      o.volume > vm, `${(o.volume / 1000).toFixed(0)} vs ${(vm / 1000).toFixed(0)} cm3 — the cap-fill difference`);
+  }
+
+  // ── the emitted solid-mode file ───────────────────────────────────────────
+  const out = M.buildShellSTEP(th, map, { t, wall, mode: "solid", body, name: "solidtest" });
+  checkTrue("solid mode emits one body plus one cutter per duct",
+    out.checks.ducts === 19 && out.mode === "solid"
+    && (out.text.match(/'horn body'/g) || []).length === 1
+    && (out.text.match(/'duct cutter /g) || []).length === 18, `${out.checks.ducts} solids`);
+  check("body and cutter surfaces pass through every sample", out.checks.residual, 0, 1e-9, "mm");
+  checkTrue("every edge used exactly twice, opposite senses", out.checks.edgePairing,
+    "the body shell is valid, which the per-face proxy could not deliver");
+  check("throat caps planar in their own planes", out.checks.capPlanarZ, 0, 1e-9, "mm");
+  const integ = M.stepIntegrity(out.text);
+  checkTrue("every referenced entity is defined", integ.ok,
+    `${integ.entities} entities, ${integ.missing} missing`);
+  checkTrue("solid mode refuses to guess a body it was not given",
+    M.buildShellSTEP(th, map, { t, wall, mode: "solid" }) === null, "");
+
+  // ── why the union is avoided: the blanks genuinely graze ─────────────────
+  // Blanks overlap near both ends (the ducts nearly tile there) and stand
+  // apart mid-path (the profile opens the gap), so every neighbouring pair
+  // crosses ZERO in between — exact tangential contact, the boolean's worst
+  // case. This is a property of the geometry, not of a tolerance.
+  {
+    const blankRows = (w) => map.rows.map((r) => {
+      const cell = th.cells.find((x) => x.id === r.id);
+      const sec = M.shellSections(cell, r, { t, wall: w, surf: map.mouthSurf });
+      return { ...r, sched: sec.map((x, q) => ({ ...r.sched[q], pts: x.pts })) };
+    });
+    const ps = M.ductClearance(blankRows(wall), {}).perStation;
+    let flips = 0;
+    for (let q = 2; q < ps.length - 1; q++) if (ps[q] * ps[q - 1] < 0) flips++;
+    checkTrue("bundle blanks cross from overlapping to apart mid-path", flips > 0,
+      `${flips} sign change(s) — the tangency the solid mode removes`);
+    const duct = M.ductClearance(map.rows, {});
+    checkTrue("and the wall that would avoid it is half the widest duct gap",
+      duct.max / 2 > wall, `widest duct gap ${duct.max.toFixed(1)} mm, so wall > ${(duct.max / 2).toFixed(1)} mm`);
+  }
 }
 
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);

@@ -1,5 +1,94 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## NEXT: Task F — "webs" shell export (owner approved 2026-09-02)
+
+The owner confirmed the solid-mode boolean SUCCEEDS in CAD and asked
+whether the export would carry the classic inter-cell gaps. It does not
+and cannot — the gaps are exactly the tangency that killed the union (a
+block that splits into tubes has a crotch, whichever way it is built).
+Measured what the gaps are worth at 6x3 / 90x40 / 480 mm / wall 3: the
+solid body is 2.7 L (depth 150) to 3.7 L (depth 320) of material, ~3.4-4.5
+kg in PLA, and the inter-cell gaps would remove only 11-22% of it; the mass
+is eighteen tube walls, so the lever is the wall itself and infill.
+
+The owner wants the multicell look anyway, so the agreed build is a
+**third shell mode, "webs"**: the solid body plus one SLOT CUTTER per
+neighbouring pair, over the station range where that pair's duct gap
+exceeds 2·wall + web, ending in flat TRANSVERSE faces rather than a
+crotch. All subtractions, no tangency, and each slot is a curved box the
+existing `ductBrep` writer already handles (run 0 = A's facing side offset
+by the wall, run 1 = the straight connector, run 2 = B's facing side
+reversed, run 3 = the other connector). Adjacent slots should OVERLAP
+rather than touch at the 4-duct corner diamonds — overlapping tools are
+robust, coincident tool faces are not — or cut the diamonds as their own
+4-sided cutters. Result: tubes joined by corner webs and blunt-ended slots,
+a multicell with webs instead of solder crotches. Read the CLAUDE.md shell
+findings (tangency, orientation, containment push) first; the facing-side
+identification comes from the grid adjacency `ductClearance` already walks.
+
+**Before that**: the owner is testing a FULLY SOLVED horn (depth solve,
+bows, separation, bulge) through the solid-mode boolean. The skin now
+follows the ducts (see the shell-CAD session below), so that test is
+meaningful; if it fails, that report comes first.
+
+## Done in the 2026-09-02 shell-CAD session (owner's first round trip)
+
+**Boolean confirmed working by the owner** on the solid-mode sample. After
+that, one more fix landed before merging: the body's skin now CONTAINS THE
+DUCTS AS BUILT. The tiling envelope left the corner cells under the wall
+near the throat (0.9-1.4 mm against 3) and a radial bow burst 25 mm through
+it; the skin is now pushed out to the ducts, direction by direction, before
+the wall is added, and the minimum outer wall reads 2.95 mm in every case
+tried. Six more checks; suite at 424. The export note prints the minimum
+outer wall and how far the skin had to follow.
+
+The owner took the shell kit into CAD and reported four things. All four are
+now answered, three of them by a change of construction.
+
+- **"The mouth plane is not fully coplanar — the wall extensions do not
+  follow the curve."** CONFIRMED and FIXED. Measured 1.14 mm off the
+  aperture, in eighteen different directions, because the offset happens in
+  each ring's own best-fit plane. **Answer to the owner's question — "can
+  all mouths' outward-facing planes be defined by the same surface
+  geometry?" — is YES, and they now are.** `apertureFrame` inverts the
+  biradial surface in closed form, every shell mouth ring is snapped onto
+  it (6e-14 mm), and the mouth CAP is built by blending in the surface's own
+  (a, e) rather than as a Coons patch — a chord across a curved cap falls
+  5.6 mm behind the surface, which would have re-created the same artifact
+  one band inward.
+- **"Similar artifacts along the outer rim of the throat plane."**
+  CONFIRMED (0.73 mm ears at every cell junction, where a rim side's offset
+  line mitres against a shared side's) and FIXED in solid mode: the body's
+  throat face is now the exact circle R + wall, planar in z = 0. In bundle
+  mode the ears remain — they are a property of offsetting each cell
+  independently.
+- **"Union booleans fail."** DIAGNOSED, and it is not a tolerance or a
+  complexity limit — it is the construction. Blanks overlap near both ends
+  and stand apart mid-path, so every neighbouring pair passes through EXACT
+  TANGENTIAL CONTACT in between; measured two sign changes in the
+  per-station gap at the defaults. **So the union is gone**: the default
+  export mode is now `"solid"` — ONE horn body plus one cutter per duct,
+  and the CAD work is subtractions only. The body's skin is the horn's own
+  tiling envelope offset by the wall, chained exactly from a flow-mode map
+  (5.7e-10 mm at the joints, closure 0). Full reasoning and numbers in
+  CLAUDE.md under the three new shell findings.
+- **"Throat plane is coplanar."** Confirmed — unchanged, and now asserted at
+  1e-12 for the body as well.
+
+A latent bug surfaced while building the body: face orientation was measured
+PER FACE against a radial proxy, and on a shape that flares as hard as the
+body two of four walls read it backwards, producing an invalid shell. It is
+now ONE divergence-theorem decision for the whole solid
+(`brepShellOrientation`). The edge-pairing check caught it; the ducts were
+never affected but were riding on the same fragile proxy.
+
+Suite at 419 checks. **Still owner-side:** run the boolean on the solid-mode
+file — subtract the 18 cutters from the body, union nothing — and confirm
+(1) it succeeds, (2) the throat face is flat with t-thick dividers between
+passages, (3) the mouth is one continuous surface with a wall-wide rim
+margin, (4) no internal voids on a section. `ginkgo_shell_sample.step` in
+the repo root is a ready-made 6x3 / depth 320 / wall 3 file to test on.
+
 ## Done in the 2026-09-02 refinements session
 
 - **The "horn — shell blanks" 3-D VIEW IS REMOVED** (owner's call: it adds
@@ -10,9 +99,9 @@
   matters. **The shell STEP kit EXPORT is untouched**: `buildShellSTEP`,
   `shellSections`, the shell-wall input, the export button and all 18 of
   their checks stand. Only the viewport toggle, the `solidsMode` state and
-  the `shellSections` render path went. **Owner CAD validation of the kit is
-  still outstanding — see the shell session below; it did not depend on the
-  view.**
+  the `shellSections` render path went. Owner CAD validation of the kit has since SUCCEEDED on the solid-mode
+  form — see the shell-CAD session above. A one-piece-body view built in
+  that parallel session was dropped in the merge to honour this call.
 - **"SOLVE THE BOW" AND THE LOBE LOCK ARE REMOVED FROM THE UI** (owner's
   call). The solve ranked on wallSpread, which measures the length each wall
   fibre has run BY THE MOUTH, so a bow that distorts the wavefront mid-path
@@ -401,10 +490,9 @@ Decisions the owner has made and that should not be relitigated:
 
 ## The plan, in order
 
-1. **Owner validation**: the coped joints and the separation solver in the
-   browser, a bulged STEP file through CAD (boolean union should yield
-   the knife edges), and the SHELL KIT through CAD (union blanks, subtract
-   cutters — the checklist in the shell-session section above).
+1. **Owner validation**: a FULLY SOLVED horn (depth, bows, separation,
+   bulge) through the solid-mode boolean — the plain case is confirmed.
+   Then Task F, the webs mode, per the section at the top.
 1b. **Task E decision** (owner): whether the rim roundover is a CAD fillet
    on the shell kit's rim edge (available now) or an in-tool parametric
    flare (a build). The assessment above says what each buys.
