@@ -1942,9 +1942,10 @@ export default function GinkgoHorn() {
             if (ok) dl(`${stem}.step`, r.text, "application/step");
           }}>STEP · B-spline solids</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            // the body's skin is fitted to the ducts in 3-D (a few seconds at
-            // 64 stations), so say so before the click freezes the page
-            setStepNote({ ok: true, msg: "building the horn body — fitting the skin to the ducts…" });
+            // the body's skin is built station by station around the ducts
+            // and then measured in 3-D (several seconds), so say so before
+            // the click freezes the page
+            setStepNote({ ok: true, msg: "building the horn body — wrapping the ducts…" });
             setTimeout(() => {
             const em = exportMap();
             let body = null, cont = null;
@@ -1966,7 +1967,7 @@ export default function GinkgoHorn() {
             setStepNote({
               ok,
               msg: `${what} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
-                cont ? ` · min outer wall ${fmt(cont.minWall, 2)} mm (3-D)${body.pushMax > 0.5 ? ` · skin hill ${fmt(body.pushMax, 1)} mm at station ${body.pushAt}, ${body.rounds} fitting round(s)` : ""}` : ""} · ${
+                cont ? ` · min outer wall ${fmt(cont.minWall, 2)} mm (3-D) · fairing radius ${fmt(body.fair, 0)} mm${body.fairNeeded > 2 * shellWall ? ` (${fmt(body.fairNeeded, 0)} needed to keep station ${body.fairAt} of ${body.sections.length - 1} in one piece)` : ""} · ${body.sections.length - 1} skin stations` : ""} · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
             if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
@@ -2001,10 +2002,14 @@ export default function GinkgoHorn() {
           because the material's topology <em>changes</em> along the path — one block threaded by passages at the throat, separate tubes
           mid-path, knife edges at the mouth — which no single loft can carry.
           {shellMode === "solid" ? <>
-            {" "}<strong style={{ color: C.inkDim }}>One body</strong> emits the horn as a single solid whose skin is the tiling envelope
-            offset by {fmt(shellWall, 1)} mm, plus one cutter per duct: in CAD you <strong style={{ color: C.inkDim }}>subtract the
-            {" "}{throat.N} cutters and union nothing</strong>. The passages leave the layout's {fmt(thickness, 1)} mm divider at the throat
-            and a knife edge at the mouth, because what is left between two passages is exactly the duct-to-duct gap.
+            {" "}<strong style={{ color: C.inkDim }}>One body</strong> emits the horn as a single solid plus one cutter per duct: in CAD you{" "}
+            <strong style={{ color: C.inkDim }}>subtract the {throat.N} cutters and union nothing</strong>. The passages leave the layout's{" "}
+            {fmt(thickness, 1)} mm divider at the throat and a knife edge at the mouth, because what is left between two passages is exactly
+            the duct-to-duct gap. The skin is <em>wrapped</em> round the ducts: at each station every duct is grown by the wall — a sleeve
+            with rounds of that radius at its corners, measured perpendicular to the duct however obliquely it crosses the station — and
+            the sleeves are closed by a rolling ball whose radius is the smallest that keeps every station in one piece (never under twice
+            the wall). Where ducts stand apart the skin follows the outermost ones at the wall and bridges the gaps with fillets of that
+            radius; a bowed duct carries its own sleeve out through the skin. The throat face is the exact circle R + wall.
           </> : <>
             {" "}<strong style={{ color: C.inkDim }}>Per-cell blanks</strong> is the literal bundle: a blank per duct, so the {throat.N}{" "}
             blanks must be <em>unioned</em> before the cutters are subtracted. Be warned that the union is ill-posed by construction —
@@ -2013,10 +2018,10 @@ export default function GinkgoHorn() {
             {map && clearance ? ` (${fmt(clearance.max / 2, 1)} mm here)` : ""} keeps every pair robustly overlapping.
           </>}
           {" "}The mouth end faces of every solid lie on the aperture surface itself, so after the boolean the mouth is one continuous
-          surface with a {fmt(shellWall, 1)} mm rim margin — and that outer rim edge is the one to fillet against edge diffraction. Where a
-          bow or the separation field carries a duct past the horn's natural envelope, the skin grows a <em>smooth hill</em> over it:
-          the shell wall is a <strong style={{ color: C.inkDim }}>minimum</strong> there, not a constant, measured in 3-D against the
-          exported surface. DXF is 2-D per plane, so only the throat layer imports as a sketch.
+          surface with a {fmt(shellWall, 1)} mm rim margin — and that outer rim edge is the one to fillet against edge diffraction. The shell
+          wall is a <strong style={{ color: C.inkDim }}>minimum</strong>, not a constant: the sleeves are laid a pixel over it and the loft
+          between stations is measured in 3-D against the exported surface, which is the figure the note reports. DXF is 2-D per plane,
+          so only the throat layer imports as a sketch.
         </div>
       </Stage>
 
