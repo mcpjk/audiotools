@@ -6,3 +6,4 @@ dist/
 
 # a generated sample, not source
 ginkgo_shell_sample.step
+ginkgo_shell_bow_sample.step
