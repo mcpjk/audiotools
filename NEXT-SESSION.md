@@ -16,9 +16,13 @@ as the bows demand, skin within 1.4 mm of the straight loft. A THIRD round
 trip caught a second, unjustified hill ahead of the bow — material was
 being placed at the nearest skin point, which on a flaring horn is forward
 of the duct; it now goes radially over the duct on both bracketing rings,
-and the section shows one hump. See the rewritten containment paragraph
-in the CLAUDE.md shell finding for the four lessons. Cost: ~5 s per export at 64 stations, and the export note
-says so while it runs. Suite at 435.
+and the section shows one hump. A FOURTH round trip caught knuckles: two
+ridges over one duct, at its two outer corners. Every push is now a
+convex-hull fill in the ring's plane, seeded from the bowed ducts' own
+sleeves, so the bump IS the duct's outline faired into the skin; zero
+concave vertices measured on the throat-side rings. See the rewritten
+containment paragraph in the CLAUDE.md shell finding for the five lessons. Cost: ~5 s per export at 64 stations, and the export note
+says so while it runs. Suite at 436.
 
 **Owner context worth keeping:** the horn is to be printed in THREE parts —
 the throat region first, and the mouth side split down the vertical
