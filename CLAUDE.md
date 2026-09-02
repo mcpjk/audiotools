@@ -646,10 +646,25 @@ exists.
   singular rim vertices — precisely the 4-sided topology `ductBrep` wants.
   The unprofiled envelope is deliberate: the profile pulls ducts inward, so a
   skin following them would waist in and out, and the material between
-  diverging ducts is what a multicell body IS. Containment is MEASURED
-  (`bodyContainment`), not assumed, because bows and the separation field can
-  push a duct outward past the envelope — 0.83-1.95 mm of margin at the
-  defaults, and the wall that would fix a breach is reported. What is left
+  diverging ducts is what a multicell body IS. **But the skin must contain
+  the ducts AS BUILT, and the tiling envelope alone does not**: measured
+  0.9-1.4 mm of outer wall at the corner cells near the throat against a
+  specified 3 (swept and flowed sections differ slightly there), and a
+  radial 1-lobe bow bursts through it by 25 mm — a duct outside the horn.
+  So when the live map is supplied, `hornBodySections` pushes each envelope
+  ring outward vertex by vertex to the farthest duct point IN THAT VERTEX'S
+  DIRECTION before the wall is added: ray from the ring centre through the
+  duct point, intersected with the ring polygon, and only the EXCESS beyond
+  that boundary applied to the two vertices of the crossed segment. Measured
+  after the push: minimum outer wall 2.95 mm in every case tried (plain,
+  1- and 2-lobe radial bows, bulge plus short-axis bow) — the last 2% is the
+  radial-vs-normal cosine of the offset — with 2 mm of push in the plain
+  case and 28 mm under the radial bow, both ends untouched (throat circle
+  exact, mouth ring on the aperture to 0). The first attempt compared duct
+  radii against VERTEX radii with a ±1-neighbour window, and on a 16-point
+  run that smeared a corner vertex's radius 26 mm along the side next to
+  it; compare against the boundary, never against vertices. Containment is
+  still MEASURED afterwards (`bodyContainment`) and reported. What is left
   between two passages after the subtraction is exactly the duct-to-duct gap:
   the layout's t at the throat, a knife edge at the mouth, no per-cell wall
   bookkeeping needed. Mode `"bundle"` keeps the old form for comparison.

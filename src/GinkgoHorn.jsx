@@ -1109,7 +1109,7 @@ export default function GinkgoHorn() {
       if (solidsMode === "shell" && shellMode === "solid") {
         // one closed skin, so one entry — the horn's outer form
         const b = G.hornBodySections(throat, { ...mapOpts, depth, profileT },
-          { wall: shellWall, stations: PREVIEW_STATIONS });
+          { wall: shellWall, stations: PREVIEW_STATIONS, map, t: thickness });
         if (b) ducts.push({
           id: "body", color: C.series3,
           rings: b.sections.map((s) => s.pts.filter((_, k) => k % 2 === 0)),
@@ -1953,7 +1953,7 @@ export default function GinkgoHorn() {
             let body = null, cont = null;
             if (shellMode === "solid") {
               body = G.hornBodySections(throat, { ...mapOpts, depth, profileT },
-                { wall: shellWall, stations });
+                { wall: shellWall, stations, map: em, t: thickness });
               if (!body) { setStepNote({ ok: false, msg: "the rim loop did not close — solid mode needs an H-grid" }); return; }
               cont = G.bodyContainment(throat, em, body, { t: thickness, wall: shellWall });
             }
@@ -1969,7 +1969,7 @@ export default function GinkgoHorn() {
             setStepNote({
               ok,
               msg: `${what} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
-                cont ? ` · ducts inside the skin by ${fmt(-cont.worst, 2)} mm` : ""} · ${
+                cont ? ` · min outer wall ${fmt(-cont.worst, 2)} mm${body.pushMax > 0.05 ? ` (skin follows the ducts by up to ${fmt(body.pushMax, 1)} mm at station ${body.pushAt})` : ""}` : ""} · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
             if (ok) dl(`${stem}_shell.step`, r.text, "application/step");

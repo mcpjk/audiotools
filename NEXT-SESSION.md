@@ -1,6 +1,46 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## NEXT: Task F — "webs" shell export (owner approved 2026-09-02)
+
+The owner confirmed the solid-mode boolean SUCCEEDS in CAD and asked
+whether the export would carry the classic inter-cell gaps. It does not
+and cannot — the gaps are exactly the tangency that killed the union (a
+block that splits into tubes has a crotch, whichever way it is built).
+Measured what the gaps are worth at 6x3 / 90x40 / 480 mm / wall 3: the
+solid body is 2.7 L (depth 150) to 3.7 L (depth 320) of material, ~3.4-4.5
+kg in PLA, and the inter-cell gaps would remove only 11-22% of it; the mass
+is eighteen tube walls, so the lever is the wall itself and infill.
+
+The owner wants the multicell look anyway, so the agreed build is a
+**third shell mode, "webs"**: the solid body plus one SLOT CUTTER per
+neighbouring pair, over the station range where that pair's duct gap
+exceeds 2·wall + web, ending in flat TRANSVERSE faces rather than a
+crotch. All subtractions, no tangency, and each slot is a curved box the
+existing `ductBrep` writer already handles (run 0 = A's facing side offset
+by the wall, run 1 = the straight connector, run 2 = B's facing side
+reversed, run 3 = the other connector). Adjacent slots should OVERLAP
+rather than touch at the 4-duct corner diamonds — overlapping tools are
+robust, coincident tool faces are not — or cut the diamonds as their own
+4-sided cutters. Result: tubes joined by corner webs and blunt-ended slots,
+a multicell with webs instead of solder crotches. Read the CLAUDE.md shell
+findings (tangency, orientation, containment push) first; the facing-side
+identification comes from the grid adjacency `ductClearance` already walks.
+
+**Before that**: the owner is testing a FULLY SOLVED horn (depth solve,
+bows, separation, bulge) through the solid-mode boolean. The skin now
+follows the ducts (see the shell-CAD session below), so that test is
+meaningful; if it fails, that report comes first.
+
 ## Done in the 2026-09-02 shell-CAD session (owner's first round trip)
+
+**Boolean confirmed working by the owner** on the solid-mode sample. After
+that, one more fix landed before merging: the body's skin now CONTAINS THE
+DUCTS AS BUILT. The tiling envelope left the corner cells under the wall
+near the throat (0.9-1.4 mm against 3) and a radial bow burst 25 mm through
+it; the skin is now pushed out to the ducts, direction by direction, before
+the wall is added, and the minimum outer wall reads 2.95 mm in every case
+tried. Six more checks; suite at 424. The export note prints the minimum
+outer wall and how far the skin had to follow.
 
 The owner took the shell kit into CAD and reported four things. All four are
 now answered, three of them by a change of construction.
@@ -394,11 +434,9 @@ Decisions the owner has made and that should not be relitigated:
 
 ## The plan, in order
 
-1. **Owner validation**: the SOLID-MODE shell boolean in CAD (subtract the
-   cutters from the body, union nothing — the checklist in the shell-CAD
-   section above), then the coped joints and the separation solver in the
-   browser, and a bulged shell through the same boolean (it should yield
-   the knife edges).
+1. **Owner validation**: a FULLY SOLVED horn (depth, bows, separation,
+   bulge) through the solid-mode boolean — the plain case is confirmed.
+   Then Task F, the webs mode, per the section at the top.
 1b. **Task E decision** (owner): whether the rim roundover is a CAD fillet
    on the shell kit's rim edge (available now) or an in-tool parametric
    flare (a build). The assessment above says what each buys.

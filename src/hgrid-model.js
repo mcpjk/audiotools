@@ -4947,7 +4947,18 @@ export function shellSections(cellRec, row, { t = 0, wall = 3, surf = null } = {
 // diverging ducts is what a multicell horn body IS. It also guarantees
 // containment wherever the profile only shrinks — which is measured, not
 // assumed, because bows and the separation field can push a duct outward.
-export function hornBodySections(throat, opts, { wall = 3, stations = 24 } = {}) {
+//
+// THE SKIN MUST CONTAIN THE DUCTS AS BUILT, and the tiling envelope alone does
+// not: it knows nothing about the bows or the separation field, and a radial
+// bow measured 25.6 mm OUTSIDE it at the tool's defaults — a duct bursting
+// through the horn. So when the live map is supplied, each envelope ring is
+// pushed outward, vertex by vertex, to the farthest duct point in that
+// vertex's direction before the wall is added. Where the ducts sit inside
+// the tiling envelope (the plain case, nearly everywhere) nothing moves and
+// the skin is the smooth envelope; where a bow carries a duct past it, the
+// skin follows the duct at exactly the wall. Both ends are untouched by
+// construction — the bow windows are zero there and the cells tile.
+export function hornBodySections(throat, opts, { wall = 3, stations = 24, map = null, t = 0 } = {}) {
   const env = mapThroatToMouth(throat, {
     ...opts, sectionMode: "flow", profileT: null,
     lengthen: null, separate: null, bulge: null,
@@ -5029,9 +5040,24 @@ export function hornBodySections(throat, opts, { wall = 3, stations = 24 } = {})
 
   const ap = env.mouthSurf ? apertureFrame(env.mouthSurf) : null;
   const R = opts.R;
+
+  // the ducts as built, per station, for the containment push
+  let ductPts = null;
+  if (map && map.rows.length && map.rows[0].sched.length === stations + 1 && map.rows[0].sched[0].pts) {
+    ductPts = Array.from({ length: stations + 1 }, () => []);
+    for (const cellRec of throat.cells) {
+      const row = map.rows.find((r) => r.id === cellRec.id);
+      if (!row) continue;
+      const secs = ductSections(cellRec, row, { t });
+      if (!secs) continue;
+      for (let q = 0; q <= stations; q++) for (const p of secs[q].pts) ductPts[q].push(p);
+    }
+  }
+  let pushMax = 0, pushAt = null;
+
   const sections = [];
   for (let q = 0; q <= stations; q++) {
-    const ring = [];
+    let ring = [];
     for (const run of runs) {
       const pts = [];
       for (const seg of run) {
@@ -5039,6 +5065,47 @@ export function hornBodySections(throat, opts, { wall = 3, stations = 24 } = {})
         for (let i = 0; i < p.length - (seg === run[run.length - 1] ? 0 : 1); i++) pts.push(p[i]);
       }
       for (const p of resample3(pts, per)) ring.push(p);
+    }
+    if (ductPts && q > 0 && q < stations) {
+      // Polar containment about the ring's own centre, in the x-y projection.
+      // Each duct point is compared with the ring's boundary AT ITS OWN ANGLE
+      // — the ray from the centre through the point, intersected with the
+      // ring polygon — and only the EXCESS beyond that boundary is applied,
+      // to the two vertices of the segment the ray crossed. Comparing against
+      // vertex radii instead smeared a corner vertex's radius onto the next
+      // vertex along the side (measured 26 mm on a coarse ring); measuring
+      // against the boundary keeps corners exact and moves nothing where the
+      // duct is already inside.
+      const n = ring.length, ctr = [0, 0, 0];
+      for (const p of ring) { ctr[0] += p[0] / n; ctr[1] += p[1] / n; ctr[2] += p[2] / n; }
+      const need = new Array(n).fill(0);
+      for (const p of ductPts[q]) {
+        const dx = p[0] - ctr[0], dy = p[1] - ctr[1], r = Math.hypot(dx, dy);
+        if (r < 1e-9) continue;
+        const ux = dx / r, uy = dy / r;
+        let hit = -1, rh = 0;
+        for (let k = 0; k < n; k++) {
+          const A = ring[k], B = ring[(k + 1) % n];
+          const ax = A[0] - ctr[0], ay = A[1] - ctr[1], bx = B[0] - ctr[0], by = B[1] - ctr[1];
+          const den = (bx - ax) * uy - (by - ay) * ux;
+          if (Math.abs(den) < 1e-12) continue;
+          const sPar = (ax * uy - ay * ux) / -den;
+          if (sPar < -1e-9 || sPar > 1 + 1e-9) continue;
+          const proj = (ax + (bx - ax) * sPar) * ux + (ay + (by - ay) * sPar) * uy;
+          if (proj > rh) { rh = proj; hit = k; }
+        }
+        if (hit < 0) continue;
+        const e = r - rh;
+        if (e > need[hit]) need[hit] = e;
+        if (e > need[(hit + 1) % n]) need[(hit + 1) % n] = e;
+      }
+      ring = ring.map((p, k) => {
+        if (need[k] <= 1e-9) return p;
+        const dx = p[0] - ctr[0], dy = p[1] - ctr[1], r = Math.hypot(dx, dy) || 1e-9;
+        const sc = (r + need[k]) / r;
+        if (need[k] > pushMax) { pushMax = need[k]; pushAt = q; }
+        return [ctr[0] + dx * sc, ctr[1] + dy * sc, p[2]];
+      });
     }
     let out = insetSection3(ring, [-wall, -wall, -wall, -wall]);
     // The throat is the driver's disc, so its offset is a concentric circle
@@ -5057,7 +5124,7 @@ export function hornBodySections(throat, opts, { wall = 3, stations = 24 } = {})
     if (ap && q === stations) out = out.map(ap.snap);
     sections.push({ s: q / stations, area: polyArea3(out), pts: out, origin: env.rows[0].sched[q].origin });
   }
-  return { sections, chainErr, closeErr, n: per, surf: env.mouthSurf };
+  return { sections, chainErr, closeErr, n: per, surf: env.mouthSurf, pushMax, pushAt };
 }
 
 // How far the ducts poke outside the body's skin — measured, because bows

@@ -2484,7 +2484,7 @@ head("Aperture surface, horn body, shell orientation");
   // ── the cap interior lies on the surface too, not on a chord ──────────────
   // A Coons blend of a boundary that lies on a curved cap falls BEHIND the
   // surface inside; blending in (a, e) and evaluating cannot.
-  const body = M.hornBodySections(th, opts, { wall, stations: ST });
+  const body = M.hornBodySections(th, opts, { wall, stations: ST, map, t });
   checkTrue("the rim loop chains and closes exactly",
     body && body.chainErr < 1e-6 && body.closeErr < 1e-9,
     body ? `chain ${body.chainErr.toExponential(1)} mm, closure ${body.closeErr.toExponential(1)} mm` : "no body");
@@ -2528,10 +2528,38 @@ head("Aperture surface, horn body, shell orientation");
   for (let q = 1; q <= ST; q++) if (body.sections[q].area <= body.sections[q - 1].area) grows = false;
   checkTrue("the body's section area grows at every station", grows, "");
 
-  // ── the ducts are inside the body ─────────────────────────────────────────
+  // ── the ducts are inside the body, BY THE WALL ────────────────────────────
+  // The tiling envelope alone leaves the corner cells near the throat under
+  // the wall (measured 0.9-1.4 mm against 3), and a radial bow bursts through
+  // it by 25.6 mm. With the live map supplied the skin follows the ducts, so
+  // the minimum outer wall is the specified wall in every case — the last
+  // few percent are the radial-vs-normal cosine of the offset.
   const cont = M.bodyContainment(th, map, body, { t, wall });
-  checkTrue("every duct sits inside the body's skin", cont.ok,
-    `worst excursion ${cont.worst.toFixed(3)} mm at station ${cont.at}`);
+  checkTrue("every duct sits inside the body's skin by the wall", -cont.worst > 0.95 * wall,
+    `min outer wall ${(-cont.worst).toFixed(2)} mm, skin pushed ${body.pushMax.toFixed(1)} mm at station ${body.pushAt}`);
+  {
+    const bare = M.hornBodySections(th, opts, { wall, stations: ST });
+    const cb = M.bodyContainment(th, map, bare, { t, wall });
+    checkTrue("without the map the tiling envelope is under the wall", -cb.worst < wall,
+      `${(-cb.worst).toFixed(2)} mm — why the push exists`);
+    const bowOpts = { ...opts, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } };
+    const bowMap = M.mapThroatToMouth(th, bowOpts);
+    const bowBare = M.hornBodySections(th, bowOpts, { wall, stations: ST });
+    const bowBody = M.hornBodySections(th, bowOpts, { wall, stations: ST, map: bowMap, t });
+    const cbb = M.bodyContainment(th, bowMap, bowBare, { t, wall });
+    const cbf = M.bodyContainment(th, bowMap, bowBody, { t, wall });
+    checkTrue("a radial bow bursts through the bare tiling envelope", cbb.worst > 10,
+      `${cbb.worst.toFixed(1)} mm outside`);
+    checkTrue("and the following skin contains it by the wall", -cbf.worst > 0.95 * wall,
+      `min outer wall ${(-cbf.worst).toFixed(2)} mm, skin pushed ${bowBody.pushMax.toFixed(1)} mm`);
+    // both ends are untouched by the push: the throat is still the exact
+    // circle and the mouth ring still lies on the aperture
+    let rT = 0, dM = 0;
+    for (const p of bowBody.sections[0].pts) rT = Math.max(rT, Math.abs(Math.hypot(p[0], p[1]) - (R + wall)));
+    for (const p of bowBody.sections[ST].pts) dM = Math.max(dM, Math.abs(ap.deviation(p)));
+    check("the push leaves the throat circle exact", rT, 0, 1e-9, "mm");
+    check("the push leaves the mouth ring on the aperture", dM, 0, 1e-9, "mm");
+  }
 
   // ── orientation: ONE decision, and it must come out outward ──────────────
   // A shell whose faces are oriented by a per-face radial proxy can disagree
