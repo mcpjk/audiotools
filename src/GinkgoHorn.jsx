@@ -15,8 +15,8 @@ import * as G from "./hgrid-model.js";
 // stage, because a drawing belongs beside the inputs that shape it.
 //
 // The RIGHT pane is PINNED: the horn's name and solve status, the warnings, a
-// tabbed viewport (3-D solids — the air ducts or the horn's shell blanks —
-// / horizontal section / cell table), and a verdict
+// tabbed viewport (3-D duct solids / horizontal section / cell table),
+// and a verdict
 // strip that scrolls independently underneath. Those verdicts — flare cutoff,
 // loading limit, pattern per axis, f1, dL, wall spread, and the physical form
 // — are what you judge a candidate horn by, so they stay on screen whatever
@@ -384,7 +384,16 @@ export default function GinkgoHorn() {
   const [seed, setSeed] = useState("elliptical");
 
   // ── line shapes ──
-  const [shapeOrder, setShapeOrder] = useState(2); // m
+  // THREE by default (owner's call). m is the Chebyshev order of each grid
+  // line, so it sets how much SHAPE the sliders can request — 13 parameters
+  // against m=2's 10. At the NOMINAL vector it buys almost nothing on the
+  // readouts, and what it does buy is a hair the wrong way: measured at 6x3,
+  // f1_min 14.735 -> 14.727 kHz and worst aspect 2.510 -> 2.520, because the
+  // extra freedom lets the equal-area solve land on a different member of the
+  // same family. What it does buy is a TIGHTER solve — residual 5.4e-13 ->
+  // 3.1e-15 for 37 iterations against 30, ~124 ms either way — and the room
+  // to ask for a bow the m=2 space cannot express.
+  const [shapeOrder, setShapeOrder] = useState(3); // m
   const [symmetric, setSymmetric] = useState(true);
   const [request, setRequest] = useState(null);    // p_requested, or null for nominal
 
@@ -413,8 +422,18 @@ export default function GinkgoHorn() {
   const mouthMode = "biradial";
   const [thetaH, setThetaH] = useState(90);
   const [thetaV, setThetaV] = useState(0);
-  const [arcH, setArcH] = useState(560);
-  const [arcV, setArcV] = useState(250);
+  // 555 x 245 mm, the owner's numbers, chosen for the PRINT rather than for
+  // any acoustic reading. Th_v is 0, so arcV is literally the mouth height,
+  // and arcH at 90 deg gives a 499.68 mm chord — 249.8 mm per half if the
+  // horn is split on the vertical centreline. Both of those clear a Bambu
+  // P1S bed (256 mm) with 6.2 and 11.0 mm to spare, where the 560 x 250 they
+  // replace left 3.9 and 6.0. NOTE THE AXIAL DEPTH IS NOT IN THAT ARGUMENT:
+  // at 300 mm it does not fit the 256 mm cube in any axis-aligned pose, so
+  // the split still has to be planned. Acoustically the 5 mm costs almost
+  // nothing: mouth 1396.0 -> 1355.9 cm2, dL 25.52 -> 24.08 mm, fc 457-496 ->
+  // 457-494 Hz.
+  const [arcH, setArcH] = useState(555);
+  const [arcV, setArcV] = useState(245);
   const [dlSolve, setDlSolve] = useState(null);
   // ── per-cell path lengthening ──
   // Off by default: it is a correction to apply after depth has done what it
@@ -438,17 +457,19 @@ export default function GinkgoHorn() {
   // so the choice is a deliberate trade of phase error against how the part
   // looks and prints, not an oversight.
   const [lengthLobes, setLengthLobes] = useState(1);
-  // The solver ranks on wall spread, which prefers more lobes on every
-  // geometry tried, so left free it lands on 2 almost every time. The lobe
-  // count is not purely an acoustic variable, though: a second hump puts a
-  // reversal in the WIDE part of the passage, and wall spread cannot see
-  // that, because it measures the length each wall fibre has run by the
-  // MOUTH and a reversal cancels in that total whether or not the wavefront
-  // recovered on the way. So the count stays the owner's to set and the
-  // solver searches direction and region around it. Locked by default;
-  // unlocking is one click and the measured cost of the lock is printed.
-  const [lobesLocked, setLobesLocked] = useState(true);
-  const [bowSolve, setBowSolve] = useState(null);
+  // THERE IS NO "SOLVE THE BOW" BUTTON, and the reason is the ranking
+  // metric rather than the search. `solveBow` ranks candidates on wall
+  // spread, and wall spread measures the length each wall fibre has run BY
+  // THE MOUTH — so a bow that distorts the wavefront mid-path and unwinds it
+  // again scores as though nothing happened. It therefore reads the wide,
+  // expanded end of the passage as free real estate and puts the bow there
+  // (the recorded winner was region [0.3, 0.95]), which is where a
+  // displacement moves the most air and where the owner will not accept one.
+  // The wall spread it buys back does not price that. The lobe lock existed
+  // only to fence the same blind spot on the lobe count, so it went with the
+  // solve. `solveBow` SURVIVES IN THE MODEL with its tests — it is the
+  // documented enumeration of the trade, and the thing to reach for if a
+  // metric ever exists that can see mid-path coherence.
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
@@ -475,15 +496,13 @@ export default function GinkgoHorn() {
   // only when an export button is pressed.
   const [stations, setStations] = useState(64);
   // ── horn shell ──
-  // Wall thickness for the shell STEP kit and the "horn" 3-D view. This is
-  // the OUTER skin and the mid-path tube walls; the dividers between
-  // passages near the throat stay at the layout t — the blanks reach at
-  // least the tiling outline, and the cutters carve the passages back, so
-  // the boolean sets the divider, never 2x this number.
+  // Wall thickness for the shell STEP kit. This is the OUTER skin and the
+  // mid-path tube walls; the dividers between passages near the throat stay
+  // at the layout t — the blanks reach at least the tiling outline, and the
+  // cutters carve the passages back, so the boolean sets the divider, never
+  // 2x this number. EXPORT ONLY: the blanks are not drawn, see the 3-D
+  // preview note below.
   const [shellWall, setShellWall] = useState(3);
-  // What the 3-D viewport shows: the air (ducts) or the material (shell
-  // blanks — the outer form; the boolean result needs CAD).
-  const [solidsMode, setSolidsMode] = useState("ducts");
   // The live mapping at 64 stations cost ~136 ms per slider tick (~7 fps on
   // a drag); at 24 it is ~60 ms, and every readout that matters on a drag —
   // path lengths, dL, fc — comes from the centreline sampling, which is a
@@ -1099,10 +1118,14 @@ export default function GinkgoHorn() {
 
   // ── the solids for the 3-D preview, built off the render pass ─────────────
   // ductSections applies the same inset the STL export applies, so what the
-  // preview shows IS the exported geometry; in "shell" mode the rings are the
-  // shell BLANKS from the shell kit instead — the horn's outer form (the
-  // boolean result of the kit needs CAD, not a preview). Every 2nd boundary
-  // point is kept — plenty for the eye, and it halves the fill work per frame.
+  // preview shows IS the exported geometry. Every 2nd boundary point is kept
+  // — plenty for the eye, and it halves the fill work per frame.
+  // THE PREVIEW SHOWS THE AIR, AND NOTHING ELSE. A "shell blanks" mode was
+  // built and removed at the owner's call: a blank is an intermediate the CAD
+  // boolean consumes, not a form anyone judges a horn by, and its outline is
+  // the duct's own outline pushed out by one number — so it showed nothing
+  // the duct view did not already show. The shell kit still EXPORTS the
+  // blanks; `shellSections` and `buildShellSTEP` are untouched.
   const [solids3d, setSolids3d] = useState(null);
   useEffect(() => {
     if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setSolids3d(null); return; }
@@ -1111,21 +1134,18 @@ export default function GinkgoHorn() {
       for (const cc of throat.cells) {
         const r = map.rows.find((x) => x.id === cc.id);
         if (!r) continue;
-        const secs = solidsMode === "shell"
-          ? G.shellSections(cc, r, { t: thickness, wall: shellWall })
-          : G.ductSections(cc, r, { t: thickness });
+        const secs = G.ductSections(cc, r, { t: thickness });
         if (!secs) continue;
         ducts.push({
           id: cc.id, color: cellFill(cc),
           rings: secs.map((s) => s.pts.filter((_, k) => k % 2 === 0)),
         });
       }
-      setSolids3d({ of: map, mode: solidsMode, wall: shellWall, ducts });
+      setSolids3d({ of: map, ducts });
     }, 80);
     return () => clearTimeout(id);
-  }, [map, solidsMode, shellWall]);
-  const solidsStale = !solids3d || solids3d.of !== map || solids3d.mode !== solidsMode
-    || (solidsMode === "shell" && solids3d.wall !== shellWall);
+  }, [map]);
+  const solidsStale = !solids3d || solids3d.of !== map;
 
   const throatSVG = () => {
     const pad = R * 0.18;
@@ -1722,20 +1742,6 @@ export default function GinkgoHorn() {
             <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
               style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
           ))}
-          {/* the whole trade is discrete and small, so it can simply be
-              enumerated and measured rather than dialled by hand */}
-          <button disabled={!lengthenOn} onClick={() => {
-            const lobeSet = lobesLocked ? [lengthLobes] : [1, 2];
-            const r = G.solveBow(throat, { ...mapOpts, depth, profileT }, { lobeSet });
-            setBowSolve({ ...r, lockedTo: lobesLocked ? lengthLobes : null });
-            if (r.ok) { setLengthDir(r.best.dir); setLengthLobes(r.best.lobes); setBowFrom(r.best.uStart); setBowTo(r.best.uEnd); }
-          }} style={{ ...btn(false, C.series3), opacity: lengthenOn ? 1 : 0.4 }}>solve the bow</button>
-          {/* the count is a shape decision as much as an acoustic one, so
-              the solver is not allowed to overrule it unless asked */}
-          <button disabled={!lengthenOn} onClick={() => setLobesLocked(!lobesLocked)}
-            style={{ ...btn(lobesLocked, C.series6), opacity: lengthenOn ? 1 : 0.4 }}>
-            {lobesLocked ? `lobes locked at ${lengthLobes}` : "lobes free to solve"}
-          </button>
           {lengthenOn && map && map.lengthen && map.lengthen.onAxis > 0 && (
             <span style={{ fontFamily: C.mono, fontSize: 10, color: C.series5 }}>
               {map.lengthen.onAxis} duct(s) on the axis — no symmetric bow exists for them
@@ -1770,33 +1776,12 @@ export default function GinkgoHorn() {
               <span style={{ color: map.dLfrac <= 0.125 ? C.series4 : C.series5 }}>{fmt(map.dL, 3)} mm</span></span>
           </div>
         )}
-        {bowSolve && (
-          <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
-            {bowSolve.ok
-              ? <div><span style={{ color: C.inkMuted }}>solved: </span>
-                  <span style={{ color: C.series3 }}>{bowSolve.best.dir}, {bowSolve.best.lobes} lobe{bowSolve.best.lobes > 1 ? "s" : ""}, region [{bowSolve.best.uStart}, {bowSolve.best.uEnd}]</span>
-                  <span style={{ color: C.inkMuted }}> — lowest wall spread inside the overlap floor</span></div>
-              : <div style={{ color: C.series5 }}>no candidate qualified — {bowSolve.reason}</div>}
-            <div style={{ color: C.inkMuted }}>
-              {bowSolve.lockedTo == null
-                ? "searched direction × lobes × region — the lobe count was free to move"
-                : `searched direction × region at ${bowSolve.lockedTo} lobe${bowSolve.lockedTo > 1 ? "s" : ""} — the count was held, not solved`}
-              {" "}· {bowSolve.considered} built, {bowSolve.measured.length} taken through to clearance
-            </div>
-            {/* the whole measured set, so the trade is visible rather than
-                hidden behind one answer */}
-            {bowSolve.measured.map((m, k) => (
-              <div key={k} style={{ color: bowSolve.best && m === bowSolve.measured[0] ? C.ink : C.inkMuted }}>
-                {"  "}{m.dir.padEnd(7)} {m.lobes} lobe · [{m.uStart}, {m.uEnd}] · wall spread {fmt(m.wallSpread, 2)} mm ·
-                {" "}amplitude {fmt(m.amp, 1)} mm · overlap {m.overlap == null ? "not measured" : fmt(m.overlap, 2) + " mm"}
-              </div>
-            ))}
-          </div>
-        )}
         <div style={{ ...hintStyle, marginTop: 6 }}>
           Cells shorter than the longest are <strong style={{ color: C.inkDim }}>bowed sideways</strong> to its length inside the bow
           region; the straight runs are excised automatically. Narrowing the region is a <em>smaller</em> bow that turns harder — and the
-          room is not at the throat, where the profile already has the ducts near touching. Judge a bow by
+          room is not at the throat, where the profile already has the ducts near touching. The region is set <em>by hand</em>: the
+          automatic solve was withdrawn because it ranked on wall spread, which is blind to a bow that distorts the wavefront mid-path
+          and unwinds it before the mouth, so it kept placing the bow out in the expanded end of the passage. Judge a bow by
           <strong style={{ color: C.inkDim }}> wall spread</strong> in the verdict pane, never by gross turning. Sections are swept in
           specified planes{map && map.sweptRollMax != null ? ` — imposed roll ${fmt(map.sweptRollMax, 1)}°, landing to ${map.sweptAimMax.toExponential(0)}°` : ""}.
         </div>
@@ -2079,12 +2064,8 @@ export default function GinkgoHorn() {
         {view === "ducts" && (
           <div>
             <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", padding: "0 4px 4px" }}>
-              <button onClick={() => setSolidsMode("ducts")} style={btn(solidsMode === "ducts", C.series2)}>ducts — the air</button>
-              <button onClick={() => setSolidsMode("shell")} style={btn(solidsMode === "shell", C.series2)}>horn — shell blanks</button>
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
-                {solidsMode === "shell"
-                  ? `blanks at ${fmt(shellWall, 1)} mm wall · what the shell kit exports, before the CAD boolean`
-                  : "drag to orbit · scroll to zoom · what the STL and STEP export"}
+                the air · drag to orbit · scroll to zoom · what the STL and STEP export
               </span>
               {solidsStale && <Solving label="building solids" />}
             </div>

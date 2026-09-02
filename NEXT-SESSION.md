@@ -1,5 +1,44 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-02 refinements session
+
+- **The "horn — shell blanks" 3-D VIEW IS REMOVED** (owner's call: it adds
+  nothing for a designer). A blank is an intermediate the CAD boolean
+  consumes, not a form anyone judges a horn by, and its outline is the
+  duct's own outline pushed out by one number — so the view showed the duct
+  picture again, slightly fatter, and could never show the thing that
+  matters. **The shell STEP kit EXPORT is untouched**: `buildShellSTEP`,
+  `shellSections`, the shell-wall input, the export button and all 18 of
+  their checks stand. Only the viewport toggle, the `solidsMode` state and
+  the `shellSections` render path went. **Owner CAD validation of the kit is
+  still outstanding — see the shell session below; it did not depend on the
+  view.**
+- **"SOLVE THE BOW" AND THE LOBE LOCK ARE REMOVED FROM THE UI** (owner's
+  call). The solve ranked on wallSpread, which measures the length each wall
+  fibre has run BY THE MOUTH, so a bow that distorts the wavefront mid-path
+  and unwinds it before the aperture scores as though nothing happened — and
+  the solver therefore kept placing the bow out in the wide, expanded end of
+  the passage, where a displacement moves the most air. The owner reports
+  reaching for `throat fifth` almost every time. The lobe lock existed only
+  to fence the same blind spot on the lobe count, so it went with the solve;
+  the lobe, direction and region controls all stay. `solveBow` SURVIVES IN
+  THE MODEL with its two tests, the way `solveDepthForFc` did.
+  **The open question this leaves is the metric, not the search.** A solve
+  worth restoring needs something that can see mid-path coherence rather
+  than its integral — e.g. the wall-fibre spread evaluated PER STATION and
+  taken as a maximum over the path, instead of once at the mouth. That is a
+  small change to the same measurement machinery and would let the
+  enumeration be re-offered honestly; it is the thing to build before any
+  "solve the bow" button comes back.
+- **New defaults** (owner's numbers): shape order m 2 -> 3, arcH 560 -> 555
+  mm, arcV 250 -> 245 mm. The arcs are a PRINT decision — 249.84 mm per half
+  and 245.00 mm tall clears a P1S bed where 560 x 250 was tighter — and the
+  300 mm axial depth still does not fit that bed in any axis-aligned pose,
+  so the split has to be planned. Shape order 3 is NOT a better horn at the
+  nominal vector; it is more shape the sliders can request and a tighter
+  solve. Both measured, in node and in the browser — see the two new
+  CLAUDE.md findings.
+
 ## Done in the 2026-09-01 shell session
 
 - **Task D — HORN SHELL STEP EXPORT — IS BUILT** (owner's request, this
@@ -18,11 +57,9 @@
   suite at 394 — the offset closed forms (exact (10+2d)² square, exact
   round-trip), containment, ring simplicity, the exact prism identity for
   the extension, and the emitted file's integrity.
-- **The 3-D viewport now offers "ducts — the air" and "horn — shell
-  blanks"** (owner's request). The horn view is the blanks at the chosen
-  wall — the outer form; the boolean result needs CAD, and the hint says
-  so. Same deferred build pattern as the duct solids; toggling rebuilds in
-  the same ~20 ms class.
+- **The 3-D viewport gained a "horn — shell blanks" option, and it was
+  REMOVED the next session** — see the 2026-09-02 entry above. The viewport
+  shows the air only.
 - **What remains is OWNER VALIDATION IN CAD**, same as Task B's round
   trips: import the shell kit (36 bodies), union the 18 blanks, subtract
   the 18 cutters, and check (1) the boolean succeeds, (2) the throat face
