@@ -1,5 +1,45 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-02 third construction — blocks, tubes and webs
+
+The wrapped one-piece skin was rejected on sight (surface texture: an
+outline found by a raster search at every station lofts its uncorrelated
+noise into ripples). The owner asked for a conceptually clean rewind to
+per-cell shells. Measured why the union of those failed — every adjacent
+pair grazes twice, at u ≈ 0.06-0.13 / 0.30 and 0.97, and a bow makes the
+crossing slower — and built the kit that avoids grazing by construction:
+**mode `"bands"`, now the default.** `shellBands` measures the minimum
+adjacent-pair gap per station; where it clears 2·wall + 2 mm each duct is
+a TUBE (its own rings offset by the wall, exact) and neighbours are tied by
+WEB plates buried 1 mm inside the tube walls; everywhere else the material
+is a BLOCK (convex hull of all duct points, offset with rounds); the blocks
+reach two stations into the tube band. 2 + 18 + 27 positives, then 18
+cutters. Every join is a transversal overlap; the kit measures tube-tube
+clearance, web width and 3-D block wall before writing. Numbers and rules
+in the CLAUDE.md shell finding. Two sample files went to the owner:
+`ginkgo_two_tubes_web_sample.step` (two tubes + one web — the two-solid
+union test) and `ginkgo_shell_bow_sample.step` (the full kit, default bow).
+Both gitignored.
+
+**Owner-side next (in this order):** (1) union the two-solid file — if
+that fails, nothing else matters and the report is what to bring back;
+(2) union all 47 positives of the full kit in one operation, subtract the
+18 cutters; (3) section it: the block-to-tube boundary faces should be
+flat, the tubes clear of each other, each web a plate over the middle half
+of the facing walls; (4) re-try an outward 3 mm shell on a fresh DUCT
+export — the earlier failure on the ten one-rim-side cells predates the
+orientation fix and the tubes in this kit are the tool's own outward
+offset of exactly those cells.
+
+**Known limits, stated:** the block wall reads 2.4 mm against 3 where the
+default bow starts (cubic loft over a fast-changing hull) — a minimum, as
+agreed; a geometry whose pairs never clear the threshold gets one block
+and may report a thin wall where a duct runs along the stations; the mouth
+block is short (u > 0.95) and its webs/tubes end buried in it. Mating
+features (pins/sockets on the band faces and the x = 0 split) are the
+natural next build once the boolean is confirmed: tool computes positions,
+kernel does the booleans, same division of labour.
+
 ## Done in the 2026-09-02 rebuild — the skin is wrapped round the ducts
 
 The push-and-hull skin went through four CAD round trips (protruding duct,
