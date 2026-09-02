@@ -258,8 +258,9 @@ render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
 the longest cell's length in swept mode, and the tool previews the exported
 duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
 rule stands). The physical horn ships as a shell STEP kit — blanks plus
-cutters, boolean in CAD (`buildShellSTEP`; see the shell finding below) —
-and the same canvas can show the blanks (the "horn" view).
+cutters, boolean in CAD (`buildShellSTEP`; see the shell finding below). The
+canvas shows the AIR ONLY; the "horn — shell blanks" view was built and
+removed the following session (see the shell finding).
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -288,6 +289,32 @@ exists.
   as a choice, never as the optimum. The exit half-angle does not enter the
   throat partition at all (f1_min 14.74 kHz, 18 cells, unchanged); it sets
   the launch cone only.
+- **THE ARCS AND THE SHAPE ORDER MOVED AGAIN ON 2026-09-02 (owner's
+  numbers), and the arcs moved FOR THE PRINT, not for the acoustics.**
+  arcH 560 -> 555 mm, arcV 250 -> 245 mm, shape order m 2 -> 3. Th_v is 0,
+  so arcV is literally the mouth height, and arcH at 90 deg gives a 499.68
+  mm chord — 249.84 mm per half if the horn is split on the vertical
+  centreline. Both clear a Bambu P1S bed (256 mm) by 6.2 and 11.0 mm, where
+  560 x 250 left 3.9 and 6.0. **THE AXIAL DEPTH IS NOT IN THAT ARGUMENT**:
+  at 300 mm the horn does not fit the 256 mm cube in any axis-aligned pose,
+  so the split still has to be planned — the arcs buy margin on the mouth
+  cross-section and nothing more. The acoustic cost of the 5 mm is small and
+  in the expected direction, measured at 6x3, T 0.7, depth 300:
+                        560x250           555x245
+    mouth area          1396.01 cm2       1355.87 cm2
+    dL                  25.52 mm          24.08 mm
+    fc                  457-496 Hz        457-494 Hz
+  **SHAPE ORDER 3 IS NOT A BETTER DEFAULT HORN, and it is worth knowing
+  before reading its numbers as an improvement.** m is the Chebyshev order
+  of each grid line, so it sets how much SHAPE the sliders can REQUEST — 13
+  free parameters against m=2's 10. At the nominal vector the readouts move
+  a hair the WRONG way: f1_min 14.735 -> 14.727 kHz, worst aspect 2.510 ->
+  2.520, mean aspect 1.830 -> 1.837, because the extra freedom lets the
+  equal-area solve land on a different member of the same family rather than
+  a better one. What it does buy is a TIGHTER solve — residual 5.4e-13 ->
+  3.1e-15, for 37 Gauss-Newton iterations against 30 and ~124 ms either
+  way — and the room to ask for a bow the m=2 space cannot express. Both
+  measurements verified in node and against the browser's own readouts.
 - **T IS THE ONLY KNOB THAT CHANGES THE MIDDLE OF THE HORN, and it does not
   touch either end, the path, or the mouth.** Measured at 6x3, 90x40, arc
   480x213, depth 320, T = 0 / 0.5 / 1: Lmin 317.888464, Lmax 320.023368, dL
@@ -578,6 +605,23 @@ exists.
   The cancellation comes from each hump reversing its own curvature.
   **Read `wallSpread`, never `bendWiden`, when judging a bow.** bendWiden is
   kept only as the gross-turning figure and is tested as such.
+- **`solveBow` IS GONE FROM THE UI (owner's call, 2026-09-02), and the
+  reason is the RANKING METRIC rather than the search.** The solve ranks
+  candidates on wallSpread, and wallSpread is the length each wall fibre has
+  run BY THE MOUTH — so a bow that distorts the wavefront mid-path and
+  unwinds it before the aperture scores as though nothing happened. The
+  consequence is systematic, not occasional: the solver reads the wide,
+  expanded end of the passage as free real estate and puts the bow there
+  (the recorded winner is region [0.3, 0.95]), which is exactly where a
+  displacement moves the most air, and the wallSpread it buys back does not
+  price that. The owner reports going with `throat fifth` almost every time.
+  The `lobes locked` toggle existed ONLY to fence the same blind spot on the
+  lobe count, so it went with the solve; the lobe buttons themselves stay.
+  **`solveBow` SURVIVES IN THE MODEL with its two tests**, like
+  `solveDepthForFc` and the world-axis bow directions before it — it is the
+  documented enumeration of the trade, and the thing to reach for if a metric
+  ever exists that can see mid-path coherence rather than its integral. The
+  two bullets below record what it measured and stay accurate.
 - **THE BOW IS SOLVED BY ENUMERATION (`solveBow`), because the options are
   few and neither quantity has a cheap surrogate.** direction x lobes x
   region, each candidate BUILT and measured, ranked on wallSpread, with the
@@ -588,8 +632,9 @@ exists.
   lowest wallSpread (short / 2 / [0, 0.7], 4.50 mm) is REJECTED at 4.54 mm
   of overlap. Note the winning region is "where the room is" — the gap
   profile predicted exactly that.
-  **THE LOBE COUNT IS HELD OUT OF THE SOLVE BY DEFAULT (`lobes locked`), and
-  that is a deliberate refusal to optimise on wallSpread alone.** Left free
+  **THE LOBE COUNT WAS HELD OUT OF THE SOLVE (`lobes locked`, now removed
+  with the solve), and that was a deliberate refusal to optimise on
+  wallSpread alone.** Left free
   the solver returns 2 lobes on essentially every geometry, because
   wallSpread prefers more lobes — but wallSpread is the length each wall
   fibre has run BY THE MOUTH, so a reversal cancels in that total whether or
@@ -667,8 +712,17 @@ exists.
   of exactly |A_vec|·ext whatever caps it, so the extension's added volume is
   ext·(|A_throat|+|A_mouth|) to 1e-9 relative — and the throat ring's
   vector-area normal is exactly −z (planar ring), so the cutter's throat cap
-  is exactly planar in z = −ext. The 3-D viewport's "horn" option shows the
-  BLANKS — the outer form — never the boolean result, and says so.
+  is exactly planar in z = −ext.
+  **THE 3-D VIEWPORT NO LONGER DRAWS THE BLANKS** (owner's call, 2026-09-02).
+  A "horn — shell blanks" option was built alongside the kit and removed one
+  session later as adding nothing for a designer: a blank is an INTERMEDIATE
+  the CAD boolean consumes, not a form anyone judges a horn by, and its
+  outline is the duct's own outline pushed out by one number — so the view
+  showed the duct picture again, slightly fatter, and could never show the
+  thing that matters (the boolean result, which needs a kernel). The EXPORT
+  is untouched: `buildShellSTEP`, `shellSections` and all 18 of their checks
+  stand, and the kit button is still in the export stage. Only the viewport
+  toggle, its `solidsMode` state and the `shellSections` render path went.
 - **A CAPPED DUCT'S VOLUME DEPENDS ON THE CAP FILL, and that explains the
   whole brep-vs-STL volume difference.** The mouth ring is NON-PLANAR in
   every mouth mode — rect included, its ring spans ~1.7 mm of z — so the
