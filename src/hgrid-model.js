@@ -2594,7 +2594,31 @@ export function mapThroatToMouth(throat, opts) {
 //   thinBand — a gap that is positive but smaller than this is a sliver of
 //     wall too thin to print: not merged, not clear. Counted over the defect
 //     region only, because inside a joint run the walls are meant to merge.
-export function ductClearance(rows, { jointAware = false, thinBand = 0 } = {}) {
+//   throatFloor — the mirror of the joint walk-back at the OTHER end. The
+//     cells tile at the throat exactly as they tile at the mouth, so the
+//     first stations are a knife edge too, and judging a minimum gap there
+//     asks the ducts for room they have had no path length to open. A pair's
+//     THROAT RUN is the contiguous run from station 0 over which the gap
+//     stays inside the band (-throatFloor, +throatFloor): still within one
+//     tolerance of touching, and not yet separated by one. Its last station
+//     is that pair's throat knife-edge station; the defect statistics start
+//     after it.
+//     THE BAND IS SYMMETRIC ON PURPOSE, and the negative half is what keeps
+//     the rule honest. A plain "walk while in contact" — the mouth rule
+//     mirrored literally — would swallow the profile's own interpenetration
+//     near the throat and stop reporting the one defect that matters most.
+//     Measured: at the 2026-09-01 defaults the near-throat gap wobbles about
+//     zero at the 0.002-0.24 mm level and does NOT refine away (-0.002 at 24
+//     stations, -0.122 at 32, -0.241 at 48, -0.109 at 64), while a geometry
+//     with real interpenetration dives to -1.5 mm at station 1 and -3.6 mm
+//     by station 5. An order of magnitude separates them, and the floor the
+//     user already sets is the natural place to cut. So a dive past
+//     -throatFloor ENDS the run and is reported as the defect it is.
+//     Nothing is hidden either way: `throat.worst` reports the deepest
+//     contact found INSIDE the run, exactly as `joint.engageMax` does at the
+//     mouth. 0 (the default) turns the whole rule off, and every statistic
+//     reduces exactly to the form that has no throat boundary at all.
+export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFloor = 0 } = {}) {
   if (!rows.length || !rows[0].sched[0].pts) return null;
   const stations = rows[0].sched.length - 1;
   // neighbouring pairs straight from the (i, j) index — grid adjacency is the
@@ -2696,6 +2720,29 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0 } = {}) {
     while (q0 > 1 && gaps[pi][q0 - 1] <= contactTol) q0--;
     return q0;
   });
+  // the throat run: walk FORWARD from the throat while the pair is still
+  // inside the +-throatFloor band, i.e. has neither separated by a tolerance
+  // nor dived through by one. Capped one short of the joint so at least one
+  // interior station always remains a defect station — a pair that never
+  // opens to the floor anywhere is a real finding, and it must surface as a
+  // bad gap rather than as an empty defect set.
+  let throatSaturated = 0;
+  const throatEnd = pairs.map((_, pi) => {
+    if (!(throatFloor > 0)) return 0;
+    let q1 = 0;
+    while (q1 + 1 < stations) {
+      const g = gaps[pi][q1 + 1];
+      if (!(g < throatFloor && g > -throatFloor)) break;
+      q1++;
+    }
+    // leave at least one interior station OUTSIDE both runs, or the defect
+    // set is empty and the worst gap comes back Infinity. A floor no part of
+    // the pair ever reaches is a real finding — it surfaces as `saturated`
+    // plus the best gap the pair actually has, never as a vacuous pass.
+    const cap = Math.max(0, Math.min(jointStart[pi], stations) - 2);
+    if (q1 > cap) { throatSaturated++; q1 = cap; }
+    return q1;
+  });
   // second pass: reduce, with each pair's joint run excluded from the defect
   // statistics and folded into the engagement figures instead
   const perStation = [];
@@ -2703,6 +2750,7 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0 } = {}) {
   let worst = Infinity, worstAt = 0, worstMid = Infinity, worstMidAt = 1;
   let engageMax = 0, knifeMin = Infinity, knifeMax = -Infinity, engaged = 0;
   let thinCount = 0, thinWorst = Infinity, thinAt = null;
+  let throatWorst = 0, throatKnifeMin = Infinity, throatKnifeMax = -Infinity, throatRuns = 0;
   for (let pi = 0; pi < pairs.length; pi++) {
     const [A, B] = pairs[pi];
     if (jointAware && jointStart[pi] < stations) {
@@ -2712,7 +2760,16 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0 } = {}) {
       for (let q = jointStart[pi]; q <= stations; q++)
         engageMax = Math.max(engageMax, -gaps[pi][q]);
     }
+    if (throatEnd[pi] > 0) {
+      throatRuns++;
+      throatKnifeMin = Math.min(throatKnifeMin, throatEnd[pi]);
+      throatKnifeMax = Math.max(throatKnifeMax, throatEnd[pi]);
+      // the deepest contact inside the run — reported, never swallowed
+      for (let q = 0; q <= throatEnd[pi]; q++)
+        throatWorst = Math.max(throatWorst, -gaps[pi][q]);
+    }
     for (let q = 1; q < stations; q++) {
+      if (q <= throatEnd[pi]) continue;    // throat knife edge: not a defect
       if (q >= jointStart[pi]) continue;   // joint region: engagement, not defect
       const d = gaps[pi][q];
       perCell.set(A.id, Math.min(perCell.get(A.id), d));
@@ -2738,7 +2795,7 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0 } = {}) {
     let mn = Infinity;
     if (q > 0 && q < stations)
       for (let pi = 0; pi < pairs.length; pi++)
-        if (q < jointStart[pi]) mn = Math.min(mn, gaps[pi][q]);
+        if (q > throatEnd[pi] && q < jointStart[pi]) mn = Math.min(mn, gaps[pi][q]);
     perStationDefect.push(mn);
   }
   // `min` is pinned at 0 by the two ends WHATEVER the profile does, because
@@ -2764,10 +2821,19 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0 } = {}) {
     // worst DEFECT gap per pair and where — what the separation solver pushes on
     pairWorst: pairs.map(([A, B], pi) => {
       let d = Infinity, at = null;
-      for (let q = 1; q < Math.min(stations, jointStart[pi]); q++)
+      for (let q = throatEnd[pi] + 1; q < Math.min(stations, jointStart[pi]); q++)
         if (gaps[pi][q] < d) { d = gaps[pi][q]; at = q; }
       return { a: A.id, b: B.id, gap: d, at };
     }),
+    // the throat knife edge, reported exactly as the mouth joint is: how far
+    // in the run reaches per pair, and the deepest contact inside it, so the
+    // classification can never hide a magnitude
+    throat: throatFloor > 0 ? {
+      floor: throatFloor, runs: throatRuns, pairs: pairs.length,
+      knifeMin: throatRuns ? throatKnifeMin : null,
+      knifeMax: throatRuns ? throatKnifeMax : null,
+      worst: throatWorst, saturated: throatSaturated, stations,
+    } : null,
     joint: jointAware ? {
       engaged, pairs: pairs.length,
       knifeMin: engaged ? knifeMin : null, knifeMax: engaged ? knifeMax : null,
@@ -2837,7 +2903,7 @@ export function solveBow(throat, opts, cfg = {}) {
   for (const cd of cands.slice(0, measure)) {
     // joint-aware when a bulge is on, or every candidate would fail the
     // overlap floor on engagement that is the point of the joints
-    const cl = ductClearance(cd.rows, { jointAware: !!opts.bulge });
+    const cl = ductClearance(cd.rows, { jointAware: !!opts.bulge, throatFloor: cfg.throatFloor || 0 });
     cd.overlap = cl ? cl.overlap : null;
     cd.minMid = cl ? cl.minMid : null;
   }
@@ -2904,7 +2970,11 @@ export function solveSeparation(throat, opts, cfg = {}) {
   if (!base || !base.rows.length || !base.rows[0].sched[0].pts)
     return { ok: false, reason: "no geometry to solve on" };
   const jointAware = !!base.bulge;
-  const measure = (m) => ductClearance(m.rows, { jointAware });
+  // the floor doubles as the THROAT BOUNDARY: the knife-edge run is where the
+  // ducts have not yet opened to it, so asking for it there is asking for
+  // room the geometry has had no path length to make. One number sets both,
+  // which is what keeps "minimum gap" meaning one thing.
+  const measure = (m) => ductClearance(m.rows, { jointAware, throatFloor: floor });
   const clBase = measure(base);
   const gapOf = (cl) => cl.minMid;   // defect-scoped signed worst gap
   const gap0 = gapOf(clBase);

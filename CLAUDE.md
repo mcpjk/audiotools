@@ -258,11 +258,11 @@ render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
 the longest cell's length in swept mode, and the tool previews the exported
 duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
 rule stands). The physical horn ships as a shell STEP kit — blanks plus
-cutters, boolean in CAD (`buildShellSTEP`; see the shell finding below) —
-and the same canvas can show the outer form (the "horn" view). The shell
-ships as ONE body plus per-duct cutters by default — subtractions only, no
-unions — after the owner's first CAD round trip failed on the unions; see
-the shell findings below.
+cutters, boolean in CAD (`buildShellSTEP`; see the shell findings below). The
+shell ships as ONE body plus per-duct cutters by default — subtractions only,
+no unions — after the owner's first CAD round trip failed on the unions. The
+canvas shows the AIR ONLY: a "horn" view was built twice (blanks, then the
+one-piece body) and dropped at the owner's call; see the shell findings.
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -273,6 +273,50 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **THE TOOL'S DEFAULT GEOMETRY CHANGED ON 2026-09-01 (owner's numbers), and
+  every measurement in this file predating it was taken on the old one.**
+  Exit half-angle 8 -> 16.55 deg, mouth 90x40 deg / 480x213 mm -> 90x0 deg /
+  560x250 mm (a VERTICALLY FLAT mouth), axial depth 150 -> 300 mm. The new
+  set is better on every metric the tool reports, which is worth knowing
+  before reading an old number as a regression — measured at 6x3, T 0.7:
+                        old defaults      new defaults
+    dL                  64.20 mm          25.52 mm
+    fc                  643-913 Hz        457-496 Hz   (spread 41.9% -> 8.4%)
+    mouth area          996.8 cm2         1396.0 cm2
+    duct overlap        2.96 mm           0.00 mm
+  Depth 300 is the owner's round number, NOT the dL optimum, and the gap is
+  real rather than negligible: `solveDepthForMinDL` puts this mouth at
+  360.8 mm for dL 11.13 mm and fc 403-416 Hz (3.1% spread). Both are
+  legitimate — 300 is 60 mm shorter for 14 mm more dL — but quote depth 300
+  as a choice, never as the optimum. The exit half-angle does not enter the
+  throat partition at all (f1_min 14.74 kHz, 18 cells, unchanged); it sets
+  the launch cone only.
+- **THE ARCS AND THE SHAPE ORDER MOVED AGAIN ON 2026-09-02 (owner's
+  numbers), and the arcs moved FOR THE PRINT, not for the acoustics.**
+  arcH 560 -> 555 mm, arcV 250 -> 245 mm, shape order m 2 -> 3. Th_v is 0,
+  so arcV is literally the mouth height, and arcH at 90 deg gives a 499.68
+  mm chord — 249.84 mm per half if the horn is split on the vertical
+  centreline. Both clear a Bambu P1S bed (256 mm) by 6.2 and 11.0 mm, where
+  560 x 250 left 3.9 and 6.0. **THE AXIAL DEPTH IS NOT IN THAT ARGUMENT**:
+  at 300 mm the horn does not fit the 256 mm cube in any axis-aligned pose,
+  so the split still has to be planned — the arcs buy margin on the mouth
+  cross-section and nothing more. The acoustic cost of the 5 mm is small and
+  in the expected direction, measured at 6x3, T 0.7, depth 300:
+                        560x250           555x245
+    mouth area          1396.01 cm2       1355.87 cm2
+    dL                  25.52 mm          24.08 mm
+    fc                  457-496 Hz        457-494 Hz
+  **SHAPE ORDER 3 IS NOT A BETTER DEFAULT HORN, and it is worth knowing
+  before reading its numbers as an improvement.** m is the Chebyshev order
+  of each grid line, so it sets how much SHAPE the sliders can REQUEST — 13
+  free parameters against m=2's 10. At the nominal vector the readouts move
+  a hair the WRONG way: f1_min 14.735 -> 14.727 kHz, worst aspect 2.510 ->
+  2.520, mean aspect 1.830 -> 1.837, because the extra freedom lets the
+  equal-area solve land on a different member of the same family rather than
+  a better one. What it does buy is a TIGHTER solve — residual 5.4e-13 ->
+  3.1e-15, for 37 Gauss-Newton iterations against 30 and ~124 ms either
+  way — and the room to ask for a bow the m=2 space cannot express. Both
+  measurements verified in node and against the browser's own readouts.
 - **T IS THE ONLY KNOB THAT CHANGES THE MIDDLE OF THE HORN, and it does not
   touch either end, the path, or the mouth.** Measured at 6x3, 90x40, arc
   480x213, depth 320, T = 0 / 0.5 / 1: Lmin 317.888464, Lmax 320.023368, dL
@@ -352,7 +396,7 @@ exists.
   m·c/2pi with m the bisection root of hypexR(L,1,m,T) = ratio: re-solving
   cell 0 from its own (ratio, L) reproduced the reported fc to every printed
   digit at both depth 150 and 425, and hypexR(L) returned the ratio to 6
-  decimals. It reads WIDE at the tool's default depth — 643-913 Hz at depth
+  decimals. It reads WIDE at a shallow depth — 643-913 Hz at depth
   150, 42% spread — and that is the recorded equal-area cost, not an error:
   the same geometry at depth 425 reads 329-342 Hz, 0.5% spread, because dL
   collapses there. **A wide fc range is a signal to move depth, not a bug.**
@@ -563,6 +607,23 @@ exists.
   The cancellation comes from each hump reversing its own curvature.
   **Read `wallSpread`, never `bendWiden`, when judging a bow.** bendWiden is
   kept only as the gross-turning figure and is tested as such.
+- **`solveBow` IS GONE FROM THE UI (owner's call, 2026-09-02), and the
+  reason is the RANKING METRIC rather than the search.** The solve ranks
+  candidates on wallSpread, and wallSpread is the length each wall fibre has
+  run BY THE MOUTH — so a bow that distorts the wavefront mid-path and
+  unwinds it before the aperture scores as though nothing happened. The
+  consequence is systematic, not occasional: the solver reads the wide,
+  expanded end of the passage as free real estate and puts the bow there
+  (the recorded winner is region [0.3, 0.95]), which is exactly where a
+  displacement moves the most air, and the wallSpread it buys back does not
+  price that. The owner reports going with `throat fifth` almost every time.
+  The `lobes locked` toggle existed ONLY to fence the same blind spot on the
+  lobe count, so it went with the solve; the lobe buttons themselves stay.
+  **`solveBow` SURVIVES IN THE MODEL with its two tests**, like
+  `solveDepthForFc` and the world-axis bow directions before it — it is the
+  documented enumeration of the trade, and the thing to reach for if a metric
+  ever exists that can see mid-path coherence rather than its integral. The
+  two bullets below record what it measured and stay accurate.
 - **THE BOW IS SOLVED BY ENUMERATION (`solveBow`), because the options are
   few and neither quantity has a cheap surrogate.** direction x lobes x
   region, each candidate BUILT and measured, ranked on wallSpread, with the
@@ -573,8 +634,9 @@ exists.
   lowest wallSpread (short / 2 / [0, 0.7], 4.50 mm) is REJECTED at 4.54 mm
   of overlap. Note the winning region is "where the room is" — the gap
   profile predicted exactly that.
-  **THE LOBE COUNT IS HELD OUT OF THE SOLVE BY DEFAULT (`lobes locked`), and
-  that is a deliberate refusal to optimise on wallSpread alone.** Left free
+  **THE LOBE COUNT WAS HELD OUT OF THE SOLVE (`lobes locked`, now removed
+  with the solve), and that was a deliberate refusal to optimise on
+  wallSpread alone.** Left free
   the solver returns 2 lobes on essentially every geometry, because
   wallSpread prefers more lobes — but wallSpread is the length each wall
   fibre has run BY THE MOUTH, so a reversal cancels in that total whether or
@@ -586,10 +648,10 @@ exists.
   winning direction and region both ways — short axis / [0.3, 0.95] — at
   wallSpread 5.37 mm / amplitude 13.8 mm locked to 1 lobe against 4.42 mm /
   7.0 mm free at 2, with overlap 1.92 mm either way. Verified identical in
-  node and in the browser. Note the DEFAULT depth of 150 mm is far from the
-  dL optimum and NO candidate qualifies there, locked or free — every one
-  overlaps 10-22 mm against the 2 mm floor. Solve the depth first; the bow
-  is a correction to apply after depth has done what it can.
+  node and in the browser. Note that at depth 150 — far from the dL optimum,
+  and the tool's default until 2026-09-01 — NO candidate qualifies, locked or
+  free: every one overlaps 10-22 mm against the 2 mm floor. Solve the depth
+  first; the bow is a correction to apply after depth has done what it can.
 - **COLUMN PARITY decides where the dividers sit, not how well the horn
   works.** Even n_cols forces a longitude line to u = 0, so a divider runs
   down the vertical centreline of the throat — through the exit's
@@ -734,9 +796,21 @@ exists.
   ext·(|A_throat|+|A_mouth|) to 1e-9 relative — and the throat ring's
   vector-area normal is exactly −z (planar ring), so the cutter's throat cap
   is exactly planar in z = −ext. Both are still true and still tested; the
-  CUTTERS are unchanged and are what the solid mode uses. The 3-D viewport's
-  "horn" option shows the outer form — the body in solid mode, the blanks in
-  bundle mode — never the boolean result, and says so.
+  CUTTERS are unchanged and are what the solid mode uses.
+  **THE 3-D VIEWPORT NO LONGER DRAWS THE SHELL** (owner's call, 2026-09-02).
+  A "horn — shell blanks" option was built alongside the kit and removed one
+  session later as adding nothing for a designer: a blank is an INTERMEDIATE
+  the CAD boolean consumes, not a form anyone judges a horn by, and its
+  outline is the duct's own outline pushed out by one number — so the view
+  showed the duct picture again, slightly fatter, and could never show the
+  thing that matters (the boolean result, which needs a kernel). A second
+  version drawing the ONE-PIECE BODY was built in the parallel shell-CAD
+  session and dropped in the merge to honour that decision — it is a
+  different object (the horn's actual outer form, not a fattened duct), so
+  if a horn view is ever wanted it is `hornBodySections` on the preview map,
+  one entry in the DuctPreview list. The EXPORT is untouched: `buildShellSTEP`,
+  `hornBodySections`, `shellSections` and all their checks stand, and the
+  shell button is still in the export stage.
 - **A CAPPED DUCT'S VOLUME DEPENDS ON THE CAP FILL, and that explains the
   whole brep-vs-STL volume difference.** The mouth ring is NON-PLANAR in
   every mouth mode — rect included, its ring spans ~1.7 mm of z — so the
@@ -786,6 +860,58 @@ exists.
   would have read 4.75 mm and pointed at the wrong station. `thinBand`
   rides in the same pass: a defect gap in (0, band) is a wall sliver too
   thin to print — 17 pair-stations under 1 mm at the 320-depth defaults.
+- **THE DEFECT METRIC HAS A MEASURED MOUTH BOUNDARY AND NO THROAT ONE, and
+  at the 2026-09-01 defaults that is what the separation solve is actually
+  chasing.** `ductClearance` excludes only station 0 and the last station
+  outright; on the mouth side `jointAware` additionally walks back the
+  contiguous contact run and calls it engagement, so the mouth knife edge is
+  COMPUTED per pair. There is no mirror of that at the throat, where the
+  cells also tile by construction. Measured at 6x3, 90x0, 560x250, depth
+  300, T 0.7, no bow, no separation — defect gap by station:
+    u      0.000  0.042  0.083  0.167  0.250  0.500  0.750  0.958  1.000
+    gap    (end)  -0.002 +0.046 +1.768 +3.828 13.647 21.518 +9.249 (end)
+  End rings measure -4.4e-12 and -3.2e-14 mm, i.e. exact tiling. So
+  `minMid` is -0.002 mm AT STATION 1 — the throat knife edge bleeding one
+  station in at 24 stations, not a defect — and a 0.5 mm floor therefore
+  fires on it. Both modes then move material to "fix" it: uniform reaches
+  +0.556 mm but costs dL 25.52 -> 22.49, nudge reaches +0.455 for dL 25.52
+  -> 25.47. **Excluding station 1 would not by itself settle it** — station
+  2 reads +0.046 mm, still under any usable floor, because the ducts have
+  not had path length to open yet. The boundary wanted is "where the ducts
+  have separated", not a fixed station count.
+- **THE THROAT BOUNDARY IS NOW BUILT (`throatFloor`), AND THE FLOOR DEFINES
+  IT — one number, not two.** A pair's THROAT RUN is the contiguous run from
+  station 0 over which the gap stays inside the band (-floor, +floor): still
+  within one tolerance of touching, and not yet separated by one. Defect
+  statistics start after it. So raising the minimum moves the boundary with
+  it, which is the point — measured live in the UI at the defaults, floor
+  0.5 / 2 / 5 mm reads the worst gap at station 2 / 4 / 6 of 24, at 0.53 /
+  2.02 / 5.13 mm.
+  **THE BAND IS SYMMETRIC, AND THE NEGATIVE HALF IS THE WHOLE DESIGN.** The
+  obvious rule — mirror the mouth's joint walk-back, i.e. walk while in
+  contact — is WRONG at the throat: the mouth's overlap is a deliberate
+  bulge, the throat's is the profile's own interpenetration, and a contact
+  walk would file the most important defect away as a knife edge. What
+  separates them is scale, measured: the near-throat wobble runs 0.002-0.24
+  mm, a real interpenetration dives to -1.5 mm by station 1 and -3.6 mm by
+  station 5. So a dive past -floor ENDS the run. Verified both ways — at the
+  old defaults, depth 150, T 0.7 and 1.0, minMid stays -2.955 and -3.640 mm
+  at the same stations with the rule on as with it off.
+  **THE WOBBLE DOES NOT REFINE AWAY, which is why a station COUNT could not
+  have worked**: measured -0.002 / -0.122 / -0.241 / -0.122 mm at 24 / 32 /
+  48 / 64 stations, non-monotone, i.e. the sampled minimum near the throat
+  depends on where the stations land. Keyed to the floor instead, the answer
+  is stable: 0.528 / 0.513 / 0.513 / 0.513 mm across the same four.
+  Two guards, both tested. The run is capped two stations short of the joint
+  so the defect set can never be EMPTY — a floor of 40 mm on this horn would
+  otherwise return minMid = Infinity and read as "clear"; it now reports the
+  best gap it has (9.25 mm) with `throat.saturated` at 27/27 pairs, and the
+  UI warns. And `throat.worst` reports the deepest contact found INSIDE the
+  run, exactly as `joint.engageMax` does at the mouth, so the classification
+  can never hide a magnitude. `throatFloor: 0` is the default and reproduces
+  the boundary-less form to the last bit, every statistic and the whole
+  per-station profile — asserted, because every other clearance test in the
+  suite is written against that form.
 - **THE SEPARATION SOLVER IS A CONTACT-CHAIN ITERATION, because pairwise
   pushes diffuse and one shared knob is non-monotone.** Three measured
   facts drove the design. (1) Uniform radial spread improves the worst gap
@@ -995,6 +1121,20 @@ exists.
   more. A single snake profile tessellated across the row would cover it,
   which is a far smaller build than a general per-cell equaliser. The curved
   case, by contrast, spreads its (much smaller) deficit over the outer ring.
+  **THAT ONE-ROW STRUCTURE IS A PROPERTY OF THE dL OPTIMUM, NOT OF THE FLAT
+  MOUTH**, and it is worth knowing before counting on the tessellated-snake
+  build. Re-measured at 6x3, Th_h 90, Th_v 0, arcH 560, arcV 250 — the
+  tool's defaults from 2026-09-01 — the deficit is one row ONLY at that
+  mouth's own optimum:
+    depth 360.8 (its dL optimum, dL 11.1 mm)  row 1: 11.1 9.5 9.3 9.3 9.5 11.1
+                                              rows 0,2: 0.0 0.0 0.3 0.3 0.0 0.0
+    depth 300 (the default, dL 25.5 mm)       row 1: 12.8 20.7 25.5 25.5 20.7 12.8
+                                              rows 0,2: 0.0 9.5 14.9 14.9 9.5 0.0
+  Away from the optimum the horizontal ordering has not yet collapsed, so
+  the deficit is 2-D and every cell but the four corners needs some: a
+  single row-wise profile would not cover it. Same lesson as the fc spread —
+  solve the depth first and the correction problem gets structurally
+  simpler, not merely smaller.
 - **Path length on the APEX-SPHERE mouth: the centre cell is always shortest.**
   SUPERSEDED for the biradial mouth by the note above — on that surface the
   ordering does flip with depth. Kept because it is still true of the legacy

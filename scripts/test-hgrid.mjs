@@ -2200,6 +2200,101 @@ head("Coped joints (mouth-tile bulge)");
     `residual ${step5.checks.residual.toExponential(1)} mm, ${integ5.entities} entities`);
 }
 
+head("Throat knife edge (the defect metric's other boundary)");
+{
+  const t = 0.4;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  // the 2026-09-01 defaults, where the near-throat contact is a knife edge
+  const dflt = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 560, arcV: 250,
+    sectionMode: "swept", stations: 24, depth: 300, profileT: 0.7,
+    keepGeometry: true, computeClearance: false, ...o,
+  });
+
+  // 1. INERT BY DEFAULT. The rule may not move a single existing number
+  //    unless it is asked for — every other clearance test in this file is
+  //    written against the form with no throat boundary at all.
+  const mD = M.mapThroatToMouth(th, dflt());
+  const off = M.ductClearance(mD.rows), zero = M.ductClearance(mD.rows, { throatFloor: 0 });
+  checkTrue("throatFloor 0 reproduces the boundary-less form exactly",
+    ["minMid", "minMidAt", "min", "minAt", "overlap", "overlapStations", "max", "maxAt"]
+      .every((k) => Object.is(off[k], zero[k]))
+    && off.perStationDefect.every((x, i) => Object.is(x, zero.perStationDefect[i]))
+    && off.pairWorst.every((x, i) => x.gap === zero.pairWorst[i].gap && x.at === zero.pairWorst[i].at)
+    && zero.throat === null,
+    "every statistic and the whole per-station profile identical");
+
+  // 2. IT MOVES THE BOUNDARY OFF THE KNIFE EDGE. At these defaults the worst
+  //    "defect" is the throat tiling one station in — measured -0.002 mm at
+  //    station 1 of 24 — and the ducts have simply had no path length to
+  //    open yet. With the floor as the boundary the metric starts where they
+  //    have separated.
+  const on = M.ductClearance(mD.rows, { throatFloor: 0.5 });
+  checkTrue("the throat knife edge stops being read as a defect",
+    off.minMid < 0 && off.minMidAt === 1 && on.minMid >= 0.5 && on.minMidAt > off.minMidAt,
+    `minMid ${off.minMid.toFixed(3)} at station ${off.minMidAt} -> ${on.minMid.toFixed(3)} at ${on.minMidAt}`);
+  checkTrue("...and reports the run and its deepest contact rather than hiding them",
+    on.throat.runs > 0 && on.throat.knifeMax >= 1 && Math.abs(on.throat.worst - Math.abs(off.minMid)) < 1e-9,
+    `run to station ${on.throat.knifeMin}-${on.throat.knifeMax} on ${on.throat.runs}/${on.throat.pairs} pairs, ${on.throat.worst.toFixed(4)} mm deep inside it`);
+
+  // 3. THE NEGATIVE HALF OF THE BAND IS THE POINT. A literal mirror of the
+  //    mouth rule — walk while in contact — would swallow the profile's own
+  //    interpenetration, which is the one defect that matters most. The old
+  //    defaults at depth 150 dive to -1.5 mm at station 1: that must survive
+  //    the rule untouched, at the same depth and the same station.
+  const deep = (T) => M.mapThroatToMouth(th, dflt({
+    exitHalfAngle: 8, thetaV: 40, arcH: 480, arcV: 213, depth: 150, profileT: T }));
+  for (const T of [0.7, 1.0]) {
+    const md = deep(T);
+    const dOff = M.ductClearance(md.rows), dOn = M.ductClearance(md.rows, { throatFloor: 0.5 });
+    checkTrue(`real interpenetration is NOT swallowed at T ${T}`,
+      dOff.minMid < -1 && Math.abs(dOn.minMid - dOff.minMid) < 1e-12 && dOn.minMidAt === dOff.minMidAt,
+      `${dOff.minMid.toFixed(3)} mm at station ${dOff.minMidAt}, unchanged by the rule`);
+  }
+
+  // 4. IT SURVIVES REFINEMENT. The near-throat gap does NOT refine away —
+  //    measured -0.002 / -0.122 / -0.241 / -0.122 mm at 24 / 32 / 48 / 64
+  //    stations — so a rule keyed to a station COUNT would drift with the
+  //    export resolution. Keyed to the floor, the answer holds.
+  const post = [24, 32, 48, 64].map((stations) => {
+    const m = M.mapThroatToMouth(th, dflt({ stations }));
+    return { stations, off: M.ductClearance(m.rows), on: M.ductClearance(m.rows, { throatFloor: 0.5 }) };
+  });
+  checkTrue("the boundary holds under refinement, where a station count would not",
+    post.every((r) => r.off.minMid < 0 && r.on.minMid >= 0.5)
+    && Math.max(...post.map((r) => r.on.minMid)) - Math.min(...post.map((r) => r.on.minMid)) < 0.05,
+    post.map((r) => `${r.stations}: ${r.off.minMid.toFixed(3)} -> ${r.on.minMid.toFixed(3)}`).join(", "));
+
+  // 5. A FLOOR THE HORN NEVER REACHES MUST NOT PASS VACUOUSLY. If the run
+  //    were allowed to eat every interior station the defect set would be
+  //    empty and the worst gap would come back Infinity — a floor of 40 mm
+  //    would then read as "clear".
+  const huge = M.ductClearance(mD.rows, { throatFloor: 40 });
+  checkTrue("an unreachable floor saturates and reports, it does not pass",
+    isFinite(huge.minMid) && huge.throat.saturated === huge.throat.pairs
+    && huge.minMid < 40,
+    `saturated ${huge.throat.saturated}/${huge.throat.pairs}, best gap ${huge.minMid.toFixed(2)} mm against the 40 mm asked`);
+
+  // 6. THE TWO BOUNDARIES ARE INDEPENDENT and compose: the mouth joint walk
+  //    and the throat run must not interfere.
+  // on the geometry where engagement is recorded — the flat-mouth default
+  // does not engage a 5 mm bulge at all, which is a fact about that mouth
+  // and not what this check is for
+  const mb = M.mapThroatToMouth(th, dflt({
+    thetaV: 40, arcH: 480, arcV: 213, depth: 320, stations: 32, bulge: { amp: 5 } }));
+  const both = M.ductClearance(mb.rows, { jointAware: true, throatFloor: 0.5 });
+  const jOnly = M.ductClearance(mb.rows, { jointAware: true });
+  checkTrue("the mouth joint and the throat run compose without interfering",
+    both.joint.engaged === jOnly.joint.engaged
+    && Math.abs(both.joint.engageMax - jOnly.joint.engageMax) < 1e-12
+    && both.throat.knifeMax < both.joint.knifeMin,
+    `throat run to ${both.throat.knifeMax}, joint from ${both.joint.knifeMin}, engagement ${both.joint.engageMax.toFixed(2)} mm unchanged`);
+}
+
 head("Duct separation (field and solver)");
 {
   const t = 0.4, ST = 24;
@@ -2254,11 +2349,23 @@ head("Duct separation (field and solver)");
     asym = Math.max(asym, Math.abs(a - (bx ? bx.amp : 0)), Math.abs(a - (by ? by.amp : 0)));
   }
   check("the solved field keeps both mirrors", asym, 0, 1e-8, "mm");
-  // the result must survive an independent rebuild + measurement
+  // the result must survive an independent rebuild + measurement. The solver
+  // measures with the floor as the throat boundary, so the re-measure has to
+  // use the same convention — a gap is only a number once you say which
+  // stations count. What the re-measure must NOT do is take the solver's
+  // word for it, and it does not: this is a fresh build and a fresh measure.
   const sep = { amps: n.amps, uStart: n.uStart, uEnd: n.uEnd, lobes: 1 };
   const mv = M.mapThroatToMouth(th, { ...opts, separate: sep });
-  const clv = M.ductClearance(mv.rows, { thinBand: 0.15 });
+  const clv = M.ductClearance(mv.rows, { thinBand: 0.15, throatFloor: 0.2 });
   check("independent re-measure returns the solver's gap", clv.minMid, n.gapAfter, 1e-9, "mm");
+  // and the convention must not be hiding anything mid-path: whatever the
+  // boundary-less form still calls contact has to sit INSIDE the throat run,
+  // not somewhere the ducts have had length to open
+  const clvRaw = M.ductClearance(mv.rows);
+  checkTrue("the contact the throat rule excludes is at the throat, not mid-path",
+    clvRaw.minMid <= clv.minMid + 1e-12
+    && (clvRaw.minMid >= 0 || clvRaw.minMidAt <= clv.throat.knifeMax),
+    `boundary-less reads ${clvRaw.minMid.toFixed(3)} mm at station ${clvRaw.minMidAt}, throat run ends at ${clv.throat.knifeMax}`);
   checkTrue("the slivers thinner than the floor are gone", clv.thin.count === 0, "");
   // separation composes with length equalisation
   const ml = M.mapThroatToMouth(th, { ...opts, separate: sep, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } });

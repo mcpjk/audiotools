@@ -89,6 +89,45 @@ passages, (3) the mouth is one continuous surface with a wall-wide rim
 margin, (4) no internal voids on a section. `ginkgo_shell_sample.step` in
 the repo root is a ready-made 6x3 / depth 320 / wall 3 file to test on.
 
+## Done in the 2026-09-02 refinements session
+
+- **The "horn — shell blanks" 3-D VIEW IS REMOVED** (owner's call: it adds
+  nothing for a designer). A blank is an intermediate the CAD boolean
+  consumes, not a form anyone judges a horn by, and its outline is the
+  duct's own outline pushed out by one number — so the view showed the duct
+  picture again, slightly fatter, and could never show the thing that
+  matters. **The shell STEP kit EXPORT is untouched**: `buildShellSTEP`,
+  `shellSections`, the shell-wall input, the export button and all 18 of
+  their checks stand. Only the viewport toggle, the `solidsMode` state and
+  the `shellSections` render path went. Owner CAD validation of the kit has since SUCCEEDED on the solid-mode
+  form — see the shell-CAD session above. A one-piece-body view built in
+  that parallel session was dropped in the merge to honour this call.
+- **"SOLVE THE BOW" AND THE LOBE LOCK ARE REMOVED FROM THE UI** (owner's
+  call). The solve ranked on wallSpread, which measures the length each wall
+  fibre has run BY THE MOUTH, so a bow that distorts the wavefront mid-path
+  and unwinds it before the aperture scores as though nothing happened — and
+  the solver therefore kept placing the bow out in the wide, expanded end of
+  the passage, where a displacement moves the most air. The owner reports
+  reaching for `throat fifth` almost every time. The lobe lock existed only
+  to fence the same blind spot on the lobe count, so it went with the solve;
+  the lobe, direction and region controls all stay. `solveBow` SURVIVES IN
+  THE MODEL with its two tests, the way `solveDepthForFc` did.
+  **The open question this leaves is the metric, not the search.** A solve
+  worth restoring needs something that can see mid-path coherence rather
+  than its integral — e.g. the wall-fibre spread evaluated PER STATION and
+  taken as a maximum over the path, instead of once at the mouth. That is a
+  small change to the same measurement machinery and would let the
+  enumeration be re-offered honestly; it is the thing to build before any
+  "solve the bow" button comes back.
+- **New defaults** (owner's numbers): shape order m 2 -> 3, arcH 560 -> 555
+  mm, arcV 250 -> 245 mm. The arcs are a PRINT decision — 249.84 mm per half
+  and 245.00 mm tall clears a P1S bed where 560 x 250 was tighter — and the
+  300 mm axial depth still does not fit that bed in any axis-aligned pose,
+  so the split has to be planned. Shape order 3 is NOT a better horn at the
+  nominal vector; it is more shape the sliders can request and a tighter
+  solve. Both measured, in node and in the browser — see the two new
+  CLAUDE.md findings.
+
 ## Done in the 2026-09-01 shell session
 
 - **Task D — HORN SHELL STEP EXPORT — IS BUILT** (owner's request, this
@@ -107,11 +146,9 @@ the repo root is a ready-made 6x3 / depth 320 / wall 3 file to test on.
   suite at 394 — the offset closed forms (exact (10+2d)² square, exact
   round-trip), containment, ring simplicity, the exact prism identity for
   the extension, and the emitted file's integrity.
-- **The 3-D viewport now offers "ducts — the air" and "horn — shell
-  blanks"** (owner's request). The horn view is the blanks at the chosen
-  wall — the outer form; the boolean result needs CAD, and the hint says
-  so. Same deferred build pattern as the duct solids; toggling rebuilds in
-  the same ~20 ms class.
+- **The 3-D viewport gained a "horn — shell blanks" option, and it was
+  REMOVED the next session** — see the 2026-09-02 entry above. The viewport
+  shows the air only.
 - **What remains is OWNER VALIDATION IN CAD**, same as Task B's round
   trips: import the shell kit (36 bodies), union the 18 blanks, subtract
   the 18 cutters, and check (1) the boolean succeeds, (2) the throat face
@@ -297,6 +334,25 @@ appeared twice in this file by paste accident, now deduplicated.)
   quarter and fifth alike while amplitude keeps falling (51.7 / 47.4 / 45.1),
   so at a depth far from the ΔL optimum the metric stops discriminating —
   read amplitude and overlap there.
+
+## Done in the 2026-09-01 defaults + throat-boundary session
+
+- **New default geometry** (owner's numbers): exit half-angle 16.55 deg,
+  mouth 90x0 deg / 560x250 mm, axial depth 300 mm, bow region the throat
+  fifth. Better on every reported metric than the old set; the comparison
+  table and the caveat that depth 300 is a CHOICE (the dL optimum is
+  360.8 mm) are in `CLAUDE.md`.
+- **The clearance metric has a throat boundary now** (`throatFloor`), the
+  mirror of the mouth's joint walk-back that was missing. The minimum-gap
+  input defines it: the throat run is where the ducts are still within one
+  minimum of touching and have not yet opened by one. Off by default, so
+  nothing else in the suite moved. 9 new checks (385 total).
+  **What is NOT done**: the separation solver now measures on the corrected
+  set, so at the current defaults it reports "already clear" — the horn has
+  no defect once the knife edge stops being counted as one. That is the
+  right answer, but it means the solver is now exercised only on geometries
+  pushed away from the defaults, and its tests are the only thing keeping it
+  honest. Worth a deliberate check the next time the defaults move.
 
 ## Done in the 2026-09-01 bow-solver session
 
