@@ -1,5 +1,30 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-02 second CAD round trip — the skin over a bow
+
+The owner exported a fully solved horn and found the bowed duct PROTRUDING
+from the body and the skin WRINKLED around the bulge. Both confirmed by a
+true 3-D measurement (which the tool did not have: its containment check
+compared ring q with duct ring q in a projection and read +2.96 mm on a
+duct 20.6 mm outside) and both fixed by a different construction: the skin
+grows a slope-limited, rounded hill wherever a duct comes within the wall,
+grown only from measured 3-D deficits against the exported B-spline
+surface, fed back exactly (both bracketing rings, flank cosine). The owner
+relaxed the constraint to a MINIMUM wall at these features, smoothly, and
+that is what ships: 2.79-2.86 mm against 3 at the defaults, hills 1-58 mm
+as the bows demand, skin within 1.3 mm of the straight loft. See the
+rewritten containment paragraph in the CLAUDE.md shell finding for the
+three lessons. Cost: ~5 s per export at 64 stations, and the export note
+says so while it runs. Suite at 435.
+
+**Owner context worth keeping:** the horn is to be printed in THREE parts —
+the throat region first, and the mouth side split down the vertical
+centreline into two. With even n_cols a divider runs down that centreline
+(the column-parity finding), so the x = 0 split plane passes through a
+wall, not a passage; radial bows are mirror-symmetric, so the two mouth
+halves are mirror images. Planning the split cuts is a natural next build
+after Task F (a planar cutter at a chosen z, and the x = 0 plane).
+
 ## NEXT: Task F — "webs" shell export (owner approved 2026-09-02)
 
 The owner confirmed the solid-mode boolean SUCCEEDS in CAD and asked

@@ -2641,14 +2641,17 @@ head("Aperture surface, horn body, shell orientation");
   // it by 25.6 mm. With the live map supplied the skin follows the ducts, so
   // the minimum outer wall is the specified wall in every case — the last
   // few percent are the radial-vs-normal cosine of the offset.
+  // Measured in TRUE 3-D against the exported B-spline skin (skinClearance),
+  // never by station index in a projection: that proxy read +2.96 mm on a
+  // horn whose duct stood 20.6 mm outside the skin. The owner accepted a
+  // MINIMUM wall at these features rather than a constant one, and the
+  // slope-limited hill lands within a few percent of it.
   const cont = M.bodyContainment(th, map, body, { t, wall });
-  checkTrue("every duct sits inside the body's skin by the wall", -cont.worst > 0.95 * wall,
-    `min outer wall ${(-cont.worst).toFixed(2)} mm, skin pushed ${body.pushMax.toFixed(1)} mm at station ${body.pushAt}`);
+  checkTrue("every duct sits inside the body's skin by the wall (3-D)", cont.minWall > 0.9 * wall,
+    `min outer wall ${cont.minWall.toFixed(2)} mm, hill ${body.pushMax.toFixed(1)} mm at station ${body.pushAt}, ${body.rounds} round(s)`);
+  checkTrue("and the plain horn needs almost no hill for it", body.pushMax < 3,
+    `${body.pushMax.toFixed(2)} mm — swept and flowed sections differ only near the throat`);
   {
-    const bare = M.hornBodySections(th, opts, { wall, stations: ST });
-    const cb = M.bodyContainment(th, map, bare, { t, wall });
-    checkTrue("without the map the tiling envelope is under the wall", -cb.worst < wall,
-      `${(-cb.worst).toFixed(2)} mm — why the push exists`);
     const bowOpts = { ...opts, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } };
     const bowMap = M.mapThroatToMouth(th, bowOpts);
     const bowBare = M.hornBodySections(th, bowOpts, { wall, stations: ST });
@@ -2657,8 +2660,28 @@ head("Aperture surface, horn body, shell orientation");
     const cbf = M.bodyContainment(th, bowMap, bowBody, { t, wall });
     checkTrue("a radial bow bursts through the bare tiling envelope", cbb.worst > 10,
       `${cbb.worst.toFixed(1)} mm outside`);
-    checkTrue("and the following skin contains it by the wall", -cbf.worst > 0.95 * wall,
-      `min outer wall ${(-cbf.worst).toFixed(2)} mm, skin pushed ${bowBody.pushMax.toFixed(1)} mm`);
+    checkTrue("and the following skin contains it by the wall (3-D)", cbf.minWall > 0.9 * wall,
+      `min outer wall ${cbf.minWall.toFixed(2)} mm, hill ${bowBody.pushMax.toFixed(1)} mm, ${bowBody.rounds} round(s)`);
+    // THE HILL IS SMOOTH ENOUGH FOR THE LOFT. The exported skin is a cubic
+    // through the rings; a spike in the rings rings on either side of it (the
+    // owner's wrinkles). With the excess slope-limited, the cubic stays close
+    // to the straight loft between rings everywhere — measured at the
+    // mid-station of every ring pair.
+    const apB = M.apertureFrame(bowMap.mouthSurf);
+    const brB = M.ductBrep(bowBody.sections, { capMouthPts: M.apertureCapGrid(bowBody.sections[ST].pts, apB) });
+    let ripple = 0;
+    for (let w = 0; w < 4; w++)
+      for (let q = 0; q < ST; q++)
+        for (let i = 0; i <= brB.n; i++) {
+          const P = M.evalBsplineSurf(brB.walls[w], brB.uKnots, brB.vKnots, i / brB.n, (q + 0.5) / ST);
+          const a = bowBody.sections[q].pts[(w * brB.n + i) % (4 * brB.n)], b = bowBody.sections[q + 1].pts[(w * brB.n + i) % (4 * brB.n)];
+          ripple = Math.max(ripple, Math.hypot(P[0] - (a[0] + b[0]) / 2, P[1] - (a[1] + b[1]) / 2, P[2] - (a[2] + b[2]) / 2));
+        }
+    checkTrue("the skin stays close to the straight loft through the hill", ripple < 2.5,
+      `worst ${ripple.toFixed(2)} mm mid-station, under a ${bowBody.pushMax.toFixed(0)} mm hill`);
+    // and the measurement is a real inversion of the push: with no map there
+    // is no hill, and the clearance reads whatever the envelope gives
+    checkTrue("the bare envelope reports no hill", bowBare.pushMax === 0 && bowBare.clearance === null, "");
     // both ends are untouched by the push: the throat is still the exact
     // circle and the mouth ring still lies on the aperture
     let rT = 0, dM = 0;

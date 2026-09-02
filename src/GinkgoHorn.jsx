@@ -1942,6 +1942,10 @@ export default function GinkgoHorn() {
             if (ok) dl(`${stem}.step`, r.text, "application/step");
           }}>STEP · B-spline solids</button>
           <button style={expBtn} disabled={!map} onClick={() => {
+            // the body's skin is fitted to the ducts in 3-D (a few seconds at
+            // 64 stations), so say so before the click freezes the page
+            setStepNote({ ok: true, msg: "building the horn body — fitting the skin to the ducts…" });
+            setTimeout(() => {
             const em = exportMap();
             let body = null, cont = null;
             if (shellMode === "solid") {
@@ -1962,10 +1966,11 @@ export default function GinkgoHorn() {
             setStepNote({
               ok,
               msg: `${what} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
-                cont ? ` · min outer wall ${fmt(-cont.worst, 2)} mm${body.pushMax > 0.05 ? ` (skin follows the ducts by up to ${fmt(body.pushMax, 1)} mm at station ${body.pushAt})` : ""}` : ""} · ${
+                cont ? ` · min outer wall ${fmt(cont.minWall, 2)} mm (3-D)${body.pushMax > 0.5 ? ` · skin hill ${fmt(body.pushMax, 1)} mm at station ${body.pushAt}, ${body.rounds} fitting round(s)` : ""}` : ""} · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
             if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
+            }, 30);
           }}>STEP · horn shell</button>
           <div style={{ display: "flex", gap: 4 }}>
             {[["solid", "one body"], ["bundle", "per-cell blanks"]].map(([v, l]) => (
@@ -2008,8 +2013,10 @@ export default function GinkgoHorn() {
             {map && clearance ? ` (${fmt(clearance.max / 2, 1)} mm here)` : ""} keeps every pair robustly overlapping.
           </>}
           {" "}The mouth end faces of every solid lie on the aperture surface itself, so after the boolean the mouth is one continuous
-          surface with a {fmt(shellWall, 1)} mm rim margin — and that outer rim edge is the one to fillet against edge diffraction. DXF is
-          2-D per plane, so only the throat layer imports as a sketch.
+          surface with a {fmt(shellWall, 1)} mm rim margin — and that outer rim edge is the one to fillet against edge diffraction. Where a
+          bow or the separation field carries a duct past the horn's natural envelope, the skin grows a <em>smooth hill</em> over it:
+          the shell wall is a <strong style={{ color: C.inkDim }}>minimum</strong> there, not a constant, measured in 3-D against the
+          exported surface. DXF is 2-D per plane, so only the throat layer imports as a sketch.
         </div>
       </Stage>
 

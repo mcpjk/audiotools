@@ -711,21 +711,35 @@ exists.
   diverging ducts is what a multicell body IS. **But the skin must contain
   the ducts AS BUILT, and the tiling envelope alone does not**: measured
   0.9-1.4 mm of outer wall at the corner cells near the throat against a
-  specified 3 (swept and flowed sections differ slightly there), and a
-  radial 1-lobe bow bursts through it by 25 mm — a duct outside the horn.
-  So when the live map is supplied, `hornBodySections` pushes each envelope
-  ring outward vertex by vertex to the farthest duct point IN THAT VERTEX'S
-  DIRECTION before the wall is added: ray from the ring centre through the
-  duct point, intersected with the ring polygon, and only the EXCESS beyond
-  that boundary applied to the two vertices of the crossed segment. Measured
-  after the push: minimum outer wall 2.95 mm in every case tried (plain,
-  1- and 2-lobe radial bows, bulge plus short-axis bow) — the last 2% is the
-  radial-vs-normal cosine of the offset — with 2 mm of push in the plain
-  case and 28 mm under the radial bow, both ends untouched (throat circle
-  exact, mouth ring on the aperture to 0). The first attempt compared duct
-  radii against VERTEX radii with a ±1-neighbour window, and on a 16-point
-  run that smeared a corner vertex's radius 26 mm along the side next to
-  it; compare against the boundary, never against vertices. Containment is
+  specified 3, and a radial 1-lobe bow bursts through it by 25 mm — a duct
+  outside the horn. So when the live map is supplied, `followDucts` grows a
+  SLOPE-LIMITED HILL on the skin wherever a duct comes closer than the wall,
+  and the owner accepted the trade explicitly: a MINIMUM wall at these
+  features, smoothly, not a constant one. Three lessons from the first
+  version, which the owner's CAD caught (duct protruding, skin wrinkled):
+  (1) STATION INDEX IS NOT POSITION — swept duct sections and flow-mode body
+  rings are not co-planar near a bow, and comparing ring q with duct ring q
+  in a projection read +2.96 mm of wall on a horn whose duct stood 20.6 mm
+  OUTSIDE the skin; the number is now the true 3-D clearance of every duct
+  point against the exported B-spline surface (`skinClearance`), through a
+  spatial hash with a bounded radius — a band-indexed search near the curved
+  mouth found a far triangle first and its normal gave a false "outside" of
+  a metre. (2) A PUSHED VERTEX IS A SPIKE, and a cubic loft through a spike
+  rings on both sides — those were the wrinkles. The excess is a field over
+  (station, vertex), slope-limited to 1:1 along the ring and along the path
+  and then rounded, and the exported skin now sits within 1.3 mm of the
+  straight loft between rings under a 58 mm hill (0.3 mm on a plain horn).
+  (3) THE PUSH MUST BE FED BACK FROM THE MEASUREMENT, and exactly: a deficit
+  measured between two rings goes to BOTH (one alone closes half the gap
+  per round and stalls), divided by the flank cosine n·r̂ (a flat 15% factor
+  over-grew a 37 mm bow into a 110 mm hill), and seeded from nothing — a
+  first attempt seeded it by projecting duct points into each ring's plane
+  slab, and near the mouth, where the rings are far from planar, a point
+  three stations along read as 18 mm outside a skin it was well inside.
+  Measured at the tool's defaults, 64 stations, wall 3: min outer wall 2.86
+  mm plain (hill 1.1 mm), 2.86 mm with the default throat-fifth radial bow
+  (hill 25 mm), 2.79 mm with a throat-half bow (hill 58 mm), 2.82 mm with a
+  bulge and a short-axis bow (hill 55 mm); 3-6 fitting rounds, ~5 s. It is
   still MEASURED afterwards (`bodyContainment`) and reported. What is left
   between two passages after the subtraction is exactly the duct-to-duct gap:
   the layout's t at the throat, a knife edge at the mouth, no per-cell wall

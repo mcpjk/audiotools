@@ -5111,23 +5111,9 @@ export function hornBodySections(throat, opts, { wall = 3, stations = 24, map = 
   const ap = env.mouthSurf ? apertureFrame(env.mouthSurf) : null;
   const R = opts.R;
 
-  // the ducts as built, per station, for the containment push
-  let ductPts = null;
-  if (map && map.rows.length && map.rows[0].sched.length === stations + 1 && map.rows[0].sched[0].pts) {
-    ductPts = Array.from({ length: stations + 1 }, () => []);
-    for (const cellRec of throat.cells) {
-      const row = map.rows.find((r) => r.id === cellRec.id);
-      if (!row) continue;
-      const secs = ductSections(cellRec, row, { t });
-      if (!secs) continue;
-      for (let q = 0; q <= stations; q++) for (const p of secs[q].pts) ductPts[q].push(p);
-    }
-  }
-  let pushMax = 0, pushAt = null;
-
   const sections = [];
   for (let q = 0; q <= stations; q++) {
-    let ring = [];
+    const ring = [];
     for (const run of runs) {
       const pts = [];
       for (const seg of run) {
@@ -5135,47 +5121,6 @@ export function hornBodySections(throat, opts, { wall = 3, stations = 24, map = 
         for (let i = 0; i < p.length - (seg === run[run.length - 1] ? 0 : 1); i++) pts.push(p[i]);
       }
       for (const p of resample3(pts, per)) ring.push(p);
-    }
-    if (ductPts && q > 0 && q < stations) {
-      // Polar containment about the ring's own centre, in the x-y projection.
-      // Each duct point is compared with the ring's boundary AT ITS OWN ANGLE
-      // — the ray from the centre through the point, intersected with the
-      // ring polygon — and only the EXCESS beyond that boundary is applied,
-      // to the two vertices of the segment the ray crossed. Comparing against
-      // vertex radii instead smeared a corner vertex's radius onto the next
-      // vertex along the side (measured 26 mm on a coarse ring); measuring
-      // against the boundary keeps corners exact and moves nothing where the
-      // duct is already inside.
-      const n = ring.length, ctr = [0, 0, 0];
-      for (const p of ring) { ctr[0] += p[0] / n; ctr[1] += p[1] / n; ctr[2] += p[2] / n; }
-      const need = new Array(n).fill(0);
-      for (const p of ductPts[q]) {
-        const dx = p[0] - ctr[0], dy = p[1] - ctr[1], r = Math.hypot(dx, dy);
-        if (r < 1e-9) continue;
-        const ux = dx / r, uy = dy / r;
-        let hit = -1, rh = 0;
-        for (let k = 0; k < n; k++) {
-          const A = ring[k], B = ring[(k + 1) % n];
-          const ax = A[0] - ctr[0], ay = A[1] - ctr[1], bx = B[0] - ctr[0], by = B[1] - ctr[1];
-          const den = (bx - ax) * uy - (by - ay) * ux;
-          if (Math.abs(den) < 1e-12) continue;
-          const sPar = (ax * uy - ay * ux) / -den;
-          if (sPar < -1e-9 || sPar > 1 + 1e-9) continue;
-          const proj = (ax + (bx - ax) * sPar) * ux + (ay + (by - ay) * sPar) * uy;
-          if (proj > rh) { rh = proj; hit = k; }
-        }
-        if (hit < 0) continue;
-        const e = r - rh;
-        if (e > need[hit]) need[hit] = e;
-        if (e > need[(hit + 1) % n]) need[(hit + 1) % n] = e;
-      }
-      ring = ring.map((p, k) => {
-        if (need[k] <= 1e-9) return p;
-        const dx = p[0] - ctr[0], dy = p[1] - ctr[1], r = Math.hypot(dx, dy) || 1e-9;
-        const sc = (r + need[k]) / r;
-        if (need[k] > pushMax) { pushMax = need[k]; pushAt = q; }
-        return [ctr[0] + dx * sc, ctr[1] + dy * sc, p[2]];
-      });
     }
     let out = insetSection3(ring, [-wall, -wall, -wall, -wall]);
     // The throat is the driver's disc, so its offset is a concentric circle
@@ -5194,60 +5139,370 @@ export function hornBodySections(throat, opts, { wall = 3, stations = 24, map = 
     if (ap && q === stations) out = out.map(ap.snap);
     sections.push({ s: q / stations, area: polyArea3(out), pts: out, origin: env.rows[0].sched[q].origin });
   }
-  return { sections, chainErr, closeErr, n: per, surf: env.mouthSurf, pushMax, pushAt };
+  const body = { sections, chainErr, closeErr, n: per, surf: env.mouthSurf, pushMax: 0, pushAt: null, clearance: null };
+  if (map && map.rows.length && map.rows[0].sched.length === stations + 1 && map.rows[0].sched[0].pts)
+    followDucts(throat, map, body, { wall, t, ap });
+  return body;
 }
 
-// How far the ducts poke outside the body's skin — measured, because bows
-// and the separation field can push a duct outward past the tiling envelope
-// the skin is built on, and a duct outside the skin is a hole in the horn.
-// Positive `worst` means material is missing there; the wall that would have
-// covered it is reported so the answer is actionable rather than a verdict.
-export function bodyContainment(throat, map, body, { t = 0, wall = 3 } = {}) {
-  if (!body || !map) return null;
-  const Q = Math.min(body.sections.length, map.rows[0].sched.length) - 1;
-  const frames = body.sections.map((sec) => {
-    const P = sec.pts, n = P.length;
-    const ctr = [0, 0, 0];
-    for (const p of P) { ctr[0] += p[0] / n; ctr[1] += p[1] / n; ctr[2] += p[2] / n; }
+// ── MAKING THE SKIN FOLLOW THE DUCTS, SMOOTHLY ─────────────────────────────
+//
+// The first version of this pushed single ring vertices outward, radially in
+// the x-y projection, by however far a duct point at the SAME STATION INDEX
+// stuck out. Two things were wrong with it, and the owner's CAD showed both:
+// the duct still protruded (a true 3-D clearance of -20.6 mm at the defaults
+// while the projection said +2.96), and the skin wrinkled around the bulge.
+//
+//   1. Station index is not position. Swept duct sections are cut in planes
+//      that tilt with the centreline; the body's rings are level sets of the
+//      flow. Near a bow the two are not co-planar, so the duct point that
+//      pokes out of body ring q was never IN ring q's plane — it was compared
+//      against the wrong slice. Here every duct point is placed in the SLAB
+//      of the body ring whose plane it actually lies in, and the excess is
+//      measured in that plane.
+//   2. A pushed vertex is a spike. The loft interpolates a cubic through the
+//      rings in both directions, and a cubic through a spike rings on either
+//      side of it — the wrinkles. The excess is now a FIELD over (station,
+//      vertex) that is slope-limited (no steeper than 1:1 against the local
+//      vertex spacing, along the ring and along the path) and then rounded,
+//      so the bump is a smooth hill the loft can carry. The owner accepted the
+//      trade explicitly: a smoothed skin that respects a MINIMUM wall, not a
+//      constant one, at these features.
+//   3. The number reported is the TRUE 3-D clearance — every duct point
+//      against the B-spline skin that is actually exported — and it closes a
+//      loop: any point still under the wall feeds its deficit back into the
+//      field, which is re-limited and re-applied. Two rounds suffice.
+function followDucts(throat, map, body, { wall, t, ap }) {
+  const secs = body.sections, S = secs.length, N = secs[0].pts.length;
+  // per-ring frames: centroid, forward normal, in-plane basis
+  const frames = secs.map((sec, q) => {
+    const P = sec.pts, ctr = [0, 0, 0];
+    for (const p of P) { ctr[0] += p[0] / N; ctr[1] += p[1] / N; ctr[2] += p[2] / N; }
+    let nx = 0, ny = 0, nz = 0;
+    for (let k = 0; k < N; k++) {
+      const a = P[k], b = P[(k + 1) % N];
+      nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    const nl = Math.hypot(nx, ny, nz) || 1e-18;
+    let n = [nx / nl, ny / nl, nz / nl];
+    const fwd = q < S - 1 ? secs[q + 1].pts : secs[q - 1].pts;
+    const fc = [0, 0, 0];
+    for (const p of fwd) { fc[0] += p[0] / N; fc[1] += p[1] / N; fc[2] += p[2] / N; }
+    const dir = q < S - 1 ? [fc[0] - ctr[0], fc[1] - ctr[1], fc[2] - ctr[2]] : [ctr[0] - fc[0], ctr[1] - fc[1], ctr[2] - fc[2]];
+    if (n[0] * dir[0] + n[1] * dir[1] + n[2] * dir[2] < 0) n = [-n[0], -n[1], -n[2]];
+    const tt = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    let U = [tt[1] * n[2] - tt[2] * n[1], tt[2] * n[0] - tt[0] * n[2], tt[0] * n[1] - tt[1] * n[0]];
+    const ul = Math.hypot(...U); U = [U[0] / ul, U[1] / ul, U[2] / ul];
+    const V = [n[1] * U[2] - n[2] * U[1], n[2] * U[0] - n[0] * U[2], n[0] * U[1] - n[1] * U[0]];
+    // half slab thickness: half the larger centroid step to a neighbour
+    const half = Math.max(
+      q > 0 ? Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]) : 0,
+      q < S - 1 ? Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]) : 0) / 2 || 1;
+    const to2 = (p) => { const d = [p[0] - ctr[0], p[1] - ctr[1], p[2] - ctr[2]]; return [d[0] * U[0] + d[1] * U[1] + d[2] * U[2], d[0] * V[0] + d[1] * V[1] + d[2] * V[2], d[0] * n[0] + d[1] * n[1] + d[2] * n[2]]; };
+    const poly = P.map(to2);
+    const ang = poly.map((p) => Math.atan2(p[1], p[0]));
+    return { ctr, n, U, V, half, to2, poly, ang };
+  });
+  // The field starts EMPTY and is grown only from measured deficits. A first
+  // version seeded it by projecting duct points into each ring's plane slab;
+  // near the mouth the rings are far from planar (the aperture is a curved
+  // outline), so a point three stations along landed in the wrong slab and
+  // read as 18 mm outside a skin it was comfortably inside. The 3-D
+  // measurement has no such ambiguity, and it converges in a few rounds
+  // because pushing a vertex out by e raises the clearance there by ~e.
+  const E0 = Array.from({ length: S }, () => new Array(N).fill(0));
+
+  // slope limit along the ring (against each vertex's own spacing) and along
+  // the path (against the centroid step), then a rounding pass that may only
+  // ADD material. Ends are pinned at zero: the cells tile there and no bow
+  // reaches them.
+  const SLOPE = 1.0; // radial rise per unit of ring/path distance: the hill's steepest flank
+  const shape = (E) => {
+    const F = E.map((r) => r.slice());
+    F[0].fill(0); F[S - 1].fill(0);
+    for (let it = 0; it < 4 * N; it++) {
+      let moved = false;
+      for (let q = 1; q < S - 1; q++) {
+        const P = frames[q].poly;
+        for (let k = 0; k < N; k++) {
+          const kp = (k + 1) % N, km = (k - 1 + N) % N;
+          const dp = Math.hypot(P[kp][0] - P[k][0], P[kp][1] - P[k][1]);
+          const dm = Math.hypot(P[km][0] - P[k][0], P[km][1] - P[k][1]);
+          const need = Math.max(F[q][kp] - dp * SLOPE, F[q][km] - dm * SLOPE);
+          if (need > F[q][k] + 1e-9) { F[q][k] = need; moved = true; }
+        }
+      }
+      for (let q = 1; q < S - 1; q++) {
+        const dq = Math.max(1e-6, Math.min(frames[q].half, frames[q + 1].half) * 2);
+        for (let k = 0; k < N; k++) {
+          const need = Math.max(q + 1 < S - 1 ? F[q + 1][k] - dq * SLOPE : 0, q - 1 > 0 ? F[q - 1][k] - dq * SLOPE : 0);
+          if (need > F[q][k] + 1e-9) { F[q][k] = need; moved = true; }
+        }
+      }
+      if (!moved) break;
+    }
+    // rounding: max(itself, neighbour mean) so the hill loses its ridges
+    for (let pass = 0; pass < 3; pass++) {
+      const G = F.map((r) => r.slice());
+      for (let q = 1; q < S - 1; q++)
+        for (let k = 0; k < N; k++) {
+          const kp = (k + 1) % N, km = (k - 1 + N) % N;
+          const m = (F[q][kp] + F[q][km] + (q + 1 < S - 1 ? F[q + 1][k] : 0) + (q - 1 > 0 ? F[q - 1][k] : 0) + 2 * F[q][k]) / 6;
+          G[q][k] = Math.max(F[q][k], m);
+        }
+      for (let q = 1; q < S - 1; q++) F[q] = G[q];
+    }
+    return F;
+  };
+  const apply = (F) => {
+    let pm = 0, pa = null;
+    for (let q = 1; q < S - 1; q++) {
+      const fr = frames[q];
+      secs[q].pts = secs[q].pts.map((p, k) => {
+        const e = F[q][k];
+        if (e <= 1e-9) return p;
+        if (e > pm) { pm = e; pa = q; }
+        const w = fr.poly[k], r = Math.hypot(w[0], w[1]) || 1e-9;
+        const ux = w[0] / r, uy = w[1] / r;
+        const dx = fr.U[0] * ux + fr.V[0] * uy, dy = fr.U[1] * ux + fr.V[1] * uy, dz = fr.U[2] * ux + fr.V[2] * uy;
+        return [p[0] + dx * e, p[1] + dy * e, p[2] + dz * e];
+      });
+      secs[q].area = polyArea3(secs[q].pts);
+    }
+    body.pushMax = pm; body.pushAt = pa;
+  };
+  const base = secs.map((sec) => sec.pts.map((p) => p.slice()));
+  const reset = () => { for (let q = 0; q < S; q++) secs[q].pts = base[q].map((p) => p.slice()); };
+
+  // Pushing vertex k of ring q radially by d moves the skin along its own
+  // normal by d·(n·r̂), so the push that closes a deficit on a flank is the
+  // deficit over that cosine — exact to first order, which is what makes the
+  // loop converge in a round or two instead of over-growing the hill by a
+  // flat factor every round. The cosine is floored at 0.5: the slope limit
+  // keeps flanks at or under 1:1, so it cannot legitimately be lower.
+  const radialOf = (q, k) => {
+    const fr = frames[q], w = fr.poly[k], r = Math.hypot(w[0], w[1]) || 1e-9;
+    const ux = w[0] / r, uy = w[1] / r;
+    return [fr.U[0] * ux + fr.V[0] * uy, fr.U[1] * ux + fr.V[1] * uy, fr.U[2] * ux + fr.V[2] * uy];
+  };
+  let E = E0.map((r) => r.slice());
+  body.rounds = 0;
+  // deficits under 3% of the wall are within the tessellation's own chord
+  // error and are not chased; the reported figure is measured finer
+  const tol = 0.95 * wall;
+  const prof = globalThis.__hgProfile ? (l) => { const t0 = Date.now(); return () => console.log(`    ${l}: ${Date.now() - t0} ms`); } : () => () => {};
+  for (let round = 0; round < 6; round++) {
+    let done = prof(`round ${round} clearance`);
+    const clr = skinClearance(throat, map, body, { t, ku: 2, kv: 2, wall: tol, reach: 1, step: 4 });
+    done();
+    body.clearance = clr;
+    if (!clr || clr.deficits.length === 0) break;
+    done = prof(`round ${round} shape+apply`);
+    for (const { q, k, deficit, nrm } of clr.deficits) {
+      const rd = radialOf(q, k);
+      const cosine = nrm ? Math.max(0.5, Math.abs(nrm[0] * rd[0] + nrm[1] * rd[1] + nrm[2] * rd[2])) : 1;
+      const want = E[q][k] + (deficit + 0.03 * wall) / cosine;
+      if (want > E0[q][k]) E0[q][k] = want;
+    }
+    reset();
+    E = shape(E0);
+    apply(E);
+    done();
+    body.rounds = round + 1;
+  }
+  const doneF = prof("final clearance");
+  body.clearance = skinClearance(throat, map, body, { t, ku: 2, kv: 3, wall: 0, reach: 1, step: 2 });
+  doneF();
+}
+
+// TRUE 3-D CLEARANCE of the ducts from the body's skin — against the B-spline
+// surface the file carries, not against ring indices or a projection. Every
+// sampled duct point is measured to the nearest tessellated skin triangle in
+// its station band; sign by the shell's outward normal. `worst` is the
+// smallest clearance (negative = outside the horn); `deficits` lists the
+// (station, vertex) bins where it falls under the wall, for the feedback
+// loop above.
+export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall = 0, reach = 1, step = 2 } = {}) {
+  const secs = body.sections, S = secs.length, N = secs[0].pts.length;
+  const ap = body.surf ? apertureFrame(body.surf) : null;
+  const br = ductBrep(secs, { capMouthPts: ap ? apertureCapGrid(secs[S - 1].pts, ap) : null });
+  if (!br) return null;
+  const sgn = brepShellOrientation(br).outward ? 1 : -1;
+  const n = br.n, NU = n * ku, NV = (S - 1) * kv;
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  // closest point on a triangle (Ericson, Real-Time Collision Detection 5.1.5)
+  const closest = (p, a, b, c) => {
+    const ab = sub(b, a), ac = sub(c, a), apv = sub(p, a);
+    const d1 = dot(ab, apv), d2 = dot(ac, apv);
+    if (d1 <= 0 && d2 <= 0) return a;
+    const bp = sub(p, b), d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) return b;
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); return [a[0] + ab[0] * v, a[1] + ab[1] * v, a[2] + ab[2] * v]; }
+    const cp = sub(p, c), d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0 && d5 <= d6) return c;
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); return [a[0] + ac[0] * w, a[1] + ac[1] * w, a[2] + ac[2] * w]; }
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); return [b[0] + (c[0] - b[0]) * w, b[1] + (c[1] - b[1]) * w, b[2] + (c[2] - b[2]) * w]; }
+    const den = 1 / (va + vb + vc), v = vb * den, w = vc * den;
+    return [a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w, a[2] + ab[2] * v + ac[2] * w];
+  };
+  // Tessellate the skin into a SPATIAL HASH. The first version bucketed
+  // triangles by station band and looked only a few bands either side of the
+  // duct point's own station; near the curved mouth the nearest skin
+  // triangle can sit many bands away, and the nearest triangle FOUND was then
+  // a far one whose normal gave a false "outside" — a 1 m deficit at the
+  // defaults. Space, not station index, is what "nearest" means.
+  const tP = globalThis.__hgProfile ? Date.now() : 0;
+  const cellSz = Math.max(4 * (wall || 3), 6);
+  const grid = new Map();
+  const gk = (ix, iy, iz) => `${ix},${iy},${iz}`;
+  const gi = (v) => Math.floor(v / cellSz);
+  const tris = [];
+  for (let wI = 0; wI < 4; wI++) {
+    const w = br.walls[wI], g = [];
+    for (let i = 0; i <= NU; i++) { const row = []; for (let j = 0; j <= NV; j++) row.push(evalBsplineSurf(w, br.uKnots, br.vKnots, i / NU, j / NV)); g.push(row); }
+    for (let i = 0; i < NU; i++)
+      for (let j = 0; j < NV; j++) {
+        const A = g[i][j], B = g[i + 1][j], C = g[i + 1][j + 1], D = g[i][j + 1];
+        for (const [P, Q, Rr] of [[A, B, C], [A, C, D]]) {
+          let nr = cross(sub(Q, P), sub(Rr, P)); const L = Math.hypot(...nr) || 1e-12; nr = [nr[0] * sgn / L, nr[1] * sgn / L, nr[2] * sgn / L];
+          const cc = [(P[0] + Q[0] + Rr[0]) / 3, (P[1] + Q[1] + Rr[1]) / 3, (P[2] + Q[2] + Rr[2]) / 3];
+          const rad = Math.max(Math.hypot(P[0] - cc[0], P[1] - cc[1], P[2] - cc[2]), Math.hypot(Q[0] - cc[0], Q[1] - cc[1], Q[2] - cc[2]), Math.hypot(Rr[0] - cc[0], Rr[1] - cc[1], Rr[2] - cc[2]));
+          const tri = { a: P, b: Q, c: Rr, nrm: nr, k: wI * n + Math.floor(i / ku), qf: (j + 0.5) / kv, cc, rad };
+          tris.push(tri);
+          const xs = [P[0], Q[0], Rr[0]], ys = [P[1], Q[1], Rr[1]], zs = [P[2], Q[2], Rr[2]];
+          for (let ix = gi(Math.min(...xs)); ix <= gi(Math.max(...xs)); ix++)
+            for (let iy = gi(Math.min(...ys)); iy <= gi(Math.max(...ys)); iy++)
+              for (let iz = gi(Math.min(...zs)); iz <= gi(Math.max(...zs)); iz++) {
+                const kk = gk(ix, iy, iz);
+                if (!grid.has(kk)) grid.set(kk, []);
+                grid.get(kk).push(tri);
+              }
+        }
+      }
+  }
+  // nearest triangle within `rad` cells of the point, or null if the skin is
+  // further away than that — which for a duct point means "well inside"
+  const nearest = (p, rad) => {
+    const cx = gi(p[0]), cy = gi(p[1]), cz = gi(p[2]);
+    let best = Infinity, bt = null;
+    for (let ix = cx - rad; ix <= cx + rad; ix++)
+      for (let iy = cy - rad; iy <= cy + rad; iy++)
+        for (let iz = cz - rad; iz <= cz + rad; iz++) {
+          const list = grid.get(gk(ix, iy, iz)); if (!list) continue;
+          for (const tr of list) {
+            // bounding-sphere reject: no point of the triangle can be nearer
+            // than the centroid distance less the circumradius
+            if (Math.hypot(p[0] - tr.cc[0], p[1] - tr.cc[1], p[2] - tr.cc[2]) - tr.rad >= best) continue;
+            const f = closest(p, tr.a, tr.b, tr.c);
+            const dd = Math.hypot(p[0] - f[0], p[1] - f[1], p[2] - f[2]);
+            if (dd < best) { best = dd; bt = { tr, f, d: dd }; }
+          }
+        }
+    // a hit further than the search radius guarantees may not be the true
+    // nearest; only trust distances the searched cube fully covers
+    return bt && bt.d <= rad * cellSz ? bt : null;
+  };
+  // fallback for points the grid cannot see: the polar test against the
+  // matched-station ring, which is crude but only has to answer "grossly
+  // outside, and by how much" for a point the skin has not reached yet
+  const ringFrames = secs.map((sec) => {
+    const P = sec.pts, ctr = [0, 0, 0];
+    for (const q of P) { ctr[0] += q[0] / N; ctr[1] += q[1] / N; ctr[2] += q[2] / N; }
     return { P, ctr };
   });
-  // signed radial excursion in the section's own plane, about its centroid:
-  // the ring is star-shaped about its centre here (it is the horn's outline),
-  // so a ray comparison is exact enough to answer "inside or outside".
-  const radial = (P, ctr, dirx, diry) => {
-    let best = 0;
-    for (let k = 0; k < P.length; k++) {
-      const A = P[k], B = P[(k + 1) % P.length];
+  const polarExcess = (p, q) => {
+    const { P, ctr } = ringFrames[q];
+    const dx = p[0] - ctr[0], dy = p[1] - ctr[1], r = Math.hypot(dx, dy);
+    if (r < 1e-9) return -Infinity;
+    const ux = dx / r, uy = dy / r;
+    let rh = 0;
+    for (let k = 0; k < N; k++) {
+      const A = P[k], B = P[(k + 1) % N];
       const ax = A[0] - ctr[0], ay = A[1] - ctr[1], bx = B[0] - ctr[0], by = B[1] - ctr[1];
-      const den = (bx - ax) * diry - (by - ay) * dirx;
+      const den = (bx - ax) * uy - (by - ay) * ux;
       if (Math.abs(den) < 1e-12) continue;
-      const s = (ax * diry - ay * dirx) / -den;
-      if (s < -1e-9 || s > 1 + 1e-9) continue;
-      const hx = ax + (bx - ax) * s, hy = ay + (by - ay) * s;
-      const proj = hx * dirx + hy * diry;
-      if (proj > best) best = proj;
+      const sPar = (ax * uy - ay * ux) / -den;
+      if (sPar < -1e-9 || sPar > 1 + 1e-9) continue;
+      const proj = (ax + (bx - ax) * sPar) * ux + (ay + (by - ay) * sPar) * uy;
+      if (proj > rh) rh = proj;
+    }
+    return r - rh;
+  };
+  const vertexByAngle = (p, q) => {
+    const { P, ctr } = ringFrames[q];
+    const a = Math.atan2(p[1] - ctr[1], p[0] - ctr[0]);
+    let best = 0, bd = Infinity;
+    for (let k = 0; k < N; k++) {
+      let d = Math.abs(a - Math.atan2(P[k][1] - ctr[1], P[k][0] - ctr[0])); if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d < bd) { bd = d; best = k; }
     }
     return best;
   };
-  let worst = -Infinity, at = null, cell = null;
+
+  if (tP) console.log(`      brep+tessellate+grid: ${Date.now() - tP} ms (${tris.length} tris)`);
+  let worst = Infinity, at = null, cell = null, point = null, farOutside = 0;
+  const deficitMap = new Map();
+  const RAD = Math.max(1, reach);
   for (const cellRec of throat.cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
-    const secs = ductSections(cellRec, row, { t });
-    if (!secs) continue;
-    for (let q = 0; q <= Q; q++) {
-      const { P, ctr } = frames[q];
-      for (const p of secs[q].pts) {
-        const dx = p[0] - ctr[0], dy = p[1] - ctr[1];
-        const r = Math.hypot(dx, dy);
-        if (r < 1e-9) continue;
-        const rb = radial(P, ctr, dx / r, dy / r);
-        const excess = r - rb;
-        if (excess > worst) { worst = excess; at = q; cell = cellRec.label; }
+    const d = ductSections(cellRec, row, { t });
+    if (!d) continue;
+    for (let q = 1; q < d.length - 1; q++)
+      for (let k = 0; k < d[q].pts.length; k += step) {
+        const p = d[q].pts[k];
+        const bt = nearest(p, RAD);
+        let clr;
+        if (bt) {
+          clr = dot(sub(p, bt.f), bt.tr.nrm) > 0 ? -bt.d : bt.d;
+        } else {
+          // beyond the grid's reach: inside (the common case) unless the
+          // matched ring says it is grossly out, in which case that excess
+          // stands in for the distance until the skin has moved out to it
+          const ex = polarExcess(p, Math.min(q, S - 1));
+          clr = ex > 0 ? -ex : RAD * cellSz;
+          if (ex > 0) farOutside++;
+        }
+        if (clr < worst) { worst = clr; at = q; cell = cellRec.label; point = p; }
+        if (wall > 0 && clr < wall) {
+          // a point measured between two rings needs BOTH pushed: pushing
+          // one alone moves the surface between them by only half, and the
+          // loop then closes half the gap per round and stalls
+          const qf = bt ? bt.tr.qf : q;
+          const qs = [Math.floor(qf), Math.ceil(qf)].filter((qq) => qq >= 1 && qq <= S - 2);
+          for (const qb of qs) {
+            const kk = bt ? bt.tr.k : vertexByAngle(p, qb);
+            const nrm = bt ? bt.tr.nrm : null;
+            const kkey = qb * N + kk;
+            const prev = deficitMap.get(kkey);
+            if (!prev || wall - clr > prev.deficit) deficitMap.set(kkey, { q: qb, k: kk, deficit: wall - clr, nrm });
+          }
+        }
       }
-    }
   }
-  return { worst, at, cell, ok: worst <= 0, wallNeeded: wall + Math.max(0, worst) };
+  return { worst, at, cell, point, deficits: [...deficitMap.values()], minWall: worst, farOutside, tris: tris.length };
+}
+
+// How far the ducts poke outside the body's skin — the TRUE 3-D clearance
+// against the exported B-spline surface (skinClearance), not an index-matched
+// projection: that proxy read +2.96 mm on a horn whose duct was 20.6 mm
+// outside the skin. `worst` is the excursion beyond the skin (positive =
+// outside); `minWall` is the smallest clearance; both ends are excluded, as
+// the cells tile there.
+export function bodyContainment(throat, map, body, { t = 0, wall = 3 } = {}) {
+  if (!body || !map) return null;
+  const clr = body.clearance && body.clearance.worst != null
+    ? body.clearance : skinClearance(throat, map, body, { t, ku: 2, kv: 3, reach: 1 });
+  if (!clr) return null;
+  return {
+    worst: -clr.worst, at: clr.at, cell: clr.cell, ok: clr.worst >= 0,
+    minWall: clr.worst, wallNeeded: wall + Math.max(0, wall - clr.worst),
+  };
 }
 
 export function extendSections(sections, ext = 3) {
