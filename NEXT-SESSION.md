@@ -11,10 +11,13 @@ grows a slope-limited, rounded hill wherever a duct comes within the wall,
 grown only from measured 3-D deficits against the exported B-spline
 surface, fed back exactly (both bracketing rings, flank cosine). The owner
 relaxed the constraint to a MINIMUM wall at these features, smoothly, and
-that is what ships: 2.79-2.86 mm against 3 at the defaults, hills 1-58 mm
-as the bows demand, skin within 1.3 mm of the straight loft. See the
-rewritten containment paragraph in the CLAUDE.md shell finding for the
-three lessons. Cost: ~5 s per export at 64 stations, and the export note
+that is what ships: 2.82-2.87 mm against 3 at the defaults, hills 1-65 mm
+as the bows demand, skin within 1.4 mm of the straight loft. A THIRD round
+trip caught a second, unjustified hill ahead of the bow — material was
+being placed at the nearest skin point, which on a flaring horn is forward
+of the duct; it now goes radially over the duct on both bracketing rings,
+and the section shows one hump. See the rewritten containment paragraph
+in the CLAUDE.md shell finding for the four lessons. Cost: ~5 s per export at 64 stations, and the export note
 says so while it runs. Suite at 435.
 
 **Owner context worth keeping:** the horn is to be printed in THREE parts —

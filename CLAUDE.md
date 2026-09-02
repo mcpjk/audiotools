@@ -736,10 +736,28 @@ exists.
   first attempt seeded it by projecting duct points into each ring's plane
   slab, and near the mouth, where the rings are far from planar, a point
   three stations along read as 18 mm outside a skin it was well inside.
-  Measured at the tool's defaults, 64 stations, wall 3: min outer wall 2.86
-  mm plain (hill 1.1 mm), 2.86 mm with the default throat-fifth radial bow
-  (hill 25 mm), 2.79 mm with a throat-half bow (hill 58 mm), 2.82 mm with a
-  bulge and a short-axis bow (hill 55 mm); 3-6 fitting rounds, ~5 s. It is
+  (4) WHERE THE MATERIAL GOES IS NOT WHERE THE SKIN IS NEAREST. The nearest
+  skin point to a duct sticking out of a flaring horn lies further ALONG
+  the horn — the skin comes back toward the duct as it flares — so a push
+  attributed to that foot's station landed one to three stations AHEAD of
+  the bow, oblique and over-sized: measured 10.5 mm of wall at stations 6-7
+  against 3.4 at the bow's peak, which the owner's section view showed as
+  a SECOND HILL after the one over the bow. Every deficit now goes radially
+  over its own point, on BOTH rings that bracket it along the horn (one
+  alone leaves the loft between them under the wall): a point outside the
+  skin takes the in-plane excess in each ring's plane, a point inside but
+  thin takes the 3-D residual over the flank cosine. No push is ever placed
+  at the foot. Measured at the tool's defaults, 64 stations, wall 3: min
+  outer wall 2.86 mm plain (hill 0.9 mm), 2.87 mm with the default
+  throat-fifth radial bow (hill 24 mm, ONE hump in the section), 2.83 mm
+  with a throat-half bow (hill 55 mm), 2.82 mm with a bulge and a
+  short-axis bow (hill 65 mm); 2-6 fitting rounds, ~4-5 s. One consequence
+  to know: a bow window that starts AT the throat (the default [0, 0.2])
+  makes the skin step up behind the throat face within one station,
+  because the bow is steeper there than the 1:1 slope limit and the throat
+  ring is pinned to the flange circle — the mating face is untouched, but
+  the body swells right behind it. A window starting a little after the
+  throat lets the skin rise smoothly; that is a design knob, not a build. It is
   still MEASURED afterwards (`bodyContainment`) and reported. What is left
   between two passages after the subtraction is exactly the duct-to-duct gap:
   the layout's t at the throat, a knife edge at the mouth, no per-cell wall
