@@ -2498,6 +2498,13 @@ export function mapThroatToMouth(throat, opts) {
     // the number is there to deliver.
     profScaleMax: profileT != null ? Math.max(...rows.map((r) => r.profScaleMax)) : null,
     rows, surf, xs, ys, Lmax, Lmin, dL, lambda: lam,
+    // The BIRADIAL aperture ITSELF — the live object with its own point(),
+    // normal() and radii — not the legacy ellipsoid `surf` above and not the
+    // `biradial` summary below, which carries figures for the readouts and
+    // has no depth or evaluator on it. The shell needs the real surface:
+    // anything derived from a mouth ring by an offset leaves the aperture
+    // unless it is snapped back onto it.
+    mouthSurf: bi,
     dLfrac: dL / lam,
     band: dL <= lam / 8 ? "ok" : dL <= lam / 4 ? "warn" : "bad",
     twistMax: Math.max(...rows.map((r) => Math.abs(r.twistDeg))),
@@ -4722,6 +4729,110 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
   return out;
 }
 
+// ── THE APERTURE AS A SURFACE THE SHELL CAN BE SNAPPED TO ──────────────────
+//
+// The duct mouth rings lie on the biradial aperture EXACTLY (measured 1e-13
+// mm) because they are built from its own parameters. Anything derived from
+// them by an offset does not: the offset happens in the ring's best-fit
+// plane, so it leaves the curved surface by the local slope times the offset
+// distance, and every cell fits its own plane so no two derived rings agree.
+// That is what put a 1.14 mm mismatched lip around each cell's mouth.
+//
+// The surface is a graph over (x, y) throughout its usable domain, and the
+// inversion is CLOSED FORM rather than a search:
+//
+//   y  = rV sin e                      ->  e = asin(y / rV)
+//   sg = rV (1 - cos e)                    the vertical sagitta at that e
+//   x  = (rH - sg) sin a               ->  a = asin(x / (rH - sg))
+//   z  = depth - rH (1 - cos a) - sg cos a
+//
+// so snapping moves a point in z alone and lands it on the surface to
+// round-off. Either radius may be infinite (a flat axis), which drops the
+// corresponding term. A point outside the domain (|sin| > 1) is returned
+// UNCHANGED and flagged, never clamped: clamping would silently fold
+// geometry onto the rim.
+export function apertureFrame(surf) {
+  const { rH, rV, depth } = surf;
+  const fH = isFinite(rH), fV = isFinite(rV);
+  const at = (a, e) => {
+    const sg = fV ? rV * (1 - Math.cos(e)) : 0;
+    return [
+      fH ? (rH - sg) * Math.sin(a) : a,
+      fV ? rV * Math.sin(e) : e,
+      depth - (fH ? rH * (1 - Math.cos(a)) : 0) - sg * (fH ? Math.cos(a) : 1),
+    ];
+  };
+  const param = (P) => {
+    let e = P[1], ok = true;
+    if (fV) {
+      const s = P[1] / rV;
+      if (Math.abs(s) > 1) ok = false; else e = Math.asin(s);
+    }
+    const sg = fV && ok ? rV * (1 - Math.cos(e)) : 0;
+    let a = P[0];
+    if (fH) {
+      const den = rH - sg;
+      const s = Math.abs(den) > 1e-12 ? P[0] / den : 2;
+      if (Math.abs(s) > 1) ok = false; else a = Math.asin(s);
+    }
+    return { a, e, ok };
+  };
+  const snap = (P) => {
+    const { a, e, ok } = param(P);
+    return ok ? at(a, e) : [P[0], P[1], P[2]];
+  };
+  // How far a point sits off the surface, measured along z. 0 means on it.
+  const deviation = (P) => {
+    const { ok } = param(P);
+    return ok ? P[2] - snap(P)[2] : NaN;
+  };
+  return { at, param, snap, deviation };
+}
+
+// A cap whose BOUNDARY is the given ring and whose INTERIOR lies on the
+// aperture surface. A Coons blend of the ring in 3-D would not: it
+// interpolates linearly between opposite boundary curves, and a chord across
+// a curved cap falls behind the surface — order 1 mm even a few millimetres
+// in from the rim on this aperture, which is exactly the band the mouth face
+// survives in after the passages are cut out. Blending in the surface's OWN
+// (a, e) parameters instead and then evaluating the surface puts every
+// interior point on it by construction, while reproducing the boundary
+// exactly because a transfinite blend always does.
+//
+// Returns an (n+1) x (n+1) data grid indexed [i][j]: i along side 0, j along
+// side 1, which is the indexing ductBrep's cap net uses.
+export function apertureCapGrid(ring, ap) {
+  const N = ring.length, n = N / 4;
+  if (!Number.isInteger(n)) return null;
+  const par = ring.map(ap.param);
+  if (par.some((p) => !p.ok)) return null;
+  const bot = [], top = [], left = [], right = [];
+  for (let i = 0; i <= n; i++) {
+    bot.push(par[i % N]);                  // side 0
+    top.push(par[(3 * n - i + N) % N]);    // side 2, reversed
+  }
+  for (let j = 0; j <= n; j++) {
+    right.push(par[(n + j) % N]);          // side 1
+    left.push(par[(4 * n - j) % N]);       // side 3, reversed
+  }
+  const grid = [];
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, row = [];
+    for (let j = 0; j <= n; j++) {
+      const v = j / n;
+      const a = (1 - v) * bot[i].a + v * top[i].a + (1 - u) * left[j].a + u * right[j].a
+        - ((1 - u) * (1 - v) * bot[0].a + u * (1 - v) * bot[n].a
+           + u * v * top[n].a + (1 - u) * v * top[0].a);
+      const e = (1 - v) * bot[i].e + v * top[i].e + (1 - u) * left[j].e + u * right[j].e
+        - ((1 - u) * (1 - v) * bot[0].e + u * (1 - v) * bot[n].e
+           + u * v * top[n].e + (1 - u) * v * top[0].e);
+      row.push(ap.at(a, e));
+    }
+    grid.push(row);
+  }
+  return grid;
+}
+
 // ── HORN SHELL — blanks and cutters ────────────────────────────────────────
 //
 // The duct sections above are the AIR — the open passage the wave travels
@@ -4770,16 +4881,27 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
 // nothing), so every shared wall is cut to a knife edge and only the rim
 // margin survives as the mouth's end face — the outer rim termination,
 // which is also the edge a CAD fillet would round over against diffraction.
-export function shellSections(cellRec, row, { t = 0, wall = 3 } = {}) {
+export function shellSections(cellRec, row, { t = 0, wall = 3, surf = null } = {}) {
   const Q = row.sched.length - 1;
   const rim = cellRec.rimSide || [false, false, false, false];
+  const ap = surf ? apertureFrame(surf) : null;
   const out = [];
   for (let q = 0; q <= Q; q++) {
     const st = row.sched[q];
     if (!st.pts) return null;
     const taper = 1 - st.s;
     const d = rim.map((isRim) => -(isRim ? wall : Math.max(wall - (t / 2) * taper, 0)));
-    const pts = insetSection3(st.pts, d);
+    let pts = insetSection3(st.pts, d);
+    // THE MOUTH RING BELONGS TO THE APERTURE SURFACE, NOT TO A BEST-FIT PLANE.
+    // insetSection3 offsets in the ring's own best-fit plane and keeps each
+    // point's off-plane component, so a point that moves 3 mm sideways stays
+    // at the height the ORIGINAL point had — and the aperture is curved, so
+    // that height is wrong by the surface's local slope times the offset.
+    // Measured 1.14 mm at the tool's defaults, in eighteen different
+    // directions because every cell fits its own plane: the lip around each
+    // cell's mouth left the aperture and no two lips agreed. Snapping puts
+    // every mouth ring back on the one analytic surface.
+    if (ap && q === Q) { pts = pts.map(ap.snap); }
     out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
   }
   return out;
@@ -4789,6 +4911,208 @@ export function shellSections(cellRec, row, { t = 0, wall = 3 } = {}) {
 // end ring along that ring's own outward vector-area normal. The added
 // volume is exactly |A_vec|·ext per end — a translated ring spans a prism —
 // which is what the test asserts.
+// ── THE HORN BODY — ONE SOLID, SO THERE IS NOTHING TO UNION ────────────────
+//
+// The blanks above are per cell, and unioning them is where CAD gives up.
+// The reason is structural rather than a tolerance to be nudged: the blanks
+// OVERLAP near the throat and near the mouth (the ducts nearly tile there)
+// and stand APART mid-path (the expansion profile opens up to 14 mm between
+// ducts), so between those regimes every neighbouring pair passes through
+// EXACT TANGENTIAL CONTACT. A boolean union of two solids that graze along a
+// curve is the classic ill-conditioned case — near-parallel surfaces, an
+// intersection curve that is a sliver — and it is unavoidable for any shell
+// wall under half the widest duct gap. Measured at the tool's defaults: with
+// wall 3 mm the per-station minimum blank gap runs -7.5 mm at station 10 and
+// +3.3 mm at station 11, so the pairs cross zero in between; only wall >~ 8
+// mm (half the 14.4 mm widest duct gap) keeps every pair overlapping the
+// whole way.
+//
+// So the body is built as ONE solid instead, and the user's boolean becomes
+// eighteen SUBTRACTIONS and no unions at all. Subtracting a tool that pokes
+// clean through is the well-conditioned direction.
+//
+// ITS OUTER SKIN IS THE HORN'S OWN TILING ENVELOPE, offset by the wall. The
+// envelope comes from a FLOW-mode map with no expansion law: there the cells
+// tile exactly at every station (measured 4.5e-10 mm), so the rim cells' rim
+// sides chain into one closed loop with no gaps to paper over — and the loop
+// has exactly four natural corners, at the H-grid's four singular rim
+// vertices, which map to the aperture's four corners. That is precisely the
+// 4-sided topology ductBrep wants, so the body is a curved box like every
+// other solid here.
+//
+// Building the skin on the UNPROFILED envelope is deliberate. The profile
+// pulls each duct inward from the tiling configuration, so a skin that
+// followed the profiled ducts would waist in and out along the path; the
+// tiling envelope is the smooth outer form, and the material between the
+// diverging ducts is what a multicell horn body IS. It also guarantees
+// containment wherever the profile only shrinks — which is measured, not
+// assumed, because bows and the separation field can push a duct outward.
+export function hornBodySections(throat, opts, { wall = 3, stations = 24 } = {}) {
+  const env = mapThroatToMouth(throat, {
+    ...opts, sectionMode: "flow", profileT: null,
+    lengthen: null, separate: null, bulge: null,
+    stations, keepGeometry: true, computeClearance: false,
+  });
+  if (!env || !env.rows.length || !env.rows[0].sched[0].pts) return null;
+  const N = env.rows[0].sched[0].pts.length, per = N / 4;
+  if (!Number.isInteger(per)) return null;
+
+  // every rim side in the layout, then chained into one loop by matching
+  // endpoints at station 0 — the order is topological, so it is solved once
+  // and reused at every station
+  const segs = [];
+  for (const row of env.rows) {
+    const cell = throat.cells.find((x) => x.id === row.id);
+    const rim = (cell && cell.rimSide) || [];
+    for (let s = 0; s < 4; s++) if (rim[s]) segs.push({ row, id: row.id, s, rev: false });
+  }
+  if (segs.length < 4) return null;
+  const raw = (seg, q) => {
+    const P = seg.row.sched[q].pts, out = [];
+    for (let i = 0; i <= per; i++) out.push(P[(seg.s * per + i) % N]);
+    return seg.rev ? out.reverse() : out;
+  };
+  const d3 = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]);
+  const order = [segs[0]];
+  let pool = segs.slice(1), chainErr = 0;
+  while (pool.length) {
+    const end = raw(order[order.length - 1], 0)[per];
+    let best = -1, bd = Infinity, rev = false;
+    pool.forEach((sg, i) => {
+      const p = raw({ ...sg, rev: false }, 0);
+      const d0 = d3(p[0], end), d1 = d3(p[per], end);
+      if (d0 < bd) { bd = d0; best = i; rev = false; }
+      if (d1 < bd) { bd = d1; best = i; rev = true; }
+    });
+    chainErr = Math.max(chainErr, bd);
+    const sg = pool.splice(best, 1)[0];
+    sg.rev = rev;
+    order.push(sg);
+  }
+  const closeErr = d3(raw(order[order.length - 1], 0)[per], raw(order[0], 0)[0]);
+
+  // A CORNER IS WHERE TWO CONSECUTIVE SEGMENTS BELONG TO THE SAME CELL: the
+  // loop turns from one of that cell's rim sides onto its other one, which
+  // happens only at the four rim singular vertices. Rotate so the loop starts
+  // at a corner, then it splits into four runs.
+  const K = order.length;
+  const isCorner = (k) => order[k].id === order[(k + 1) % K].id;
+  const starts = [];
+  for (let k = 0; k < K; k++) if (isCorner(k)) starts.push((k + 1) % K);
+  if (starts.length !== 4) return null;
+  const rot = starts[0];
+  const runs = [[], [], [], []];
+  {
+    let r = 0;
+    for (let k = 0; k < K; k++) {
+      const idx = (rot + k) % K;
+      runs[r].push(order[idx]);
+      if (isCorner(idx) && r < 3) r++;
+    }
+  }
+
+  const resample3 = (pts, n) => {
+    const L = [0];
+    for (let i = 0; i < pts.length - 1; i++) L.push(L[i] + d3(pts[i], pts[i + 1]));
+    const tot = L[L.length - 1] || 1e-12;
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      const target = (tot * k) / n;
+      let i = 0;
+      while (i < pts.length - 2 && L[i + 1] < target) i++;
+      const u = (target - L[i]) / Math.max(L[i + 1] - L[i], 1e-12);
+      const a = pts[i], b = pts[i + 1];
+      out.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]);
+    }
+    return out;
+  };
+
+  const ap = env.mouthSurf ? apertureFrame(env.mouthSurf) : null;
+  const R = opts.R;
+  const sections = [];
+  for (let q = 0; q <= stations; q++) {
+    const ring = [];
+    for (const run of runs) {
+      const pts = [];
+      for (const seg of run) {
+        const p = raw(seg, q);
+        for (let i = 0; i < p.length - (seg === run[run.length - 1] ? 0 : 1); i++) pts.push(p[i]);
+      }
+      for (const p of resample3(pts, per)) ring.push(p);
+    }
+    let out = insetSection3(ring, [-wall, -wall, -wall, -wall]);
+    // The throat is the driver's disc, so its offset is a concentric circle
+    // and can be made exact rather than left at the polygon's discretisation.
+    // Only polished when it already IS that circle to 0.1 mm — a layout whose
+    // throat is not the disc must not be quietly reshaped into one.
+    if (q === 0 && R > 0) {
+      const want = R + wall;
+      let off = 0;
+      for (const p of out) off = Math.max(off, Math.abs(Math.hypot(p[0], p[1]) - want), Math.abs(p[2]));
+      if (off < 0.1) out = out.map((p) => {
+        const r = Math.hypot(p[0], p[1]) || 1e-12;
+        return [(p[0] * want) / r, (p[1] * want) / r, 0];
+      });
+    }
+    if (ap && q === stations) out = out.map(ap.snap);
+    sections.push({ s: q / stations, area: polyArea3(out), pts: out, origin: env.rows[0].sched[q].origin });
+  }
+  return { sections, chainErr, closeErr, n: per, surf: env.mouthSurf };
+}
+
+// How far the ducts poke outside the body's skin — measured, because bows
+// and the separation field can push a duct outward past the tiling envelope
+// the skin is built on, and a duct outside the skin is a hole in the horn.
+// Positive `worst` means material is missing there; the wall that would have
+// covered it is reported so the answer is actionable rather than a verdict.
+export function bodyContainment(throat, map, body, { t = 0, wall = 3 } = {}) {
+  if (!body || !map) return null;
+  const Q = Math.min(body.sections.length, map.rows[0].sched.length) - 1;
+  const frames = body.sections.map((sec) => {
+    const P = sec.pts, n = P.length;
+    const ctr = [0, 0, 0];
+    for (const p of P) { ctr[0] += p[0] / n; ctr[1] += p[1] / n; ctr[2] += p[2] / n; }
+    return { P, ctr };
+  });
+  // signed radial excursion in the section's own plane, about its centroid:
+  // the ring is star-shaped about its centre here (it is the horn's outline),
+  // so a ray comparison is exact enough to answer "inside or outside".
+  const radial = (P, ctr, dirx, diry) => {
+    let best = 0;
+    for (let k = 0; k < P.length; k++) {
+      const A = P[k], B = P[(k + 1) % P.length];
+      const ax = A[0] - ctr[0], ay = A[1] - ctr[1], bx = B[0] - ctr[0], by = B[1] - ctr[1];
+      const den = (bx - ax) * diry - (by - ay) * dirx;
+      if (Math.abs(den) < 1e-12) continue;
+      const s = (ax * diry - ay * dirx) / -den;
+      if (s < -1e-9 || s > 1 + 1e-9) continue;
+      const hx = ax + (bx - ax) * s, hy = ay + (by - ay) * s;
+      const proj = hx * dirx + hy * diry;
+      if (proj > best) best = proj;
+    }
+    return best;
+  };
+  let worst = -Infinity, at = null, cell = null;
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const secs = ductSections(cellRec, row, { t });
+    if (!secs) continue;
+    for (let q = 0; q <= Q; q++) {
+      const { P, ctr } = frames[q];
+      for (const p of secs[q].pts) {
+        const dx = p[0] - ctr[0], dy = p[1] - ctr[1];
+        const r = Math.hypot(dx, dy);
+        if (r < 1e-9) continue;
+        const rb = radial(P, ctr, dx / r, dy / r);
+        const excess = r - rb;
+        if (excess > worst) { worst = excess; at = q; cell = cellRec.label; }
+      }
+    }
+  }
+  return { worst, at, cell, ok: worst <= 0, wallNeeded: wall + Math.max(0, worst) };
+}
+
 export function extendSections(sections, ext = 3) {
   const Q = sections.length - 1;
   const cen = (pts) => {
@@ -5214,7 +5538,7 @@ const greville = (knots, n) =>
 // corners, plus two Coons caps. Returns control nets and knot vectors with
 // the sharing structure explicit: corner columns appear once and both
 // adjacent walls reference them.
-export function ductBrep(sections) {
+export function ductBrep(sections, { capMouthPts = null } = {}) {
   const S = sections.length;            // stations, incl. both ends
   const N = sections[0].pts.length;     // points around the ring
   if (N % 4 !== 0) return null;
@@ -5269,11 +5593,30 @@ export function ductBrep(sections) {
     return net;
   };
 
+  // A cap built by interpolating a DATA GRID rather than blending the
+  // boundary. Its boundary control points come out identical to the walls'
+  // end rows — the same data through the same clamped system gives the same
+  // control points — and are then pinned outright, so the seam is shared by
+  // identity exactly as the Coons cap's is.
+  const gridCap = (data, j) => {
+    const rowsC = [];
+    for (let jj = 0; jj <= n; jj++)
+      rowsC.push(interpSolve3(sysU, Array.from({ length: n + 1 }, (_, i) => data[i][jj])));
+    const net = Array.from({ length: nu }, (_, i) =>
+      interpSolve3(sysU, Array.from({ length: n + 1 }, (_, jj) => rowsC[jj][i])));
+    const B = walls.map((netW) => netW.map((col) => col[j]));
+    const B0 = B[0], B1 = B[1], B2 = B[2].slice().reverse(), B3 = B[3].slice().reverse();
+    for (let i = 0; i < nu; i++) { net[i][0] = B0[i]; net[i][nu - 1] = B2[i]; }
+    for (let jj = 0; jj < nu; jj++) { net[0][jj] = B3[jj]; net[nu - 1][jj] = B1[jj]; }
+    return net;
+  };
+
   return {
     n, S, nu, nv,
     uKnots: sysU.knots, vKnots: sysV.knots,
     walls, cornerCols,
-    capThroat: coonsCap(0), capMouth: coonsCap(nv - 1),
+    capThroat: coonsCap(0),
+    capMouth: capMouthPts ? gridCap(capMouthPts, nv - 1) : coonsCap(nv - 1),
   };
 }
 
@@ -5378,6 +5721,53 @@ export function brepVolume(brep, sections, du = 12, dv = 48, caps = "coons") {
   return Math.abs(V);
 }
 
+// WHICH WAY THE SHELL FACES, DECIDED ONCE FOR THE WHOLE SOLID.
+//
+// The topology fixes the faces' orientations RELATIVE to each other: the four
+// walls share one state, the mouth cap goes with them, and the throat cap is
+// opposite (their natural u x v normals both point the same axial way, so one
+// of the two always has to be flipped — the cap-orientation finding). Only the
+// overall sense is free, and it is one bit for the solid.
+//
+// It used to be measured per face, against the ray from a mid-station centroid
+// to the patch centre. That is a proxy for "outward", and on a duct it is a
+// good one. On the HORN BODY it is wrong: the skin flares so hard that
+// mid-path it runs outward almost faster than it runs forward — measured
+// dv = (232, 0, -41) at the side wall, so the surface is nearly perpendicular
+// to the axis and its true outward normal is nearly -z while the radial ray
+// says +x. Two of the four walls then read the proxy backwards, their loops
+// were reversed and the others' were not, and the shared vertical edges came
+// out used twice in the SAME direction: an invalid shell that the edge-pairing
+// check caught.
+//
+// Integrating the divergence theorem over the whole shell replaces six guesses
+// with one measurement that cannot disagree with itself: positive means the
+// assumed sense already points outward.
+export function brepShellOrientation(brep, gu = 6, gv = 18) {
+  const { uKnots, vKnots, walls, capThroat, capMouth } = brep;
+  let V = 0;
+  const addFace = (net, uk, vk, nu2, nv2, sgn) => {
+    const grid = [];
+    for (let i = 0; i <= nu2; i++) {
+      const row = [];
+      for (let j = 0; j <= nv2; j++) row.push(evalBsplineSurf(net, uk, vk, i / nu2, j / nv2));
+      grid.push(row);
+    }
+    for (let i = 0; i < nu2; i++)
+      for (let j = 0; j < nv2; j++) {
+        const A = grid[i][j], B = grid[i + 1][j], C = grid[i + 1][j + 1], D = grid[i][j + 1];
+        for (const [P, Q, Rr] of [[A, B, C], [A, C, D]])
+          V += sgn * (P[0] * (Q[1] * Rr[2] - Rr[1] * Q[2])
+            - P[1] * (Q[0] * Rr[2] - Rr[0] * Q[2])
+            + P[2] * (Q[0] * Rr[1] - Rr[0] * Q[1])) / 6;
+      }
+  };
+  for (const w of walls) addFace(w, uKnots, vKnots, gu, gv, 1);
+  addFace(capMouth, uKnots, uKnots, gu, gu, 1);
+  addFace(capThroat, uKnots, uKnots, gu, gu, -1);
+  return { outward: V >= 0, volume: V };
+}
+
 // ── the AP214 writer ───────────────────────────────────────────────────────
 // A STEP real must carry a decimal point, and exponents are uppercase.
 function stepReal(x) {
@@ -5447,7 +5837,7 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
 
   for (const spec of solidsSpec) {
     const sections = spec.sections;
-    const brep = ductBrep(sections);
+    const brep = ductBrep(sections, { capMouthPts: spec.capMouthPts || null });
     if (!brep) return null;
     const { nu, nv, uKnots, vKnots, walls, cornerCols, capThroat, capMouth } = brep;
     checks.ducts++;
@@ -5492,32 +5882,18 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
     for (let s = 0; s < 4; s++)
       eMouth.push(mkEdge(vMouth[s], vMouth[(s + 1) % 4], wallIds[s].map((c) => c[nv - 1]), uKnots));
 
-    // outward references, for the orientation measurement
-    const ringCentroid = (q) => {
-      const c = [0, 0, 0];
-      for (const p of sections[q].pts) { c[0] += p[0] / sections[q].pts.length; c[1] += p[1] / sections[q].pts.length; c[2] += p[2] / sections[q].pts.length; }
-      return c;
-    };
-    const cMid = ringCentroid(Math.floor((nv - 3) / 2)), c0 = ringCentroid(0), c1 = ringCentroid(1);
-    const cQ = ringCentroid(brep.S - 1), cQ1 = ringCentroid(brep.S - 2);
-    const outwardOf = (kind) => {
-      if (kind === "throat") return [c0[0] - c1[0], c0[1] - c1[1], c0[2] - c1[2]];
-      if (kind === "mouth") return [cQ[0] - cQ1[0], cQ[1] - cQ1[1], cQ[2] - cQ1[2]];
-      return null; // wall: outward is measured per patch, from the mid centroid
-    };
+    // ORIENTATION IS ONE DECISION FOR THE SOLID, NOT SIX. The relative senses
+    // are fixed by the topology — four walls together, the mouth cap with
+    // them, the throat cap opposite — and brepShellOrientation settles the
+    // remaining bit by integrating the divergence theorem over the whole
+    // shell. Measuring each face separately against a radial "outward" proxy
+    // is what produced an invalid body shell; see the note on that function.
+    const shellOut = brepShellOrientation(brep).outward;
 
-    // one face from a whole patch: measure the normal, choose the flag and
-    // loop direction together so the loop is always CCW about the FACE normal
+    // one face from a whole patch: the flag and the loop direction move
+    // together, so the loop is always CCW about the FACE normal
     const faceFrom = (net, uk, vk, loop, kind) => {
-      const P = evalBsplineSurf(net, uk, vk, 0.5, 0.5);
-      const eps = 1e-4;
-      const Pu = evalBsplineSurf(net, uk, vk, 0.5 + eps, 0.5);
-      const Pv = evalBsplineSurf(net, uk, vk, 0.5, 0.5 + eps);
-      const du3 = [Pu[0] - P[0], Pu[1] - P[1], Pu[2] - P[2]];
-      const dv3 = [Pv[0] - P[0], Pv[1] - P[1], Pv[2] - P[2]];
-      const nrm = [du3[1] * dv3[2] - du3[2] * dv3[1], du3[2] * dv3[0] - du3[0] * dv3[2], du3[0] * dv3[1] - du3[1] * dv3[0]];
-      const outw = outwardOf(kind) || [P[0] - cMid[0], P[1] - cMid[1], P[2] - cMid[2]];
-      const same = nrm[0] * outw[0] + nrm[1] * outw[1] + nrm[2] * outw[2] >= 0;
+      const same = kind === "throat" ? !shellOut : shellOut;
       const useLoop = same ? loop : loop.slice().reverse().map(([e, f]) => [e, !f]);
       for (const [e, f] of useLoop) edges[e].uses.push(f);
       const oes = useLoop.map(([e, f]) => add(`ORIENTED_EDGE('',*,*,#${edges[e].id},${f ? ".T." : ".F."})`));
@@ -5582,29 +5958,64 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
   });
 }
 
-// The material: two solids per cell — a shell BLANK (the duct rings pushed
-// outward by the wall) and a duct CUTTER (the duct extended past both end
-// faces). The recipe is stated in the shell-sections comment above: UNION
-// the blanks, SUBTRACT the cutters, and the boolean produces the dividers,
-// the knife edges and the outer skin. No single loft can carry that solid,
-// because its topology changes along the path.
-export function buildShellSTEP(throat, map, { t = 0, wall = 3, ext = 3, name = "ginkgo_horn_shell" } = {}) {
+// The material, in two forms.
+//
+// mode "solid" (the default): ONE horn body plus one duct cutter per cell.
+// The user's boolean is subtractions only — no unions at all — because the
+// body is already the union: its skin is the horn's tiling envelope offset
+// by the wall, and the passages are cut out of it. What is left between two
+// passages is the duct-to-duct gap, which is the layout's t at the throat
+// and the knife edge at the mouth, so the dividers come out right without
+// any per-cell wall bookkeeping.
+//
+// mode "bundle": the original 18 blanks + 18 cutters, kept because it is the
+// literal multicell-bundle form. It needs the union, and the union is what
+// grazes — see the body comment for the measured tangency. Offered, warned
+// about, not the default.
+export function buildShellSTEP(throat, map, {
+  t = 0, wall = 3, ext = 3, mode = "solid", body = null, name = "ginkgo_horn_shell",
+} = {}) {
   if (!map) return null;
+  const surf = map.mouthSurf || null;
+  const ap = surf ? apertureFrame(surf) : null;
+  const capOf = (sections) => {
+    if (!ap) return null;
+    return apertureCapGrid(sections[sections.length - 1].pts, ap);
+  };
   const solidsSpec = [];
+  const useBody = mode === "solid" && body && body.sections;
+  if (mode === "solid" && !useBody) return null;
+  if (useBody)
+    solidsSpec.push({
+      label: "horn body", sections: body.sections, capZ: 0,
+      capMouthPts: capOf(body.sections),
+    });
   for (const cellRec of throat.cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
-    const blank = shellSections(cellRec, row, { t, wall });
     const duct = ductSections(cellRec, row, { t });
-    if (!blank || !duct) return null;
-    solidsSpec.push({ label: `shell blank ${cellRec.label}`, sections: blank, capZ: 0 });
+    if (!duct) return null;
+    if (!useBody) {
+      const blank = shellSections(cellRec, row, { t, wall, surf });
+      if (!blank) return null;
+      solidsSpec.push({
+        label: `shell blank ${cellRec.label}`, sections: blank, capZ: 0,
+        capMouthPts: capOf(blank),
+      });
+    }
     solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, ext), capZ: -ext });
   }
-  return stepEmit({
+  const out = stepEmit({
     name, solidsSpec,
-    desc: "ginkgo multicell horn shell kit: union blanks, subtract cutters",
-    fileDesc: "ginkgo multicell horn shell kit, lofted B-spline solids; union the blanks and subtract the cutters",
+    desc: useBody
+      ? "ginkgo multicell horn: body and duct cutters, subtract only"
+      : "ginkgo multicell horn shell kit: union blanks, subtract cutters",
+    fileDesc: useBody
+      ? "ginkgo multicell horn, one body plus one cutter per duct; subtract every cutter from the body, no unions"
+      : "ginkgo multicell horn shell kit, lofted B-spline solids; union the blanks and subtract the cutters",
   });
+  if (out) out.mode = useBody ? "solid" : "bundle";
+  return out;
 }
 
 // Referential integrity of an emitted file: every #id referenced in the DATA

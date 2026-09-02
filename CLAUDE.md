@@ -259,7 +259,10 @@ the longest cell's length in swept mode, and the tool previews the exported
 duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
 rule stands). The physical horn ships as a shell STEP kit — blanks plus
 cutters, boolean in CAD (`buildShellSTEP`; see the shell finding below) —
-and the same canvas can show the blanks (the "horn" view).
+and the same canvas can show the outer form (the "horn" view). The shell
+ships as ONE body plus per-duct cutters by default — subtractions only, no
+unions — after the owner's first CAD round trip failed on the unions; see
+the shell findings below.
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -621,8 +624,74 @@ exists.
   Face orientation is MEASURED at the patch centre, never assumed: the two
   caps' natural u x v normals point the same axial way, so any assumed
   winding gets exactly one of them wrong.
-- **THE HORN SHELL IS EXPORTED AS BLANKS PLUS CUTTERS, because the material's
-  topology CHANGES along the path and no single loft can carry it.** Near the
+- **THE HORN SHELL IS EXPORTED AS ONE BODY PLUS CUTTERS, because unioning
+  per-cell blanks is ILL-POSED BY CONSTRUCTION.** This supersedes the
+  blanks-plus-cutters default recorded below, which the owner's first CAD
+  round trip failed on: the unions would not run. The cause is geometry, not
+  a tolerance. Adjacent blanks OVERLAP near both ends (the ducts nearly tile
+  there) and stand APART mid-path (the profile opens up to 14 mm between
+  ducts), so every neighbouring pair passes through EXACT TANGENTIAL CONTACT
+  in between — near-parallel surfaces meeting along a curve, the case a
+  kernel fails on. Measured at the defaults, wall 3: the per-station minimum
+  blank gap runs -7.5 mm at station 10 and +3.3 mm at station 11, two sign
+  changes over the path. Only a wall above HALF THE WIDEST DUCT GAP (8.3 mm
+  at depth 150, 6.0 at depth 320) keeps every pair robustly overlapping —
+  i.e. the only union that works is the one that was already monolithic.
+  So `buildShellSTEP` mode `"solid"` (the default) emits ONE body plus one
+  cutter per duct and the CAD work is SUBTRACTIONS ONLY. `hornBodySections`
+  builds the body's skin from the horn's own TILING ENVELOPE offset by the
+  wall: a flow-mode map with no expansion law tiles exactly, so the rim
+  cells' rim sides CHAIN into one closed loop (measured 5.7e-10 mm at the
+  joints, closure exactly 0) whose four natural corners are the H-grid's four
+  singular rim vertices — precisely the 4-sided topology `ductBrep` wants.
+  The unprofiled envelope is deliberate: the profile pulls ducts inward, so a
+  skin following them would waist in and out, and the material between
+  diverging ducts is what a multicell body IS. Containment is MEASURED
+  (`bodyContainment`), not assumed, because bows and the separation field can
+  push a duct outward past the envelope — 0.83-1.95 mm of margin at the
+  defaults, and the wall that would fix a breach is reported. What is left
+  between two passages after the subtraction is exactly the duct-to-duct gap:
+  the layout's t at the throat, a knife edge at the mouth, no per-cell wall
+  bookkeeping needed. Mode `"bundle"` keeps the old form for comparison.
+- **A SHELL'S FACE ORIENTATION IS ONE DECISION FOR THE SOLID, NOT SIX, and
+  the per-face proxy silently produced an invalid body.** The topology fixes
+  the senses relative to each other — four walls together, mouth cap with
+  them, throat cap opposite (their natural u x v normals both point the same
+  axial way, so one always flips) — leaving one free bit. That bit used to be
+  measured per face against the ray from a mid-station centroid to the patch
+  centre. On a duct that proxy is good. On the HORN BODY it is WRONG: the
+  skin flares so hard that mid-path it runs outward faster than forward —
+  measured dv = (232, 0, -41) at the side wall, so the surface is nearly
+  perpendicular to the axis and its true outward normal is nearly -z while
+  the radial ray says +x. Two of the four walls read it backwards, their
+  loops were reversed and the others' were not, and the shared vertical edges
+  came out used twice in the SAME direction. `brepShellOrientation` now
+  integrates the divergence theorem over the whole shell and returns one
+  sign, which cannot disagree with itself; the edge-pairing check is what
+  caught the old failure and what proves the new one.
+- **ANYTHING DERIVED FROM A MOUTH RING BY AN OFFSET LEAVES THE APERTURE
+  SURFACE, and it has to be snapped back.** The duct mouth rings lie on the
+  biradial aperture to 1e-13 because they are built from its own parameters.
+  The shell's are not: `insetSection3` offsets in the ring's own BEST-FIT
+  PLANE and keeps each point's off-plane component, so a point moved 3 mm
+  sideways keeps the height the original point had, and the aperture is
+  curved — measured 1.14 mm off, in eighteen different directions because
+  every cell fits its own plane. That was the owner's "the mouth is not
+  coplanar" report. `apertureFrame` inverts the surface in CLOSED FORM
+  (e = asin(y/rV), then a = asin(x/(rH - rV(1-cos e))), then z follows), so
+  snapping moves a point in z alone and lands it exactly; a point outside the
+  domain is returned UNCHANGED and flagged, never clamped. Two consequences
+  worth keeping: the throat face of the body is polished to the EXACT circle
+  R + wall (the mitred offset of a sampled circle is 0.02 mm outside it, and
+  per-cell blanks mitring a rim side against a shared side threw a 0.73 mm
+  ear at every junction — the owner's second report); and the mouth CAP
+  cannot be a Coons blend, because a chord across a curved cap falls behind
+  the surface — measured 5.6 mm at the body's mouth. `apertureCapGrid`
+  blends in the surface's own (a, e) instead and evaluates, so the cap
+  interior lies on the aperture to 6e-14 while reproducing the ring exactly.
+  After the boolean, every solid's mouth face is therefore ON one analytic
+  surface, which is what makes the mouth read as one continuous face.
+- **The original blanks-plus-cutters construction, kept as mode `"bundle"`:** Near the
   throat the material is one block threaded by 18 passages, mid-path it is
   separate tubes (the classic multicell bundle), at the mouth the walls taper
   to the knife edges — that transition is what a CAD kernel's booleans exist
@@ -649,8 +718,10 @@ exists.
   of exactly |A_vec|·ext whatever caps it, so the extension's added volume is
   ext·(|A_throat|+|A_mouth|) to 1e-9 relative — and the throat ring's
   vector-area normal is exactly −z (planar ring), so the cutter's throat cap
-  is exactly planar in z = −ext. The 3-D viewport's "horn" option shows the
-  BLANKS — the outer form — never the boolean result, and says so.
+  is exactly planar in z = −ext. Both are still true and still tested; the
+  CUTTERS are unchanged and are what the solid mode uses. The 3-D viewport's
+  "horn" option shows the outer form — the body in solid mode, the blanks in
+  bundle mode — never the boolean result, and says so.
 - **A CAPPED DUCT'S VOLUME DEPENDS ON THE CAP FILL, and that explains the
   whole brep-vs-STL volume difference.** The mouth ring is NON-PLANAR in
   every mouth mode — rect included, its ring spans ~1.7 mm of z — so the

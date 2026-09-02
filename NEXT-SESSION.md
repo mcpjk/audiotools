@@ -1,5 +1,54 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-02 shell-CAD session (owner's first round trip)
+
+The owner took the shell kit into CAD and reported four things. All four are
+now answered, three of them by a change of construction.
+
+- **"The mouth plane is not fully coplanar — the wall extensions do not
+  follow the curve."** CONFIRMED and FIXED. Measured 1.14 mm off the
+  aperture, in eighteen different directions, because the offset happens in
+  each ring's own best-fit plane. **Answer to the owner's question — "can
+  all mouths' outward-facing planes be defined by the same surface
+  geometry?" — is YES, and they now are.** `apertureFrame` inverts the
+  biradial surface in closed form, every shell mouth ring is snapped onto
+  it (6e-14 mm), and the mouth CAP is built by blending in the surface's own
+  (a, e) rather than as a Coons patch — a chord across a curved cap falls
+  5.6 mm behind the surface, which would have re-created the same artifact
+  one band inward.
+- **"Similar artifacts along the outer rim of the throat plane."**
+  CONFIRMED (0.73 mm ears at every cell junction, where a rim side's offset
+  line mitres against a shared side's) and FIXED in solid mode: the body's
+  throat face is now the exact circle R + wall, planar in z = 0. In bundle
+  mode the ears remain — they are a property of offsetting each cell
+  independently.
+- **"Union booleans fail."** DIAGNOSED, and it is not a tolerance or a
+  complexity limit — it is the construction. Blanks overlap near both ends
+  and stand apart mid-path, so every neighbouring pair passes through EXACT
+  TANGENTIAL CONTACT in between; measured two sign changes in the
+  per-station gap at the defaults. **So the union is gone**: the default
+  export mode is now `"solid"` — ONE horn body plus one cutter per duct,
+  and the CAD work is subtractions only. The body's skin is the horn's own
+  tiling envelope offset by the wall, chained exactly from a flow-mode map
+  (5.7e-10 mm at the joints, closure 0). Full reasoning and numbers in
+  CLAUDE.md under the three new shell findings.
+- **"Throat plane is coplanar."** Confirmed — unchanged, and now asserted at
+  1e-12 for the body as well.
+
+A latent bug surfaced while building the body: face orientation was measured
+PER FACE against a radial proxy, and on a shape that flares as hard as the
+body two of four walls read it backwards, producing an invalid shell. It is
+now ONE divergence-theorem decision for the whole solid
+(`brepShellOrientation`). The edge-pairing check caught it; the ducts were
+never affected but were riding on the same fragile proxy.
+
+Suite at 419 checks. **Still owner-side:** run the boolean on the solid-mode
+file — subtract the 18 cutters from the body, union nothing — and confirm
+(1) it succeeds, (2) the throat face is flat with t-thick dividers between
+passages, (3) the mouth is one continuous surface with a wall-wide rim
+margin, (4) no internal voids on a section. `ginkgo_shell_sample.step` in
+the repo root is a ready-made 6x3 / depth 320 / wall 3 file to test on.
+
 ## Done in the 2026-09-01 shell session
 
 - **Task D — HORN SHELL STEP EXPORT — IS BUILT** (owner's request, this
@@ -345,10 +394,11 @@ Decisions the owner has made and that should not be relitigated:
 
 ## The plan, in order
 
-1. **Owner validation**: the coped joints and the separation solver in the
-   browser, a bulged STEP file through CAD (boolean union should yield
-   the knife edges), and the SHELL KIT through CAD (union blanks, subtract
-   cutters — the checklist in the shell-session section above).
+1. **Owner validation**: the SOLID-MODE shell boolean in CAD (subtract the
+   cutters from the body, union nothing — the checklist in the shell-CAD
+   section above), then the coped joints and the separation solver in the
+   browser, and a bulged shell through the same boolean (it should yield
+   the knife edges).
 1b. **Task E decision** (owner): whether the rim roundover is a CAD fillet
    on the shell kit's rim edge (available now) or an in-tool parametric
    flare (a build). The assessment above says what each buys.
