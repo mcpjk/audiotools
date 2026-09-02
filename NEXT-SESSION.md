@@ -1,5 +1,82 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## THE SHELL: WHAT FAILED, AND THE RULE THAT COMES OUT OF IT
+
+Read this before proposing any shell construction. Three were built and
+measured in one day; two were rejected on sight for surface texture, and
+they failed for the SAME reason even though they look unrelated:
+
+| construction | how its rings were found | outcome |
+|---|---|---|
+| per-cell blanks | duct rings offset by the wall — EVALUATED | clean; this is what ships |
+| one wrapped body (`hornBodySections`) | raster distance field, marching-squares iso-line, arc-length resample — SEARCHED | rippled, rejected |
+| blocks + tubes + webs (`bandedShell`) | blocks = convex hull of duct points — SEARCHED; tubes = offset duct rings — EVALUATED | blocks rippled, tubes clean, rejected |
+
+**The rule: a solid must be lofted through rings the model can EVALUATE from
+a smooth map with fixed point correspondence, never through rings a discrete
+search returns.** A search decides something combinatorial at each station
+(which pixels are inside, which points are on the hull); that decision jumps
+along the path, the arc-length resample then slides every vertex onto a
+different feature, and the cubic loft turns a few tenths of a millimetre of
+uncorrelated jitter into visible creases. It does NOT refine away. The
+banded render is the proof in one picture: tubes smooth, blocks rippled.
+
+Corollaries worth keeping:
+- If a shape genuinely needs a search (a union outline, a morphological
+  closing), that is a **kernel's** job. This tool should hand CAD exact
+  solids and let it do the offsetting and merging it is built for.
+- Measuring well is not the same as being right. The wrapped body passed
+  every number the tool could compute (min wall 2.92 mm, spline within
+  0.12 mm of the loft, ends exact) and was still wrong. When a construction
+  is new, get a render in front of the owner before polishing the metrics.
+- Three CAD round trips were spent on constructions the owner had already
+  described. "Rewind to the thing that was closest" was the right call and
+  should have come sooner.
+
+## Where the shell stands now (2026-09-02, fourth construction)
+
+`buildShellSTEP` emits **one blank and one cutter per cell** and nothing
+else. Blank = that cell's duct rings offset outward by `wall` on all four
+sides; cutter = the duct extended 3 mm past both end faces. CAD: N
+independent subtractions, no unions. Measured over all 18 cells and all
+stations at the defaults, wall 3: the wall is **exactly 3.000 mm** on every
+face (max 0.35 um over, the polyline's own mitre at a 0.9 deg turn), mouth
+rings on the aperture to 0, throat rings planar in z = 0 to 0. 36 solids,
+12.3 MB, suite at 431.
+
+**Known and stated, not hidden:**
+- A **mitred corner** reaches wall/sin(half-angle): 7.28 mm at the sharpest
+  cell corner, and 1.03 mm beyond R + wall at the throat rim. That is what a
+  mitre IS, but it is also the "wall-extension artifact along the outer rim"
+  the owner reported early. **First candidate fix**: on rim sides, square the
+  join instead of mitring it (place the corner point on the rim side's own
+  offset line), so the throat rim reaches exactly R + wall. One-line change
+  in `insetPolygon`, but it changes the shape, so make it deliberately and
+  measure the notch it leaves between adjacent blanks (irrelevant at the
+  throat, where they already overlap by 2·wall − t = 5.6 mm).
+- The **mouth lip** measures 2.74 mm rather than 3.00 because it is snapped
+  onto the curved aperture — the one ring that is not exactly `wall`. That
+  is the price of co-surface mouths, which the owner asked for explicitly.
+- **Adjacent blanks share material** wherever the ducts run closer than
+  2·wall: 27/27 pairs, 35% of stations, deepest exactly 2·wall at the mouth
+  where the ducts tile. `shellOverlap` reports it.
+
+**Owner's stated next intentions**, in their words: build from these 18
+solids; webs are wanted as **subtractive slot cutters** that open the
+inter-cell gaps back up (NOT additive plates — that was a misreading);
+mating features (flanges, glue joints, locating pins) come later. The
+3-part print is throat region first, mouth side split down the vertical
+centreline.
+
+**When webs come back**, they are a cutter per adjacent pair: a curved box
+between the two facing sides, run 0 = A's facing side offset outward by the
+wall, run 2 = B's reversed, runs 1 and 3 the connectors — `ductBrep` already
+writes that shape, and `webSections` in the git history is 90% of it. Two
+rules from this session apply: the slot must end in a **blunt transverse
+face** (taper it to nothing and you have re-created a tangency, this time
+between cutter and solid), and its width is bounded by the duct gap minus
+2·wall (gaps peak near 20 mm, so up to 14 mm of slot at wall 3).
+
 ## Done in the 2026-09-02 third construction — blocks, tubes and webs
 
 The wrapped one-piece skin was rejected on sight (surface texture: an

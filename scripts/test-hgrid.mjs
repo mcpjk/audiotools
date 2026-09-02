@@ -2446,19 +2446,19 @@ head("Horn shell export (blanks + cutters)");
     const blank = M.shellSections(cell, rowR, { t, wall });
     // the blank's throat ring stays exactly planar in z = 0
     for (const p of blank[0].pts) capZmax = Math.max(capZmax, Math.abs(p[2]));
-    // at the throat every blank segment lies on the offset LINE of its gross
-    // segment: rim sides at wall, shared sides at wall - t/2 (taper = 1).
+    // at the throat every blank segment lies on the offset LINE of its DUCT
+    // segment, at exactly `wall` on all four sides — constant, which is what
+    // makes the wall the same number wherever it is cut and what removed the
+    // mitre EARS the old rim/shared split threw at every cell junction.
     // Line distance, measured at segment midpoints — exact, not approximate.
-    const gross = rowR.sched[0].pts, bl = blank[0].pts;
-    const N = gross.length, nPer = N / 4;
-    const rim = cell.rimSide || [false, false, false, false];
+    const src = duct[0].pts, bl = blank[0].pts;
+    const N = src.length;
     for (let k = 0; k < N; k++) {
-      const a = gross[k], b = gross[(k + 1) % N];
+      const a = src[k], b = src[(k + 1) % N];
       const m = [(bl[k][0] + bl[(k + 1) % N][0]) / 2, (bl[k][1] + bl[(k + 1) % N][1]) / 2];
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
       const dist = Math.abs(((b[0] - a[0]) * (m[1] - a[1]) - (m[0] - a[0]) * (b[1] - a[1])) / L);
-      const wantD = rim[Math.floor(k / nPer)] ? wall : wall - t / 2;
-      offErr = Math.max(offErr, Math.abs(dist - wantD));
+      offErr = Math.max(offErr, Math.abs(dist - wall));
     }
     // containment and simplicity at every station: each duct point inside its
     // blank ring (tested at the planar throat; elsewhere by area ordering and
@@ -2510,8 +2510,8 @@ head("Horn shell export (blanks + cutters)");
     check("cutter throat ring planar in z = -ext", z, 0, 1e-9, "mm");
   }
 
-  // ── the emitted file, bundle mode ─────────────────────────────────────────
-  const out = M.buildShellSTEP(th, map, { t, wall, ext, mode: "bundle", name: "shelltest" });
+  // ── the emitted file ──────────────────────────────────────────────────────
+  const out = M.buildShellSTEP(th, map, { t, wall, ext, name: "shelltest" });
   checkTrue("two solids per cell: 18 blanks + 18 cutters", out.checks.ducts === 36, `${out.checks.ducts} solids`);
   check("shell surfaces pass through every sampled ring point", out.checks.residual, 0, 1e-9, "mm");
   checkTrue("every edge used exactly twice, opposite senses", out.checks.edgePairing, "");
@@ -2537,7 +2537,7 @@ head("Horn shell export (blanks + cutters)");
     ss.length === 18 && ss.every((sd) => sd.manifold.ok), "");
 }
 
-head("Aperture surface, horn body, shell orientation");
+head("Aperture surface, per-cell shell, orientation");
 {
   const t = 0.4, wall = 3, ST = 24;
   const opts = {
@@ -2591,12 +2591,8 @@ head("Aperture surface, horn body, shell orientation");
   // ── the cap interior lies on the surface too, not on a chord ──────────────
   // A Coons blend of a boundary that lies on a curved cap falls BEHIND the
   // surface inside; blending in (a, e) and evaluating cannot.
-  const body = M.hornBodySections(th, opts, { wall, map, t });
-  checkTrue("the rim loop chains and closes exactly",
-    body && body.chainErr < 1e-6 && body.closeErr < 1e-9,
-    body ? `chain ${body.chainErr.toExponential(1)} mm, closure ${body.closeErr.toExponential(1)} mm` : "no body");
-  const SB = body.sections.length - 1;
-  const ring = body.sections[SB].pts;
+  const blank0 = M.shellSections(th.cells[0], map.rows.find((r) => r.id === th.cells[0].id), { t, wall, surf: map.mouthSurf });
+  const ring = blank0[blank0.length - 1].pts;
   const grid = M.apertureCapGrid(ring, ap);
   let gDev = 0, gEdge = 0;
   const nB = ring.length / 4;
@@ -2607,10 +2603,9 @@ head("Aperture surface, horn body, shell orientation");
   }
   check("every cap grid point lies on the aperture", gDev, 0, 1e-9, "mm");
   check("the cap grid reproduces the ring on its boundary", gEdge, 0, 1e-9, "mm");
-  // the Coons alternative is measurably worse, which is why the grid exists
   {
-    const bare = M.ductBrep(body.sections);
-    const withAp = M.ductBrep(body.sections, { capMouthPts: grid });
+    const bare = M.ductBrep(blank0);
+    const withAp = M.ductBrep(blank0, { capMouthPts: grid });
     const at = (br, u, v) => M.evalBsplineSurf(br.capMouth, br.uKnots, br.uKnots, u, v);
     let dC = 0, dG = 0;
     for (let i = 1; i < 8; i++)
@@ -2618,229 +2613,117 @@ head("Aperture surface, horn body, shell orientation");
         dC = Math.max(dC, Math.abs(ap.deviation(at(bare, i / 8, j / 8))));
         dG = Math.max(dG, Math.abs(ap.deviation(at(withAp, i / 8, j / 8))));
       }
-    checkTrue("the interpolated cap beats a Coons blend on the surface",
-      dG < 0.05 && dC > 1, `Coons ${dC.toFixed(1)} mm off, interpolated ${dG.toExponential(1)} mm`);
+    // AT CELL SCALE THE CAP-FILL CHOICE IS SMALL, and that is worth knowing:
+    // a Coons chord across ONE cell's mouth falls 0.02 mm behind the surface,
+    // against 5.6 mm across the whole aperture. The interpolated cap is still
+    // the right fill — it is what makes every cell's mouth face lie on ONE
+    // analytic surface, which is what the owner asked for — but the argument
+    // for it is co-surface mouths, not a large error.
+    checkTrue("the interpolated cap lies on the aperture and a Coons blend does not",
+      dG < 1e-9 && dC > 1e-3, `Coons ${dC.toFixed(3)} mm off, interpolated ${dG.toExponential(1)} mm`);
   }
 
-  // ── the body's throat face is the driver disc plus the wall, exactly ──────
-  let rMin = Infinity, rMax = 0, zMax = 0;
-  for (const p of body.sections[0].pts) {
-    const r = Math.hypot(p[0], p[1]);
-    rMin = Math.min(rMin, r); rMax = Math.max(rMax, r); zMax = Math.max(zMax, Math.abs(p[2]));
-  }
-  check("body throat ring radius, min", rMin, R + wall, 1e-9, "mm");
-  check("body throat ring radius, max", rMax, R + wall, 1e-9, "mm");
-  check("body throat ring planar in z = 0", zMax, 0, 1e-12, "mm");
-  // it also grows monotonically, which is what makes it a horn and not a bulb
-  let grows = true;
-  for (let q = 1; q <= SB; q++) if (body.sections[q].area <= body.sections[q - 1].area) grows = false;
-  checkTrue("the body's section area grows at every station", grows, "");
-
-  // ── THE SKIN IS WRAPPED ROUND THE DUCTS ───────────────────────────────────
-  // Each station is a sheet — the flow's own level set, fitted — and on it
-  // every duct is grown by the wall (a sleeve: flank offsets and corner
-  // ellipses from the duct's own 3-D heading through the sheet) and the
-  // sleeves are closed by a rolling ball of the smallest radius that keeps
-  // the station in one piece. The skin has its own station count, finer
-  // than the ducts', because the loft between sheets is straight.
-  checkTrue("the skin carries its own, finer station count", SB === 48 && SB !== ST,
-    `${SB} skin stations over ${ST} duct stations`);
-  checkTrue("every vertex line of every duct crosses every sheet", Math.min(...body.validity) === 1,
-    `validity min ${Math.min(...body.validity)}`);
-  checkTrue("the fairing radius is reported, and never under twice the wall",
-    body.fair >= 2 * wall && body.fairNeeded >= 0,
-    `${body.fair} mm used, ${body.fairNeeded.toFixed(1)} mm needed at station ${body.fairAt}`);
-  // THE WALL IS A MINIMUM, measured in TRUE 3-D against the exported
-  // B-spline skin (skinClearance) — never by station index in a projection:
-  // that proxy read +2.96 mm on a horn whose duct stood 20.6 mm outside the
-  // skin. Sleeves are laid one pixel over the wall for the raster's sake; the
-  // few percent under come from the cubic loft between sheets.
-  const cont = M.bodyContainment(th, map, body, { t, wall });
-  checkTrue("every duct sits inside the body's skin by the wall (3-D)", cont.minWall > 0.85 * wall,
-    `min outer wall ${cont.minWall.toFixed(2)} mm against ${wall}`);
-  // and the RINGS themselves hold the wall on the flanks: the median
-  // distance from a skin ring to the nearest duct surface is the wall plus
-  // the pixel allowance, at a station near the throat and one mid-path
+  // ── THE BLANK IS THE DUCT OFFSET OUTWARDS, AND NOTHING ELSE ───────────────
+  // Every construction that gave the horn a single outer skin came out with
+  // visible surface texture, because its rings were DERIVED per station by a
+  // discrete search (a raster iso-line; a convex hull) and the search's
+  // decisions change abruptly along the path. A blank ring is the duct ring
+  // EVALUATED and offset, so vertex k is the same material line all the way
+  // down and the loft is as clean as the duct's. The wall is therefore exact
+  // rather than fitted, and that is what these checks assert.
   {
-    const sub = (x, y) => [x[0] - y[0], x[1] - y[1], x[2] - y[2]], dot = (x, y) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
-    const closestTri = (p, A, B, C) => {
-      const ab = sub(B, A), ac = sub(C, A), apv = sub(p, A); const d1 = dot(ab, apv), d2 = dot(ac, apv);
-      if (d1 <= 0 && d2 <= 0) return A;
-      const bp = sub(p, B), d3 = dot(ab, bp), d4 = dot(ac, bp); if (d3 >= 0 && d4 <= d3) return B;
-      const vc = d1 * d4 - d3 * d2; if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); return [A[0] + ab[0] * v, A[1] + ab[1] * v, A[2] + ab[2] * v]; }
-      const cp = sub(p, C), d5 = dot(ab, cp), d6 = dot(ac, cp); if (d6 >= 0 && d5 <= d6) return C;
-      const vb = d5 * d2 - d1 * d6; if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); return [A[0] + ac[0] * w, A[1] + ac[1] * w, A[2] + ac[2] * w]; }
-      const va = d3 * d6 - d5 * d4; if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); return [B[0] + (C[0] - B[0]) * w, B[1] + (C[1] - B[1]) * w, B[2] + (C[2] - B[2]) * w]; }
-      const den = 1 / (va + vb + vc), v = vb * den, w = vc * den; return [A[0] + ab[0] * v + ac[0] * w, A[1] + ab[1] * v + ac[1] * w, A[2] + ab[2] * v + ac[2] * w];
+    const dseg = (p, A, B) => {
+      const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+      const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+      let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+      u = Math.max(0, Math.min(1, u));
+      return Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u);
     };
-    const tris = [];
+    let faceLo = Infinity, faceHi = 0, lipLo = Infinity, mouthDev = 0, zT = 0, cornerHi = 0;
     for (const cell of th.cells) {
-      const d = M.ductSections(cell, map.rows.find((r) => r.id === cell.id), { t });
-      for (let j = 0; j < d.length - 1; j++) {
-        const Nn = d[j].pts.length;
-        for (let k = 0; k < Nn; k++) { const a = d[j].pts[k], b = d[j].pts[(k + 1) % Nn], c2 = d[j + 1].pts[(k + 1) % Nn], e = d[j + 1].pts[k]; tris.push([a, b, c2]); tris.push([a, c2, e]); }
-      }
+      const row = map.rows.find((r) => r.id === cell.id);
+      const d = M.ductSections(cell, row, { t });
+      const b = M.shellSections(cell, row, { t, wall, surf: map.mouthSurf });
+      const Q = d.length - 1, n = b[0].pts.length / 4;
+      for (let q = 0; q <= Q; q++)
+        b[q].pts.forEach((p, k) => {
+          let m = Infinity;
+          for (let i = 0; i < d[q].pts.length; i++) m = Math.min(m, dseg(p, d[q].pts[i], d[q].pts[(i + 1) % d[q].pts.length]));
+          if (k % n === 0) cornerHi = Math.max(cornerHi, m);
+          else if (q === Q) lipLo = Math.min(lipLo, m);
+          else { faceLo = Math.min(faceLo, m); faceHi = Math.max(faceHi, m); }
+        });
+      for (const p of b[Q].pts) mouthDev = Math.max(mouthDev, Math.abs(ap.deviation(p)));
+      for (const p of b[0].pts) zT = Math.max(zT, Math.abs(p[2]));
     }
-    const ringToDuct = (q) => {
-      const ds = body.sections[q].pts.map((p) => { let best = Infinity; for (const [A, B, C2] of tris) { if (Math.abs((A[2] + B[2] + C2[2]) / 3 - p[2]) > 40) continue; const f = closestTri(p, A, B, C2); best = Math.min(best, Math.hypot(...sub(p, f))); } return best; });
-      ds.sort((x, y) => x - y);
-      return { min: ds[0], median: ds[Math.floor(ds.length / 2)] };
-    };
-    const near = ringToDuct(4), mid = ringToDuct(24);
-    checkTrue("skin rings hold the wall on the flanks near the throat", near.min > 0.9 * wall && near.median < 1.35 * wall,
-      `ring 4: min ${near.min.toFixed(2)}, median ${near.median.toFixed(2)} mm`);
-    checkTrue("and mid-path, where the outer ducts cross the sheets obliquely", mid.min > 0.85 * wall && mid.median < 1.5 * wall,
-      `ring 24: min ${mid.min.toFixed(2)}, median ${mid.median.toFixed(2)} mm`);
-  }
-  {
-    const bowOpts = { ...opts, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } };
-    const bowMap = M.mapThroatToMouth(th, bowOpts);
-    const bowBare = M.hornBodySections(th, bowOpts, { wall, stations: 48 });
-    const bowBody = M.hornBodySections(th, bowOpts, { wall, map: bowMap, t });
-    const cbb = M.bodyContainment(th, bowMap, bowBare, { t, wall });
-    const cbf = M.bodyContainment(th, bowMap, bowBody, { t, wall });
-    checkTrue("a radial bow bursts through the bare tiling envelope", cbb.worst > 10,
-      `${cbb.worst.toFixed(1)} mm outside`);
-    checkTrue("and the wrapped skin contains it by the wall (3-D)", cbf.minWall > 0.85 * wall,
-      `min outer wall ${cbf.minWall.toFixed(2)} mm, fairing radius ${bowBody.fair} mm`);
-    // THE LOFT IS SMOOTH. The exported skin is a cubic through the rings; a
-    // spike in the rings rings on either side of it (the owner's wrinkles).
-    // Built from a distance field and resampled by arc length plus turning,
-    // the cubic stays close to the straight loft between rings everywhere —
-    // measured at the mid-station of every ring pair.
-    const apB = M.apertureFrame(bowMap.mouthSurf);
-    const SBB = bowBody.sections.length - 1;
-    const brB = M.ductBrep(bowBody.sections, { capMouthPts: M.apertureCapGrid(bowBody.sections[SBB].pts, apB) });
-    let ripple = 0;
-    for (let w = 0; w < 4; w++)
-      for (let q = 0; q < SBB; q++)
-        for (let i = 0; i <= brB.n; i++) {
-          const P = M.evalBsplineSurf(brB.walls[w], brB.uKnots, brB.vKnots, i / brB.n, (q + 0.5) / SBB);
-          const a = bowBody.sections[q].pts[(w * brB.n + i) % (4 * brB.n)], b = bowBody.sections[q + 1].pts[(w * brB.n + i) % (4 * brB.n)];
-          ripple = Math.max(ripple, Math.hypot(P[0] - (a[0] + b[0]) / 2, P[1] - (a[1] + b[1]) / 2, P[2] - (a[2] + b[2]) / 2));
-        }
-    checkTrue("the skin stays close to the straight loft through the bow", ripple < 2,
-      `worst ${ripple.toFixed(2)} mm mid-station (1.33 measured on this half-path bow; 0.1-0.2 at the tool's defaults)`);
-    // the bare envelope form reports no clearance and no fairing
-    checkTrue("the bare envelope is the old form: no clearance measured", bowBare.clearance === null && bowBare.mode === "envelope", "");
-    // both ends are exact whatever the bow: the throat is still the exact
-    // circle and the mouth ring still lies on the aperture
-    let rT = 0, dM = 0;
-    for (const p of bowBody.sections[0].pts) rT = Math.max(rT, Math.abs(Math.hypot(p[0], p[1]) - (R + wall)));
-    for (const p of bowBody.sections[SBB].pts) dM = Math.max(dM, Math.abs(ap.deviation(p)));
-    check("the bow leaves the throat circle exact", rT, 0, 1e-9, "mm");
-    check("the bow leaves the mouth ring on the aperture", dM, 0, 1e-9, "mm");
+    check("the wall is exactly the wall on every face, every station, every cell (min)", faceLo, wall, 1e-9, "mm");
+    // and never more than wall / cos(half the largest turn between two
+    // samples of a run) — the rings are polylines, so an interior vertex
+    // mitres too, by 0.35 um on a 0.9 deg turn. Not a tolerance: a bound.
+    checkTrue("and at most the wall plus the discretisation's own mitre", faceHi - wall < 1e-3,
+      `${((faceHi - wall) * 1000).toFixed(2)} um over ${wall} mm`);
+    // a mitred corner reaches wall / sin(half-angle) — geometry, not error
+    checkTrue("a mitred corner reaches further than the wall, by construction", cornerHi > wall && cornerHi < 4 * wall,
+      `${cornerHi.toFixed(2)} mm at the sharpest corner, against a ${wall} mm wall`);
+    // the mouth lip is snapped onto the aperture, which is what costs it
+    checkTrue("the mouth lip is a little under, because it is snapped to the aperture", lipLo > 0.85 * wall && lipLo < wall,
+      `${lipLo.toFixed(3)} mm — the only ring that is not exactly ${wall}`);
+    check("every blank's mouth ring lies on the aperture", mouthDev, 0, 1e-9, "mm");
+    check("every blank's throat ring is planar in z = 0", zT, 0, 1e-12, "mm");
   }
 
-  // ── THE BANDED KIT: blocks where the ducts tile, tubes and webs where they
-  // do not, and no two positive solids ever graze ───────────────────────────
-  // The union of per-cell blanks failed in CAD because every neighbouring
-  // pair passes through exact tangential contact (overlapping at both ends,
-  // apart mid-path — 54 crossings at the defaults). The kit partitions the
-  // horn by what the material IS at each station, measured on the duct gaps.
+  // adjacent blanks share material where the ducts run closer than 2·wall,
+  // which is what a multicell's shared walls ARE — measured, not assumed
   {
-    const bands = M.shellBands(th, map, { t, wall, margin: 2, ov: 2 });
-    checkTrue("the tube band is found where every pair clears 2·wall + margin", !!bands.tubes && bands.tubes.qC - bands.tubes.qB > 6,
-      bands.tubes ? `stations ${bands.tubes.qB}-${bands.tubes.qC} of ${bands.S - 1}, threshold ${bands.threshold} mm` : "no band");
-    let below = 0;
-    for (let q = bands.tubes.qB; q <= bands.tubes.qC; q++) if (bands.gapMin[q] < bands.threshold) below++;
-    check("inside the band no adjacent pair is under the threshold", below, 0, 0, "stations");
-    checkTrue("outside the band the ducts are close: the blocks are blocks",
-      bands.gapMin[0] < 1 && bands.gapMin[bands.S - 1] < 1e-6, `throat ${bands.gapMin[0].toFixed(2)} mm, mouth ${bands.gapMin[bands.S - 1].toExponential(1)} mm`);
-    const kit = M.bandedShell(th, map, { t, wall, R });
-    const c = kit.checks;
-    check("the kit has two blocks", c.blocks, 2, 0, "");
-    check("one tube per duct", c.tubes, th.cells.length, 0, "");
-    check("one web per adjacent pair (6x3: 15 row + 12 column)", c.webs, 27, 0, "");
-    // no two tubes touch: measured on the tube rings, not inferred from the ducts
-    checkTrue("tubes clear each other by at least the margin everywhere in the band", c.tubeClear >= 2,
-      `${c.tubeClear.toFixed(2)} mm at ${c.tubeClearAt.pair}, station ${c.tubeClearAt.q}`);
-    checkTrue("webs are never thinner than the margin", c.webWidth >= 2, `${c.webWidth.toFixed(2)} mm`);
-    // the blocks contain every duct by the wall over their bands, in 3-D
-    checkTrue("the throat block holds the wall round every duct (3-D)", c.throatBlock.worst > 0.75 * wall,
-      `min ${c.throatBlock.worst.toFixed(2)} mm at station ${c.throatBlock.at}, cell ${c.throatBlock.cell}`);
-    checkTrue("the mouth block holds the wall round every duct (3-D)", c.mouthBlock.worst > 0.75 * wall,
-      `min ${c.mouthBlock.worst.toFixed(2)} mm at station ${c.mouthBlock.at}, cell ${c.mouthBlock.cell}`);
-    // the joins overlap: the blocks reach `ov` stations into the tube band
-    const b1 = kit.solids.find((x) => x.label === "throat block"), b3 = kit.solids.find((x) => x.label === "mouth block");
-    const tube = kit.solids.find((x) => x.label.startsWith("tube "));
-    check("the throat block reaches into the tube band", b1.sections.length - 1, bands.tubes.qB + 2, 0, "stations");
-    check("the mouth block starts inside the tube band", (bands.S - 1) - (b3.sections.length - 1), bands.tubes.qC - 2, 0, "stations");
-    check("tubes span exactly the band", tube.sections.length - 1, bands.tubes.qC - bands.tubes.qB, 0, "stations");
-    // block ends: the throat face is the exact circle, the mouth face on the aperture
-    let rT = 0, zT = 0, dM = 0;
-    for (const p of b1.sections[0].pts) { rT = Math.max(rT, Math.abs(Math.hypot(p[0], p[1]) - (R + wall))); zT = Math.max(zT, Math.abs(p[2])); }
-    for (const p of b3.sections[b3.sections.length - 1].pts) dM = Math.max(dM, Math.abs(ap.deviation(p)));
-    check("the throat block's face is the circle R + wall", rT, 0, 1e-9, "mm");
-    check("and planar in z = 0", zT, 0, 1e-12, "mm");
-    check("the mouth block's face lies on the aperture", dM, 0, 1e-9, "mm");
-    // a web is buried m inside each tube's wall: its side runs sit wall - m
-    // from the duct, the tube's face wall from it
-    const w = kit.solids.find((x) => x.label.startsWith("web "));
-    const [la, lb] = w.label.slice(4).split("|");
-    const dA = M.ductSections(th.cells.find((x) => x.label === la), map.rows.find((r) => r.id === th.cells.find((x) => x.label === la).id), { t });
-    const q = 5, ring = w.sections[q].pts, per = ring.length / 4;
-    let dmin = Infinity;
-    for (let k = 0; k < per; k++) { const p = ring[k]; for (const d of dA[bands.tubes.qB + q].pts) dmin = Math.min(dmin, Math.hypot(p[0] - d[0], p[1] - d[1], p[2] - d[2])); }
-    checkTrue("a web's side run sits wall - m from its duct, i.e. m inside the tube wall", Math.abs(dmin - (wall - kit.m)) < 0.3,
-      `${dmin.toFixed(2)} mm against ${(wall - kit.m).toFixed(2)}`);
-    // the STEP: positives first, cutters last, every solid valid
-    const out = M.buildShellSTEP(th, map, { t, wall, mode: "bands", name: "bandstest" });
-    checkTrue("bands mode emits blocks, tubes, webs and cutters as separate solids",
-      !!out && out.mode === "bands" && out.checks.ducts === 2 + 18 + 27 + 18 && out.checks.edgePairing,
-      out ? `${out.checks.ducts} solids, pairing ${out.checks.edgePairing}` : "no output");
-    check("every kit surface passes through its samples", out.checks.residual, 0, 1e-9, "mm");
+    const ov = M.shellOverlap(th, map, { t, wall });
+    check("every adjacent pair is examined", ov.pairs, 27, 0, "pairs");
+    checkTrue("adjacent blanks share material near the ends and part mid-path", ov.touching === 27 && ov.fracTouching > 0.1 && ov.fracTouching < 0.9,
+      `${ov.touching}/${ov.pairs} pairs, over ${(ov.fracTouching * 100).toFixed(0)}% of the stations, deepest ${ov.deepest.toFixed(2)} mm`);
+    // at the mouth the ducts tile exactly, so the blanks overlap by exactly 2·wall
+    checkTrue("at the mouth, where the ducts tile, the overlap is 2·wall", Math.abs(ov.deepest - 2 * wall) < 0.05 && ov.deepestAt.q === ov.S - 1,
+      `${ov.deepest.toFixed(3)} mm at station ${ov.deepestAt.q} of ${ov.S - 1}`);
+  }
+
+  // ── the kit, and the recipe it states ─────────────────────────────────────
+  {
+    const out = M.buildShellSTEP(th, map, { t, wall, name: "cellstest" });
+    checkTrue("the shell emits one blank and one cutter per cell",
+      !!out && out.mode === "cells" && out.cells === th.cells.length && out.checks.ducts === 2 * th.cells.length,
+      out ? `${out.cells} blanks + ${out.cells} cutters` : "no output");
+    checkTrue("and states the recipe: subtract, never union", /subtract/i.test(out.text) && /no unions/i.test(out.text), "");
+    check("every surface passes through its samples", out.checks.residual, 0, 1e-9, "mm");
+    checkTrue("every solid's edges pair up", out.checks.edgePairing, "");
     checkTrue("the file is referentially intact", M.stepIntegrity(out.text).ok, "");
-    // degenerate case: a wall too thick for any pair to clear gives ONE block
-    // from throat to mouth — the construction becomes the envelope skin, valid
-    // precisely because everything then counts as tiled
-    const one = M.bandedShell(th, map, { t, wall: 12, R });
-    checkTrue("a wall no pair can clear yields one block and no tubes", one.checks.blocks === 1 && one.checks.tubes === 0 && one.checks.webs === 0,
-      `${one.checks.blocks} block(s), ${one.checks.tubes} tubes`);
-    checkTrue("and that block still holds its wall round every duct", one.checks.throatBlock.worst > 0.75 * 12,
-      `${one.checks.throatBlock.worst.toFixed(2)} mm against 12`);
+    // the cutter's throat cap is exactly planar below the blank's, so the
+    // subtraction cannot leave a membrane over the passage
+    checkTrue("cutters overhang both end faces", out.checks.capPlanarZ < 1e-9, `${out.checks.capPlanarZ.toExponential(1)} mm`);
   }
 
   // ── orientation: ONE decision, and it must come out outward ──────────────
   // A shell whose faces are oriented by a per-face radial proxy can disagree
-  // with itself; the body is where that happened. The whole-shell integral
-  // cannot, and its sign is the check.
+  // with itself; a hard-flaring solid is where that happened (two of four
+  // walls read backwards, their loops reversed and the shared vertical edges
+  // used twice in the SAME direction). The whole-shell divergence integral
+  // cannot disagree with itself, and its sign is the check.
   {
-    const br = M.ductBrep(body.sections, { capMouthPts: grid });
+    const br = M.ductBrep(blank0, { capMouthPts: grid });
     const o = M.brepShellOrientation(br);
-    checkTrue("the body shell orients outward as assembled", o.outward,
-      `enclosed volume ${(o.volume / 1000).toFixed(0)} cm3`);
+    checkTrue("a blank shell orients outward as assembled", o.outward,
+      `enclosed volume ${(o.volume / 1000).toFixed(1)} cm3`);
     // Compare LIKE WITH LIKE. The mesh fans the mouth ring to its centroid;
-    // this brep closes it with the aperture surface, and on a ring this large
-    // and this curved (sagitta ~89 mm across the whole aperture) the two fills
-    // enclose genuinely different volumes — the cap-fill finding at full
-    // strength, not an error. Closing the brep walls with the same fan removes
-    // the freedom, and then only the walls differ and they must agree.
-    const dm = M.ductMesh(body.sections);
+    // this brep closes it with the aperture surface, and on a curved cap the
+    // two fills enclose genuinely different volumes — the cap-fill finding at
+    // full strength, not an error. Closing the brep walls with the same fan
+    // removes the freedom, and then only the walls differ and they must agree.
+    const dm = M.ductMesh(blank0);
     const vm = Math.abs(M.meshVolume(dm.verts, dm.tris));
-    const vFan = M.brepVolume(br, body.sections, 12, 48, "fan");
-    checkTrue("fan-capped, the brep body agrees with the meshed body",
+    const vFan = M.brepVolume(br, blank0, 12, 48, "fan");
+    checkTrue("fan-capped, the brep blank agrees with the meshed blank",
       Math.abs(vFan - vm) / vm < 0.01,
-      `${(vFan / 1000).toFixed(1)} vs ${(vm / 1000).toFixed(1)} cm3, ${(100 * Math.abs(vFan - vm) / vm).toFixed(3)}%`);
+      `${(vFan / 1000).toFixed(2)} vs ${(vm / 1000).toFixed(2)} cm3, ${(100 * Math.abs(vFan - vm) / vm).toFixed(3)}%`);
     checkTrue("and the aperture cap holds more than the fan, as a curved cap must",
-      o.volume > vm, `${(o.volume / 1000).toFixed(0)} vs ${(vm / 1000).toFixed(0)} cm3 — the cap-fill difference`);
+      o.volume > vm, `${(o.volume / 1000).toFixed(2)} vs ${(vm / 1000).toFixed(2)} cm3 — the cap-fill difference`);
   }
-
-  // ── the emitted solid-mode file ───────────────────────────────────────────
-  const out = M.buildShellSTEP(th, map, { t, wall, mode: "solid", body, name: "solidtest" });
-  checkTrue("solid mode emits one body plus one cutter per duct",
-    out.checks.ducts === 19 && out.mode === "solid"
-    && (out.text.match(/'horn body'/g) || []).length === 1
-    && (out.text.match(/'duct cutter /g) || []).length === 18, `${out.checks.ducts} solids`);
-  check("body and cutter surfaces pass through every sample", out.checks.residual, 0, 1e-9, "mm");
-  checkTrue("every edge used exactly twice, opposite senses", out.checks.edgePairing,
-    "the body shell is valid, which the per-face proxy could not deliver");
-  check("throat caps planar in their own planes", out.checks.capPlanarZ, 0, 1e-9, "mm");
-  const integ = M.stepIntegrity(out.text);
-  checkTrue("every referenced entity is defined", integ.ok,
-    `${integ.entities} entities, ${integ.missing} missing`);
-  checkTrue("solid mode refuses to guess a body it was not given",
-    M.buildShellSTEP(th, map, { t, wall, mode: "solid" }) === null, "");
 
   // ── why the union is avoided: the blanks genuinely graze ─────────────────
   // Blanks overlap near both ends (the ducts nearly tile there) and stand
