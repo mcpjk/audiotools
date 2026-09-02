@@ -257,12 +257,11 @@ other leg of the pick-two-of-three — and the signed clearance is separable
 render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
 the longest cell's length in swept mode, and the tool previews the exported
 duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
-rule stands). The physical horn ships as a shell STEP kit — blanks plus
-cutters, boolean in CAD (`buildShellSTEP`; see the shell findings below). The
-shell ships as ONE body plus per-duct cutters by default — subtractions only,
-no unions — after the owner's first CAD round trip failed on the unions. The
-canvas shows the AIR ONLY: a "horn" view was built twice (blanks, then the
-one-piece body) and dropped at the owner's call; see the shell findings.
+rule stands). The physical horn ships as a shell STEP kit — ONE BLANK AND ONE
+CUTTER PER CELL, N independent subtractions and no unions (`buildShellSTEP`;
+see the shell findings below, and read the evaluated-vs-searched rings finding
+before proposing any other shell construction). The canvas shows the AIR ONLY:
+a "horn" view was built twice and dropped at the owner's call.
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -686,187 +685,84 @@ exists.
   Face orientation is MEASURED at the patch centre, never assumed: the two
   caps' natural u x v normals point the same axial way, so any assumed
   winding gets exactly one of them wrong.
-- **THE HORN SHELL IS EXPORTED AS BLOCKS, TUBES AND WEBS (mode `"bands"`,
-  the default since 2026-09-02), BECAUSE THE TWO EARLIER FORMS FAILED FOR
-  OPPOSITE REASONS.** Per-cell blanks needed a union, and the union grazes:
-  measured at the defaults, wall 3, all 27 adjacent pairs pass through exact
-  tangential contact TWICE — the column pairs at u = 0.056-0.125, the row
-  pairs near u = 0.30, everything again at u = 0.970-0.976 (blank contact is
-  where the duct gap equals 2·wall) — and the default bow moves the row
-  crossings to u = 0.28-0.34 and HALVES their rate, which is more degenerate.
-  The one-piece wrapped body needed no union but its outline had to be found
-  by a discrete search at every station (raster, trace, resample), and noise
-  that does not correlate station to station lofts into surface texture; the
-  owner rejected it on sight. The ducts are built from stations too and are
-  clean, because their rings are EVALUATED from a smooth map with fixed
-  correspondence, never derived. So the kit uses each construction only where
-  it is exact, partitioned by what the material IS, measured (`shellBands`:
-  the minimum adjacent-pair gap at every station, and the longest contiguous
-  run where it clears 2·wall + 2 mm):
-  (1) BLOCKS where the ducts tile — the throat, and the mouth (with a bulge
-  the whole engagement lives inside the mouth block, so the coped joint
-  never meets a union). A block's station is the CONVEX HULL of every duct
-  point in the loop's best-fit plane, offset outward by the wall with a true
-  ROUND at each hull vertex (a convex polygon plus a disc: edges and arcs,
-  nothing mitred — a mitred offset of the 1-3 mm notch between two rim
-  ducts' outer sides self-intersects, measured 1.8 mm under the wall).
-  The offset is wall/|e·n| (e the offset direction, n the duct flank, cap
-  3x) because a rim duct leaving obliquely sees only cos(phi) of an in-plane
-  offset, and hulling only the rim sides let a short-axis bow turn a shared
-  corner past them (0.17 mm of wall). Throat face the exact circle R + wall,
-  mouth face on the aperture. Runs split at the four singular rim vertices.
-  (2) TUBES where every adjacent pair clears 2·wall + 2 mm: each duct's own
-  rings offset by exactly the wall in their own planes (swept sections are
-  normal to the centreline, so the in-plane offset IS the perpendicular
-  wall). By the band's definition no two tubes can touch, and the kit
-  measures it on the tube rings anyway: 2.15 mm plain, 2.72 with the bow.
-  (3) WEBS between every adjacent pair: a curved box between the middle
-  `webFrac` (default 0.5) of the two facing sides, each side run offset by
-  wall - m so the web is BURIED m = min(1, wall/3) inside each tube's wall —
-  its side faces are parallel to the tube faces and never coincident, its
-  top and bottom cross the tube faces transversally. Webs are structural,
-  not cosmetic: without them band 2 is eighteen tubes joined only through
-  the end blocks. Adding webs into space is the robust direction; carving
-  slots out of a monolith (the old Task F) risked slivers and kept the
-  monolith skin.
-  (4) THE BLOCKS REACH `ov` = 2 STATIONS INTO THE TUBE BAND, and their offset
-  rises by m over the block toward the band, so every block-tube and
-  block-web join is a transversal interpenetration and no block rim ever
-  coincides with a tube rim. Cutters unchanged (`extendSections`).
-  Measured at the 2026-09-02 defaults, wall 3, 48 stations: band 2 =
-  stations 18-46 (u 0.375-0.958), 2 blocks + 18 tubes + 27 webs + 18
-  cutters = 65 solids, 17-18 MB; block wall in 3-D 2.89 plain / 2.41 with
-  the default bow / 2.37 half-path bow (the last few percent are the cubic
-  loft where the bow starts), mouth block 2.96-2.99; webs ≥ 4.6 mm wide. A
-  horn whose pairs never clear the threshold (bulge 5 + short-axis bow at
-  these defaults) gets ONE block throat to mouth — the envelope skin, valid
-  precisely because everything then counts as tiled — and reports its wall
-  honestly (0.03 mm there: that bow runs a rim duct nearly parallel to the
-  stations, which no station-based skin can hold). CAD: one union of every
-  positive solid, then the subtractions. `skinClearance` now signs by the
-  RING'S OWN-PLANE containment, not the nearest triangle's normal (a point
-  inside a block sat on the outward side of a notch flank and read 12 mm
-  outside) and not xy (a tilted non-planar ring read 11 mm), and takes its
-  wall sense from a majority vote of wall normals, not the cap-pattern
-  volume integral (a block chained the other way flipped it).
-  What follows is the record of the two earlier forms, kept because their
-  measurements still hold.
-- **THE ONE-BODY FORM (mode `"solid"`), superseded: unioning per-cell blanks
-  is ILL-POSED BY CONSTRUCTION.** This supersedes the
-  blanks-plus-cutters default recorded below, which the owner's first CAD
-  round trip failed on: the unions would not run. The cause is geometry, not
-  a tolerance. Adjacent blanks OVERLAP near both ends (the ducts nearly tile
-  there) and stand APART mid-path (the profile opens up to 14 mm between
-  ducts), so every neighbouring pair passes through EXACT TANGENTIAL CONTACT
-  in between — near-parallel surfaces meeting along a curve, the case a
-  kernel fails on. Measured at the defaults, wall 3: the per-station minimum
-  blank gap runs -7.5 mm at station 10 and +3.3 mm at station 11, two sign
-  changes over the path. Only a wall above HALF THE WIDEST DUCT GAP (8.3 mm
-  at depth 150, 6.0 at depth 320) keeps every pair robustly overlapping —
-  i.e. the only union that works is the one that was already monolithic.
-  So `buildShellSTEP` mode `"solid"` (the default) emits ONE body plus one
-  cutter per duct and the CAD work is SUBTRACTIONS ONLY. `hornBodySections`
-  builds the body's skin from the horn's own TILING ENVELOPE offset by the
-  wall: a flow-mode map with no expansion law tiles exactly, so the rim
-  cells' rim sides CHAIN into one closed loop (measured 5.7e-10 mm at the
-  joints, closure exactly 0) whose four natural corners are the H-grid's four
-  singular rim vertices — precisely the 4-sided topology `ductBrep` wants.
-  The unprofiled envelope is deliberate: the profile pulls ducts inward, so a
-  skin following them would waist in and out, and the material between
-  diverging ducts is what a multicell body IS — but a skin on that envelope
-  alone measured 0.9-1.4 mm of outer wall at the corner cells near the
-  throat against a specified 3, a radial bow burst through it by 25 mm, and
-  the envelope stood 18-35 mm off the ducts mid-path where the profile had
-  pulled them inward. So with the live map supplied the skin is WRAPPED ROUND
-  THE DUCTS (2026-09-02, a clean rebuild after four CAD round trips on the
-  push-and-hull version — protruding duct, wrinkles, a second hill, knuckles
-  — the owner's call: "radius = wall, skin follows ducts"). The rules, all
-  measured:
-  (1) THE STATIONS ARE SHEETS, AND THEY ARE THE FLOW'S OWN LEVEL SETS,
-  fitted. A station of the flow map is one level set of path fraction, and
-  every duct's own station sits on or near it whatever the duct has since
-  been made to do (a bow moves a section along that surface, not off it),
-  so the family is transverse to the ducts by construction: worst angle
-  between a vertex line and the sheet normal 39 deg plain, 52 deg with a
-  bulge and a short-axis bow, where the earlier family z = h(q) + w(q)·sag
-  read 61 and 79 deg and a bowed duct ran ALONG one of its sheets for 60 mm
-  and came out 0.1 mm from the skin. Each level set is fitted by an even
-  sixth-order polynomial in the aperture's arc-length coordinates (rH·a,
-  rV·e) — residual 0.3 mm on the flow's ~1150 points — with the coordinates
-  SATURATED at the data's extent so the sheet continues flat beyond the
-  envelope: with 30% of overshoot allowed, a flat near-throat level set
-  deepened 37 mm just outside its data, consecutive sheets crossed, and the
-  loft over a half-path bow folded (a duct 11 mm outside). Throat sheet =
-  the throat plane, mouth sheet = the aperture, both exact. Each duct is cut
-  by each sheet vertex line by vertex line (exact for the ruled loft the
-  STEP carries), taking the crossing NEAREST THE DUCT'S OWN STATION of that
-  path fraction — a bowed line crosses a bowl three times, and the first
-  crossing once put a cut 100 mm from its duct (a 51 mm fairing radius).
-  (2) THE SLEEVE IS THE DUCT GROWN BY A BALL OF RADIUS wall, CUT BY THE
-  SHEET — built directly as a 2-D polygon, not by morphology. Along a flank
-  the offset is wall / |e·n| along the edge's outward normal (e that
-  normal's own 3-D direction within the sheet, n the flank's), because a
-  flank inclined to the sheet sees only sin(phi) of an in-sheet offset: the
-  outer columns fan out at 40-65 deg mid-path while the sheet is still
-  nearly flat, and 3 mm in the sheet measured 1.4 mm of wall. Round a
-  convex corner the sheet meets the cylinder about the corner line at an
-  ELLIPSE — semi-minor the wall, semi-major wall / cos(phi) along the line's
-  heading; a circle of radius wall at a corner heading out at 65 deg
-  measured 2.2 mm. Offsets are capped at 3·wall, laid one pixel over
-  (measured on a square: the two thresholded raster steps land the outline
-  0.6 px under to 1.3 px over, so the allowance makes it never under), and
-  the polygon is filled NONZERO, because adjacent flanks asking for
-  different offsets leave small backward loops that even-odd punched into
-  slivers.
-  (3) THE FAIRING IS A ROLLING BALL, ONE RADIUS FOR THE WHOLE HORN: dilate
-  the sleeves by it, take the distance field to the complement, trace the
-  iso-line at the radius (Felzenszwalb EDT, marching squares, 0.2-0.6 mm
-  pixels). That is the morphological closing — concave fillets wherever two
-  sleeves come within twice the radius, the outermost sleeves followed at
-  exactly the wall everywhere else, including the SADDLE of this horn's
-  mid-path sections that a convex hull bridged with 18-35 mm of material.
-  The radius is the smallest that keeps EVERY station in one piece
-  (bisection on a coarse raster every fourth station, verified by winding
-  on the fine one and raised 10% + 1 mm if a station still comes out in
-  pieces), never under 2·wall: 17-19 mm at the tool's defaults (the rows
-  stand ~26 mm apart sleeve to sleeve mid-path, so a 12 mm ball left three
-  tubes), 60 mm with a bulge and a short-axis bow that opens a 100 mm void
-  in the middle row — an honest answer, reported in the export note, not a
-  bug. Where a bow carries a duct out through the skin it emerges as its
-  own sleeve through a concave fillet: the bump IS the duct.
-  (4) THE RING IS RESAMPLED BY ARC LENGTH PLUS 4·wall PER RADIAN OF TURNING,
-  read over ±1.5 mm on a trace smoothed over ±2 samples. At ~5 mm of plain
-  spacing a wall-radius round carried one vertex and the loft's chord across
-  it measured 0.9 mm of wall; the turning weight puts three or four there.
-  The window matters twice over: marching squares on a pixel-centre field
-  jitters (10 rad of spurious turning on a 247 mm near-circle, so the trace
-  is smoothed first), and a ±6 mm window let a round next to a fillet
-  cancel against it and lose its vertices. Runs are split at the flow
-  envelope's four corner rays, taking the OUTERMOST forward crossing of
-  each ray, since the outline is not star-shaped once the fillets are deep.
-  (5) THE SKIN HAS ITS OWN STATION COUNT — max(48, 2 x the map's), capped
-  at 96, when none is given; the UI passes its export-stations value (64)
-  for both, measured 2.84 mm in the browser at the defaults — because the loft between sheets is straight and a bowed duct that
-  travels 30 mm sideways between 12.5 mm sheets (the default throat-fifth
-  bow) measured 0.8 mm of wall; the ducts are cut wherever the sheets meet
-  their vertex lines, so their own count does not enter. `skinClearance`
-  compares a duct station with the ring of the same PATH FRACTION, never the
-  same index — its far-point fallback once read a duct 130 mm outside a
-  skin that had twice the rings.
-  Measured on the acceptance set (6x3, the 2026-09-02 defaults, wall 3, 48
-  duct stations, 96 skin stations): true 3-D minimum outer wall 2.92 mm
-  plain, 2.74 with the default throat-fifth radial bow, 2.49-2.92 with a
-  half-path radial bow, 3.00 with bulge 5 plus a short-axis bow; the true
-  side wall at the +y and +x flanks 3.0-3.9 mm; the spline within 0.12 mm of
-  the straight loft between rings; throat r = R + wall exact, mouth on the
-  aperture to 6e-14; 8-12 s per export. The last few percent under the wall
-  are the cubic loft between sheets near the throat, where the outline
-  changes fastest; the rings themselves hold the wall to within 0.2 mm. It
-  is
-  still MEASURED afterwards (`bodyContainment`) and reported. What is left
-  between two passages after the subtraction is exactly the duct-to-duct gap:
-  the layout's t at the throat, a knife edge at the mouth, no per-cell wall
-  bookkeeping needed. Mode `"bundle"` keeps the old form for comparison.
+- **A RING THAT IS EVALUATED FROM A SMOOTH MAP WITH FIXED POINT
+  CORRESPONDENCE LOFTS CLEANLY; A RING THAT IS DERIVED PER STATION BY A
+  DISCRETE SEARCH DOES NOT. This is the most expensive lesson in the file —
+  three constructions, four CAD round trips, two rejected on sight.** The
+  ducts have never had surface texture. Two attempts to give the horn a
+  single outer skin both did, and they were written by the SAME loft through
+  the SAME writer at the same station count, so neither the loft nor the
+  resolution is the cause. What separates them:
+    - a duct ring, and a per-cell BLANK ring, are one smooth map sampled at
+      each station. Vertex k is the same material line the whole way down;
+      between stations only its position changes, smoothly.
+    - the rejected skins were FOUND by search. The wrapped body traced an
+      iso-line of a raster distance field (marching squares, 0.2-0.6 mm
+      pixels); the banded blocks took the CONVEX HULL of the duct points and
+      offset it. Both decide something discrete at every station — which
+      pixels are inside, which points are on the hull — that decision changes
+      abruptly along the path, and the arc-length resample that follows then
+      slides every vertex onto a different feature.
+  The cubic loft interpolates points whose POSITIONS and whose CORRESPONDENCE
+  both jitter by a few tenths of a millimetre, and a few tenths at ~5 mm
+  spacing is exactly the scale of a visible crease. **It does not refine
+  away**: the noise is uncorrelated station to station, so a finer raster or
+  more stations changes the texture without removing it. The owner's own
+  render of the banded kit is the cleanest evidence — the TUBES (evaluated
+  offsets of duct rings) are smooth and the BLOCK (convex hull) is rippled,
+  in one file.
+  **The rule for anything built here later: a solid must be lofted through
+  rings the model can EVALUATE, never through rings a search returns.** If a
+  shape genuinely needs a search — a union outline, a morphological closing —
+  that is a kernel's job, not this tool's.
+- **THE HORN SHELL IS EXPORTED AS ONE BLANK AND ONE CUTTER PER CELL, and the
+  CAD work is N independent SUBTRACTIONS with no unions at all.** A blank is
+  that cell's duct rings offset outward by `wall` on all four sides through
+  the mitred-offset machinery; a cutter is the duct extended past both end
+  faces. Constant on every side is deliberate and replaced an earlier split
+  (rim sides `wall`, shared sides `wall - t/2`) that existed only to make a
+  union safe: a mitre between two DIFFERENT offsets lands on neither line and
+  threw 0.73 mm ears at every cell junction, one of the owner's first CAD
+  reports. Measured at the defaults, wall 3, 48 stations, over all 18 cells
+  and all stations: the wall is **exactly 3.000 mm** on every face (max
+  0.35 um over, which is the polyline's own mitre at a 0.9 deg turn between
+  samples), mouth rings on the aperture to 0, throat rings planar in z = 0 to
+  0, 36 solids, 12.3 MB. Two figures are NOT the wall and must not be read as
+  it: a mitred corner reaches wall/sin(half-angle) — 7.28 mm at the sharpest
+  cell corner, 1.03 mm beyond R + wall at the throat rim, which is what a
+  mitre IS — and the mouth lip measures 2.74 mm because it is snapped onto
+  the curved aperture, the one ring that is not exactly `wall`.
+  **THE UNION OF THE BLANKS IS ILL-POSED AND IS NO LONGER OFFERED.** Adjacent
+  blanks overlap near both ends (the ducts tile there) and stand apart
+  mid-path, so every neighbouring pair passes through EXACT TANGENTIAL
+  CONTACT twice: measured, all 27 pairs at the defaults, the column pairs at
+  u = 0.056-0.125, the row pairs near u = 0.30, everything again at
+  u = 0.970-0.976 — and the default bow moves the row crossings to
+  u = 0.28-0.34 and HALVES their rate, which is more degenerate. Near-parallel
+  surfaces meeting along a curve is the case a kernel fails on; Parasolid is
+  the strongest of them and it fails on this. `shellOverlap` reports where the
+  blanks share material (27/27 pairs, 35% of stations, deepest exactly 2·wall
+  at the mouth where the ducts tile). Merging the cell shells into one horn is
+  a modelling decision to take in CAD on solids whose faces are all exact.
+  **TWO CONSTRUCTIONS WERE BUILT, MEASURED AND DELETED. Do not rebuild them
+  without reading the paragraph above.**
+  (1) `hornBodySections` — ONE body whose skin was a rolling ball over the
+  ducts: flow-level-set sheets, per-duct sleeves grown by the wall, a
+  morphological closing on a raster distance field, iso-line traced and
+  resampled by arc length plus turning. It measured well on every number the
+  tool could compute (min 3-D outer wall 2.92 mm plain, 2.74 with the default
+  bow, spline within 0.12 mm of the loft, throat and mouth exact) and the
+  owner rejected it on sight for surface texture. The numbers were real; they
+  simply did not measure the thing that mattered.
+  (2) `bandedShell` — blocks where the ducts tile, tubes where they clear
+  2·wall + 2 mm, webs between neighbouring tubes, all joins transversal by
+  construction. The tubes and the union-safety were right; the BLOCKS carried
+  the same texture for the same reason (convex hull), and the webs were not
+  what the owner meant by webs (they wanted subtractive slot cutters to open
+  the inter-cell gaps, not additive plates). The band arithmetic
+  (`shellBands`), the tube construction and the transversal-overlap
+  discipline are worth reaching for again IF a merged body is ever wanted;
+  the block is not.
 - **A SHELL'S FACE ORIENTATION IS ONE DECISION FOR THE SOLID, NOT SIX, and
   the per-face proxy silently produced an invalid body.** The topology fixes
   the senses relative to each other — four walls together, mouth cap with
@@ -905,49 +801,25 @@ exists.
   interior lies on the aperture to 6e-14 while reproducing the ring exactly.
   After the boolean, every solid's mouth face is therefore ON one analytic
   surface, which is what makes the mouth read as one continuous face.
-- **The original blanks-plus-cutters construction, kept as mode `"bundle"`:** Near the
-  throat the material is one block threaded by 18 passages, mid-path it is
-  separate tubes (the classic multicell bundle), at the mouth the walls taper
-  to the knife edges — that transition is what a CAD kernel's booleans exist
-  to resolve. `buildShellSTEP` emits two solids per cell and states the
-  recipe: union the blanks, subtract the cutters. A BLANK is the duct's own
-  rings pushed OUTWARD through the same mitred-offset machinery as the
-  divider inset (negative d): full `wall` on rim sides, max(wall − t/2·taper,
-  0) on shared sides, so blank-plus-inset composes to max(wall, t/2·taper) —
-  the max() is what guarantees adjacent blanks always reach the tiling
-  outline and the union can never trap a missing-material sliver between two
-  dividers. The dividers between passages therefore stay at the LAYOUT t near
-  the throat whatever the shell wall is, because the cutters carve the
-  passages back out of whatever the blanks put there; the shell wall sets
-  only the outer skin and the mid-path tubes, which merge where ducts run
-  closer than 2·wall. A CUTTER is the duct extended past both end faces —
-  without that, the blank's cap and the duct's cap are two different fills of
-  nearly the same ring (the cap-fill ambiguity finding above), and the
-  subtraction leaves a MEMBRANE over the passage wherever the blank's fill
-  lies in front; the default 3 mm clears the ~1 mm sag difference. Two exact
-  identities pin the construction and are tested as closed forms: the mitred
-  offset is exactly invertible (out then in returns every line, measured
-  1e-14 at the throat, where the outset segments lie ON the offset lines),
-  and a ring translated along its own unit vector-area normal spans a prism
-  of exactly |A_vec|·ext whatever caps it, so the extension's added volume is
-  ext·(|A_throat|+|A_mouth|) to 1e-9 relative — and the throat ring's
-  vector-area normal is exactly −z (planar ring), so the cutter's throat cap
-  is exactly planar in z = −ext. Both are still true and still tested; the
-  CUTTERS are unchanged and are what the solid mode uses.
+- **TWO EXACT IDENTITIES PIN THE BLANK-AND-CUTTER CONSTRUCTION, and both are
+  tested as closed forms.** The mitred offset is exactly invertible (out then
+  in returns every line, measured 1e-14 at the throat, where the outset
+  segments lie ON the offset lines), and a ring translated along its own unit
+  vector-area normal spans a prism of exactly |A_vec|·ext whatever caps it, so
+  the cutter extension's added volume is ext·(|A_throat|+|A_mouth|) to 1e-9
+  relative — and the throat ring's vector-area normal is exactly −z (planar
+  ring), so the cutter's throat cap is exactly planar in z = −ext. The
+  extension is not optional: without it the blank's cap and the duct's cap are
+  two different fills of nearly the same ring (the cap-fill finding below) and
+  the subtraction leaves a MEMBRANE over the passage wherever the blank's fill
+  lies in front; the default 3 mm clears the ~1 mm sag difference.
   **THE 3-D VIEWPORT NO LONGER DRAWS THE SHELL** (owner's call, 2026-09-02).
   A "horn — shell blanks" option was built alongside the kit and removed one
   session later as adding nothing for a designer: a blank is an INTERMEDIATE
   the CAD boolean consumes, not a form anyone judges a horn by, and its
   outline is the duct's own outline pushed out by one number — so the view
   showed the duct picture again, slightly fatter, and could never show the
-  thing that matters (the boolean result, which needs a kernel). A second
-  version drawing the ONE-PIECE BODY was built in the parallel shell-CAD
-  session and dropped in the merge to honour that decision — it is a
-  different object (the horn's actual outer form, not a fattened duct), so
-  if a horn view is ever wanted it is `hornBodySections` on the preview map,
-  one entry in the DuctPreview list. The EXPORT is untouched: `buildShellSTEP`,
-  `hornBodySections`, `shellSections` and all their checks stand, and the
-  shell button is still in the export stage.
+  thing that matters (the boolean result, which needs a kernel).
 - **A CAPPED DUCT'S VOLUME DEPENDS ON THE CAP FILL, and that explains the
   whole brep-vs-STL volume difference.** The mouth ring is NON-PLANAR in
   every mouth mode — rect included, its ring spans ~1.7 mm of z — so the

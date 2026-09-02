@@ -4903,35 +4903,55 @@ export function apertureCapGrid(ring, ap) {
   return grid;
 }
 
-// ── HORN SHELL — blanks and cutters ────────────────────────────────────────
+// ── HORN SHELL — one blank and one cutter per cell ─────────────────────────
 //
 // The duct sections above are the AIR — the open passage the wave travels
-// through. The physical horn is the material AROUND that air, and no single
-// lofted solid can express it: near the throat the material is a connected
-// block threaded by 18 passages, mid-path it splits into separate tubes
-// (the classic multicell bundle), and at the mouth the walls taper to the
-// knife edges the coped joints make. That topology CHANGES along the path,
-// which is exactly what a CAD kernel's booleans exist to resolve and what a
-// loft cannot. So the shell export emits two solids per cell and states the
-// recipe: UNION the blanks, SUBTRACT the cutters, and the dividers, the
-// knife edges and the outer skin all fall out of the boolean.
+// through. The physical horn is the material around that air, and the export
+// gives it per cell: a BLANK is that cell's own duct rings pushed OUTWARD by
+// the wall on every side, and a CUTTER is the duct extended past both end
+// faces. The CAD work is eighteen independent SUBTRACTIONS, cutter i out of
+// blank i, and what comes back is eighteen cell shells of exactly `wall`
+// thickness all round. No unions, and nothing that has to be searched for.
 //
-// A BLANK is the duct's own station rings pushed OUTWARD — the same mitred
-// offset machinery as the divider inset, run with the opposite sign. Per
-// side the outset from the gross ring is:
-//   rim side      wall                     (the horn's outer skin)
-//   shared side   max(wall - t/2·taper, 0)
-// so blank outset + divider inset compose to max(wall, t/2·taper) of
-// material beyond the open passage on shared sides. The max() is the
-// guarantee that adjacent blanks always MEET through the divider region:
-// each blank reaches at least the gross (tiling) outline, and the union can
-// never be left with an internal sliver of missing material between two
-// walls. Where the profile separates the ducts mid-path the blanks separate
-// too, each carrying its own wall — that IS the multicell bundle — and
-// where the gap is under 2·wall they overlap and the union merges them into
-// one web. The wall between two PASSAGES is set by the layout t near the
-// throat and by the local duct gap elsewhere, never by 2·wall: the cutters
-// carve the passages back out of whatever the blanks put there.
+// WHY THIS AND NOT A ONE-PIECE BODY. Three constructions have now been
+// built and measured, and the two that produced an outer skin for the whole
+// horn both came out with visible surface texture while the ducts, written
+// by the same loft through the same writer, came out clean. The difference
+// is not the loft and not the station count:
+//
+//   A RING THAT IS EVALUATED FROM A SMOOTH MAP WITH FIXED POINT
+//   CORRESPONDENCE LOFTS CLEANLY. A RING THAT IS DERIVED PER STATION BY A
+//   DISCRETE SEARCH DOES NOT.
+//
+// A duct ring, and a blank ring, are the same map sampled at each station:
+// vertex k is the same material line the whole way down, and the only thing
+// that changes between stations is where that line has got to. The rejected
+// skins were found by search — a raster distance field traced by marching
+// squares, and a CONVEX HULL of the duct points offset with rounds. Both
+// decide something discrete at every station (which pixels are inside,
+// which points are on the hull), that decision changes abruptly along the
+// path, and the arc-length resample that follows slides every vertex to a
+// different feature. The cubic loft then interpolates a set of points whose
+// positions AND correspondence jitter by a few tenths of a millimetre, and
+// a few tenths of a millimetre at a 5 mm spacing is exactly the scale of a
+// visible crease. It is not a resolution problem and it does not refine
+// away: the noise is uncorrelated station to station, so a finer raster or
+// more stations changes the texture without removing it.
+//
+// The corollary is the rule for anything added here later: build a solid
+// from rings the model can EVALUATE, never from rings a search returns.
+//
+// A BLANK is the duct's own station rings offset outward by `wall` on all
+// four sides, through the same mitred-offset machinery as the divider inset
+// run with the opposite sign. Constant on every side is deliberate: it makes
+// the wall exactly `wall` measured from the passage wherever you cut, and it
+// removes the throat-rim EARS the earlier scheme threw (it offset rim sides
+// by `wall` and shared sides by `wall - t/2`, and a mitre between two
+// different offsets lands off both lines — 0.73 mm of overshoot at every
+// cell junction, one of the owner's first CAD reports). Adjacent blanks
+// therefore interpenetrate wherever the ducts run closer than 2·wall, which
+// is most of the throat half of the horn; that is reported, not hidden, by
+// `shellOverlap`, and it is what a multicell horn's shared walls ARE.
 //
 // A CUTTER is the duct sections EXTENDED a few mm past both end faces —
 // standard CAD practice for a boolean tool. Without the extension the
@@ -4945,23 +4965,19 @@ export function apertureCapGrid(ring, ap) {
 // difference between the blank's cap and the duct's (order 1 mm on these
 // mouths); the default of 3 mm clears it with margin.
 //
-// The blanks' throat faces are all planar in z = 0, so after the boolean
-// the driver mating face is flat and carries the t-thick dividers between
-// passages; at the mouth the passages tile (the inset has tapered to
-// nothing), so every shared wall is cut to a knife edge and only the rim
-// margin survives as the mouth's end face — the outer rim termination,
-// which is also the edge a CAD fillet would round over against diffraction.
+// Both end faces are shared exactly with the duct's: the throat ring is
+// planar in z = 0 so the blank's is too, and the mouth ring is SNAPPED to
+// the aperture surface, so after the subtraction every cell's mouth face
+// lies on the one analytic surface the user's coverage arcs define.
 export function shellSections(cellRec, row, { t = 0, wall = 3, surf = null } = {}) {
-  const Q = row.sched.length - 1;
-  const rim = cellRec.rimSide || [false, false, false, false];
+  const duct = ductSections(cellRec, row, { t });
+  if (!duct) return null;
+  const Q = duct.length - 1;
   const ap = surf ? apertureFrame(surf) : null;
+  const d = [-wall, -wall, -wall, -wall];
   const out = [];
   for (let q = 0; q <= Q; q++) {
-    const st = row.sched[q];
-    if (!st.pts) return null;
-    const taper = 1 - st.s;
-    const d = rim.map((isRim) => -(isRim ? wall : Math.max(wall - (t / 2) * taper, 0)));
-    let pts = insetSection3(st.pts, d);
+    let pts = insetSection3(duct[q].pts, d);
     // THE MOUTH RING BELONGS TO THE APERTURE SURFACE, NOT TO A BEST-FIT PLANE.
     // insetSection3 offsets in the ring's own best-fit plane and keeps each
     // point's off-plane component, so a point that moves 3 mm sideways stays
@@ -4971,1010 +4987,67 @@ export function shellSections(cellRec, row, { t = 0, wall = 3, surf = null } = {
     // directions because every cell fits its own plane: the lip around each
     // cell's mouth left the aperture and no two lips agreed. Snapping puts
     // every mouth ring back on the one analytic surface.
-    if (ap && q === Q) { pts = pts.map(ap.snap); }
-    out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
+    if (ap && q === Q) pts = pts.map(ap.snap);
+    out.push({ s: duct[q].s, area: polyArea3(pts), pts, origin: duct[q].origin });
   }
   return out;
+}
+
+// Where adjacent blanks interpenetrate, and by how much. Blanks are the
+// ducts grown by the wall on every side, so two of them overlap wherever
+// their ducts run closer than 2·wall — near the throat, where the ducts
+// tile, and again at the mouth. That is not a defect: it is the shared wall
+// between two cells, and the cutters carve the passages back out of it. It
+// is measured and reported so the number is visible rather than assumed.
+export function shellOverlap(throat, map, { t = 0, wall = 3 } = {}) {
+  const seg = (p, A, B) => {
+    const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+    let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+    u = Math.max(0, Math.min(1, u));
+    return Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u);
+  };
+  const gap = (P, Q) => {
+    let m = Infinity;
+    for (const p of P) for (let k = 0; k < Q.length; k++) m = Math.min(m, seg(p, Q[k], Q[(k + 1) % Q.length]));
+    for (const q of Q) for (let k = 0; k < P.length; k++) m = Math.min(m, seg(q, P[k], P[(k + 1) % P.length]));
+    return m;
+  };
+  const byLabel = new Map();
+  for (const c of throat.cells) {
+    const row = map.rows.find((r) => r.id === c.id);
+    if (!row) return null;
+    const d = ductSections(c, row, { t });
+    if (!d) return null;
+    byLabel.set(c.label, d);
+  }
+  const S = byLabel.values().next().value.length;
+  let pairs = 0, touching = 0, apartMin = Infinity, apartAt = null, deepest = 0, deepestAt = null;
+  const stationsTouching = new Array(S).fill(0);
+  for (const c of throat.cells) {
+    const [col, rw] = c.label.split(",").map(Number);
+    for (const [dc, dr] of [[1, 0], [0, 1]]) {
+      const nb = `${col + dc},${rw + dr}`;
+      if (!byLabel.has(nb)) continue;
+      pairs++;
+      const A = byLabel.get(c.label), B = byLabel.get(nb);
+      let anyTouch = false;
+      for (let q = 0; q < S; q++) {
+        const g = gap(A[q].pts, B[q].pts) - 2 * wall;   // blank-to-blank, signed
+        if (g < 0) { anyTouch = true; stationsTouching[q]++; if (-g > deepest) { deepest = -g; deepestAt = { pair: `${c.label}-${nb}`, q }; } }
+        else if (g < apartMin) { apartMin = g; apartAt = { pair: `${c.label}-${nb}`, q }; }
+      }
+      if (anyTouch) touching++;
+    }
+  }
+  const fracTouching = stationsTouching.filter((n) => n > 0).length / S;
+  return { pairs, touching, deepest, deepestAt, apartMin, apartAt, fracTouching, stationsTouching, S };
 }
 
 // Extend a duct's sections past both end faces by translating a copy of each
 // end ring along that ring's own outward vector-area normal. The added
 // volume is exactly |A_vec|·ext per end — a translated ring spans a prism —
 // which is what the test asserts.
-// ── THE HORN BODY — ONE SOLID, SO THERE IS NOTHING TO UNION ────────────────
-//
-// The blanks above are per cell, and unioning them is where CAD gives up:
-// adjacent blanks overlap near both ends (the ducts nearly tile there) and
-// stand apart mid-path (the profile opens up to 14 mm between ducts), so
-// every neighbouring pair passes through EXACT TANGENTIAL CONTACT in
-// between — the ill-conditioned case for any kernel, and unavoidable for any
-// wall under half the widest duct gap. Measured at the defaults, wall 3: the
-// per-station minimum blank gap runs -7.5 mm at station 10 and +3.3 mm at
-// station 11. So the body is ONE solid and the boolean is eighteen
-// subtractions.
-//
-// ITS SKIN IS A BALL ROLLED OVER THE DUCTS. At every station the section is
-// built from the ducts' TRUE cross-sections by three morphological steps on a
-// distance field: dilate by the wall (the sleeve of every duct, a Minkowski
-// sum with a disc, tangent-continuous), CLOSE with a fairing radius (dilate
-// then erode — fills crotches and gaps narrower than twice the radius with
-// concave fillets, follows anything wider), and trace the iso-line. One rule,
-// the same at every station, nothing fitted afterwards:
-//
-//   - where the ducts tile (throat, mouth) the outline is the tiled outline
-//     plus the wall — the throat circle R + wall and the aperture rim + wall,
-//     exact by construction;
-//   - where the profile pulls the ducts apart, the fairing bridges gaps under
-//     2·fair with fillets and follows the outermost ducts at exactly the wall
-//     — including the SADDLE of this horn's mid-path sections (the side
-//     columns run ahead of the centre column at any height), which a convex
-//     hull bridged with 18-35 mm of material on a 3 mm spec;
-//   - where a bow carries a duct outward, its sleeve emerges from the skin
-//     through a concave fillet of the fairing radius. The bump IS the duct.
-//
-// THE STATIONS ARE SHEETS, NOT PLANES. Near the throat the ducts leave
-// axially and a flat slice is right; near the mouth they arrive normal to a
-// curved aperture, and a flat slice at any height misses the rim cells the
-// aperture has already ended, while the flow envelope's own level sets are
-// BOWLS (30-70 mm of off-plane spread) that fold a loft back on itself.
-// Each station is therefore a sheet  z = h(q) + w(q)·sag(x, y)  with h
-// running 0 -> depth and w a smoothstep 0 -> 1: the throat plane at one end,
-// the aperture itself at the other, every sheet in between roughly
-// perpendicular to the ducts. Each duct's ruled loft is cut by the sheet
-// vertex line by vertex line — exact for the loft the STEP carries, and free
-// of the station-index and plane-slab attributions that misled every earlier
-// version (a duct 20.6 mm outside a skin that read +2.96; a 12 mm phantom
-// hill; a hill placed three stations ahead of its bow).
-//
-// All 2-D work is done in the aperture's own ARC-LENGTH coordinates
-// (rH·a, rV·e), which are near-isometric on every sheet of the family, so a
-// 3 mm offset is 3 mm of wall measured along the surface even on the 45 deg
-// flanks near the mouth — an offset in x there would have been 4.2. The
-// throat, where a and e are tiny, sees plain (x, y) to 0.2%.
-//
-// The 3-D clearance (skinClearance) is measured once afterwards and reported.
-// It is verification, not a loop.
-
-// exact Euclidean distance transform (Felzenszwalb & Huttenlocher): squared
-// distance from every cell to the nearest cell where mask is truthy
-function edt2d(mask, W, H) {
-  const INF = 1e20;
-  const f = new Float64Array(Math.max(W, H)), d = new Float64Array(Math.max(W, H));
-  const v = new Int32Array(Math.max(W, H)), z = new Float64Array(Math.max(W, H) + 1);
-  const dt1 = (n) => {
-    let k = 0; v[0] = 0; z[0] = -INF; z[1] = INF;
-    for (let q = 1; q < n; q++) {
-      let sIn = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
-      while (sIn <= z[k]) { k--; sIn = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
-      k++; v[k] = q; z[k] = sIn; z[k + 1] = INF;
-    }
-    k = 0;
-    for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]; }
-  };
-  const out = new Float64Array(W * H);
-  for (let x = 0; x < W; x++) {
-    for (let y = 0; y < H; y++) f[y] = mask[y * W + x] ? 0 : INF;
-    dt1(H);
-    for (let y = 0; y < H; y++) out[y * W + x] = d[y];
-  }
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) f[x] = out[y * W + x];
-    dt1(W);
-    for (let x = 0; x < W; x++) out[y * W + x] = d[x];
-  }
-  return out;
-}
-
-// scanline fill of a closed polygon (pixel-centre coordinates). Even-odd by
-// default; NONZERO winding for an offset polygon, whose small backward
-// loops (adjacent flanks asking for different offsets) must fill as the
-// union they mean and not punch slivers out of the sleeve
-function fillPoly(mask, W, H, poly, nonzero = false) {
-  const n = poly.length;
-  let yMin = Infinity, yMax = -Infinity;
-  for (const p of poly) { yMin = Math.min(yMin, p[1]); yMax = Math.max(yMax, p[1]); }
-  const xs = [];
-  for (let y = Math.max(0, Math.ceil(yMin)); y <= Math.min(H - 1, Math.floor(yMax)); y++) {
-    xs.length = 0;
-    for (let i = 0; i < n; i++) {
-      const a = poly[i], b = poly[(i + 1) % n];
-      if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y))
-        xs.push([a[0] + ((y - a[1]) * (b[0] - a[0])) / (b[1] - a[1]), b[1] > a[1] ? 1 : -1]);
-    }
-    xs.sort((p, q) => p[0] - q[0]);
-    if (nonzero) {
-      let wnd = 0;
-      for (let i = 0; i + 1 < xs.length; i++) {
-        wnd += xs[i][1];
-        if (wnd !== 0)
-          for (let x = Math.max(0, Math.ceil(xs[i][0])); x <= Math.min(W - 1, Math.floor(xs[i + 1][0])); x++) mask[y * W + x] = 1;
-      }
-    } else {
-      for (let i = 0; i + 1 < xs.length; i += 2)
-        for (let x = Math.max(0, Math.ceil(xs[i][0])); x <= Math.min(W - 1, Math.floor(xs[i + 1][0])); x++) mask[y * W + x] = 1;
-    }
-  }
-}
-
-// the longest closed iso-line of a scalar field at `level` (marching squares
-// with linear interpolation), as an ordered polygon in pixel coordinates
-function isoLoop(field, W, H, level) {
-  const segs = [];
-  const at = (x, y) => field[y * W + x];
-  const lerp = (x0, y0, x1, y1) => {
-    const a = at(x0, y0) - level, b = at(x1, y1) - level;
-    const t = a / (a - b || 1e-18);
-    return [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t];
-  };
-  for (let y = 0; y < H - 1; y++)
-    for (let x = 0; x < W - 1; x++) {
-      const c = (at(x, y) >= level ? 1 : 0) | (at(x + 1, y) >= level ? 2 : 0) | (at(x + 1, y + 1) >= level ? 4 : 0) | (at(x, y + 1) >= level ? 8 : 0);
-      if (c === 0 || c === 15) continue;
-      const T = lerp(x, y, x + 1, y), Rt = lerp(x + 1, y, x + 1, y + 1), B = lerp(x, y + 1, x + 1, y + 1), L = lerp(x, y, x, y + 1);
-      const push = (p, q) => segs.push([p, q]);
-      switch (c) {
-        case 1: case 14: push(L, T); break;
-        case 2: case 13: push(T, Rt); break;
-        case 3: case 12: push(L, Rt); break;
-        case 4: case 11: push(Rt, B); break;
-        case 5: push(L, T); push(Rt, B); break;
-        case 6: case 9: push(T, B); break;
-        case 7: case 8: push(L, B); break;
-        case 10: push(T, Rt); push(L, B); break;
-        default: break;
-      }
-    }
-  // link segments into loops by endpoint hashing
-  const key = (p) => `${Math.round(p[0] * 64)},${Math.round(p[1] * 64)}`;
-  const adj = new Map();
-  segs.forEach((sg, i) => {
-    for (const p of sg) { const k = key(p); if (!adj.has(k)) adj.set(k, []); adj.get(k).push(i); }
-  });
-  const used = new Uint8Array(segs.length);
-  let best = null;
-  for (let i = 0; i < segs.length; i++) {
-    if (used[i]) continue;
-    const loop = [segs[i][0]];
-    let cur = i, end = segs[i][1];
-    used[i] = 1;
-    let guard = 0;
-    while (guard++ < segs.length + 2) {
-      loop.push(end);
-      const cands = (adj.get(key(end)) || []).filter((j) => !used[j]);
-      if (!cands.length) break;
-      const j = cands[0];
-      used[j] = 1;
-      end = key(segs[j][0]) === key(end) ? segs[j][1] : segs[j][0];
-      cur = j;
-    }
-    if (!best || loop.length > best.length) best = loop;
-  }
-  return best;
-}
-
-export function hornBodySections(throat, opts, { wall = 3, stations = null, map = null, t = 0, per = 48, fair = null, debug = false, outlines = false } = {}) {
-  const say = debug ? (...a) => console.log("[hornBody]", ...a) : () => {};
-  // The skin has its own station count, finer than the ducts': the loft
-  // between two sheets is straight, and a bowed duct that travels 30 mm
-  // sideways between 12.5 mm sheets (the default throat-fifth bow at these
-  // defaults) measured 0.8 mm of wall on a 3 mm spec. The ducts are cut
-  // wherever the sheets meet their vertex lines, so their own count does
-  // not enter.
-  if (stations == null) stations = Math.min(96, Math.max(48, 2 * ((map && map.rows.length && map.rows[0].sched.length - 1) || 24)));
-  const env = mapThroatToMouth(throat, {
-    ...opts, sectionMode: "flow", profileT: null,
-    lengthen: null, separate: null, bulge: null,
-    stations, keepGeometry: true, computeClearance: false,
-  });
-  if (!env || !env.rows.length || !env.rows[0].sched[0].pts) return null;
-  const S = stations + 1;
-  const N0 = env.rows[0].sched[0].pts.length, per0 = N0 / 4;
-  if (!Number.isInteger(per0)) return null;
-  const N = 4 * per;
-  const R = opts.R, depth = opts.depth;
-  const surf = env.mouthSurf;
-  if (!surf) return null;
-
-  // ── the rim loop of the flow envelope: the four corner points per station ─
-  const segs = [];
-  for (const row of env.rows) {
-    const cell = throat.cells.find((x) => x.id === row.id);
-    const rim = (cell && cell.rimSide) || [];
-    for (let sd = 0; sd < 4; sd++) if (rim[sd]) segs.push({ row, id: row.id, s: sd, rev: false });
-  }
-  if (segs.length < 4) return null;
-  const raw = (seg, q) => {
-    const P = seg.row.sched[q].pts, out = [];
-    for (let i = 0; i <= per0; i++) out.push(P[(seg.s * per0 + i) % N0]);
-    return seg.rev ? out.reverse() : out;
-  };
-  const d3 = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]);
-  const order = [segs[0]];
-  let pool = segs.slice(1), chainErr = 0;
-  while (pool.length) {
-    const end = raw(order[order.length - 1], 0)[per0];
-    let best = -1, bd = Infinity, rev = false;
-    pool.forEach((sg, i) => {
-      const p = raw({ ...sg, rev: false }, 0);
-      const a = d3(p[0], end), b = d3(p[per0], end);
-      if (a < bd) { bd = a; best = i; rev = false; }
-      if (b < bd) { bd = b; best = i; rev = true; }
-    });
-    chainErr = Math.max(chainErr, bd);
-    const sg = pool.splice(best, 1)[0]; sg.rev = rev; order.push(sg);
-  }
-  const closeErr = d3(raw(order[order.length - 1], 0)[per0], raw(order[0], 0)[0]);
-  const K = order.length;
-  const isCorner = (k) => order[k].id === order[(k + 1) % K].id;
-  const starts = [];
-  for (let k = 0; k < K; k++) if (isCorner(k)) starts.push((k + 1) % K);
-  if (starts.length !== 4) return null;
-  const cornerPts = (q) => starts.map((k) => raw(order[k], q)[0]);
-
-  // ── the aperture's arc-length coordinates, and the sheet family ──────────
-  const { rH, rV } = surf;
-  const fH = isFinite(rH), fV = isFinite(rV);
-  const clampAsin = (x) => Math.asin(Math.max(-0.999, Math.min(0.999, x)));
-  const to2 = (p) => {
-    const e = fV ? clampAsin(p[1] / rV) : 0;
-    const sg = fV ? rV * (1 - Math.cos(e)) : 0;
-    const a = fH ? clampAsin(p[0] / (rH - sg)) : 0;
-    return [fH ? rH * a : p[0], fV ? rV * e : p[1]];
-  };
-  // (u, v) -> x, y and the aperture's own height there
-  const lift = (u, v) => {
-    const a = fH ? u / rH : 0, e = fV ? v / rV : 0;
-    const sg = fV ? rV * (1 - Math.cos(e)) : 0;
-    const x = fH ? (rH - sg) * Math.sin(a) : u, y = fV ? rV * Math.sin(e) : v;
-    const zAp = depth - (fH ? rH * (1 - Math.cos(a)) : 0) - sg * (fH ? Math.cos(a) : 1);
-    return [x, y, zAp];
-  };
-  // THE SHEETS ARE THE FLOW'S OWN LEVEL SETS, smoothed. A station of the
-  // flow map is one level set of path fraction, and every duct's own station
-  // sits on or near it whatever the duct has been made to do since (a bow
-  // moves a section sideways along that surface, not off it), so the family
-  // is transverse to the ducts by construction — measured at the vertex
-  // lines, worst 39 deg plain and 52 deg with a bulge and a short-axis bow,
-  // where the earlier family z = h(q) + w(q)·sag(x, y) (throat plane
-  // blending into the aperture) read 61 and 79 deg, and a bowed duct ran
-  // along one of its sheets for 60 mm and came out 0.1 mm from the skin.
-  // Each level set is fitted by a symmetric polynomial in the arc-length
-  // coordinates (a graph over (u, v), residual 0.3 mm on the flow's own
-  // points), so the sheet is smooth, has a gradient everywhere, and
-  // continues smoothly beyond the envelope into the wall. The throat sheet
-  // is the throat plane exactly and the mouth sheet the aperture exactly.
-  const sheetZ = [];
-  {
-    const zApOf = (u, v) => lift(u, v)[2];
-    for (let q = 0; q < S; q++) {
-      if (q === 0) { sheetZ.push(() => 0); continue; }
-      if (q === S - 1) { sheetZ.push(zApOf); continue; }
-      const pts = [];
-      for (const row of env.rows) for (const p of row.sched[q].pts) pts.push([...to2(p), p[2]]);
-      let uMax = 1e-9, vMax = 1e-9;
-      for (const p of pts) { uMax = Math.max(uMax, Math.abs(p[0])); vMax = Math.max(vMax, Math.abs(p[1])); }
-      // even terms only (both mirrors), up to sixth order; ridge-regularised,
-      // and the coordinates softly saturated at the data's own extent so the
-      // sheet continues FLAT beyond the envelope rather than as a polynomial:
-      // with the saturation 30% past the data a sixth-order fit of a flat
-      // near-throat level set deepened 37 mm just outside it, consecutive
-      // sheets crossed there, and the loft over a half-path bow folded
-      const soft = (x) => Math.tanh(x);
-      const basis = (u, v) => {
-        const U = soft(u / uMax), V = soft(v / vMax), U2 = U * U, V2 = V * V;
-        return [1, U2, V2, U2 * U2, U2 * V2, V2 * V2, U2 * U2 * U2, U2 * U2 * V2, U2 * V2 * V2, V2 * V2 * V2];
-      };
-      const nb = 10, A = Array.from({ length: nb }, () => new Array(nb).fill(0)), b = new Array(nb).fill(0);
-      for (const p of pts) {
-        const B = basis(p[0], p[1]);
-        for (let i = 0; i < nb; i++) { b[i] += B[i] * p[2]; for (let j = 0; j < nb; j++) A[i][j] += B[i] * B[j]; }
-      }
-      const ridge = 1e-6 * pts.length;
-      for (let i = 1; i < nb; i++) A[i][i] += ridge;
-      const c = solveDense(A, b);
-      if (!c) { sheetZ.push(null); continue; }
-      sheetZ.push((u, v) => { const B = basis(u, v); let z = 0; for (let i = 0; i < nb; i++) z += B[i] * c[i]; return z; });
-    }
-    if (sheetZ.some((f) => !f)) return null;
-  }
-  const sheetF = (p, q) => { const [u, v] = to2(p); return p[2] - sheetZ[q](u, v); };
-
-  const body = { sections: [], chainErr, closeErr, n: per, surf, clearance: null, mode: map ? "wrap" : "envelope", fair: null, validity: [] };
-
-  // ── no ducts supplied: the flow envelope offset by the wall (the old form)
-  const flowRing = (q) => {
-    const runs = [[], [], [], []];
-    { let r = 0; for (let k = 0; k < K; k++) { const idx = (starts[0] + k) % K; runs[r].push(order[idx]); if (isCorner(idx) && r < 3) r++; } }
-    const ring = [];
-    for (const run of runs) {
-      const pts = [];
-      for (const seg of run) { const p = raw(seg, q); for (let i = 0; i < p.length - (seg === run[run.length - 1] ? 0 : 1); i++) pts.push(p[i]); }
-      // arc-length resample
-      const L = [0];
-      for (let i = 0; i < pts.length - 1; i++) L.push(L[i] + d3(pts[i], pts[i + 1]));
-      const tot = L[L.length - 1] || 1e-12;
-      for (let k = 0; k < per; k++) {
-        const target = (tot * k) / per; let i = 0;
-        while (i < pts.length - 2 && L[i + 1] < target) i++;
-        const u = (target - L[i]) / Math.max(L[i + 1] - L[i], 1e-12), a = pts[i], b = pts[i + 1];
-        ring.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]);
-      }
-    }
-    return ring;
-  };
-  const ap = apertureFrame(surf);
-  if (!map || !map.rows.length || !map.rows[0].sched[0].pts) {
-    for (let q = 0; q < S; q++) {
-      let out = insetSection3(flowRing(q), [-wall, -wall, -wall, -wall]);
-      if (q === 0 && R > 0) out = polishThroat(out, R + wall);
-      if (q === S - 1) out = out.map(ap.snap);
-      body.sections.push({ s: q / stations, area: polyArea3(out), pts: out, origin: env.rows[0].sched[q].origin });
-    }
-    return body;
-  }
-
-  // ── the ducts as lofted ────────────────────────────────────────────────────
-  const ducts = [];
-  for (const cellRec of throat.cells) {
-    const row = map.rows.find((r) => r.id === cellRec.id);
-    if (!row) continue;
-    const d = ductSections(cellRec, row, { t });
-    if (d) ducts.push(d);
-  }
-  if (!ducts.length) return null;
-
-  // the sheet cut of every duct at station q: one 2-D polygon per duct, in
-  // arc-length coordinates, from the crossing of each vertex line of the
-  // ruled loft with the sheet. Both end stations take the ducts' own rings,
-  // which lie exactly in the throat plane and on the aperture. With each
-  // vertex comes its 3-D crossing point and the unit direction of its vertex
-  // line there — what the sleeve construction below needs.
-  const cutAt = (q) => {
-    const polys = [], pts3 = [], dirs = [];
-    let found = 0, total = 0;
-    const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1e-12; return [v[0] / l, v[1] / l, v[2] / l]; };
-    for (const d of ducts) {
-      const Nd = d[0].pts.length, poly = [], p3 = [], dr = [];
-      const dirAt = (j0, j1, k) => unit([d[j1].pts[k][0] - d[j0].pts[k][0], d[j1].pts[k][1] - d[j0].pts[k][1], d[j1].pts[k][2] - d[j0].pts[k][2]]);
-      const Sd = d.length;
-      if (q === 0 || q === S - 1) {
-        const jq = q === 0 ? 0 : Sd - 1, j0 = q === 0 ? 0 : Sd - 2;
-        for (let k = 0; k < Nd; k++) { poly.push(to2(d[jq].pts[k])); p3.push(d[jq].pts[k]); dr.push(dirAt(j0, j0 + 1, k)); }
-        found += Nd; total += Nd;
-      } else {
-        // the vertex line's crossing of the sheet nearest ITS OWN station of
-        // the same path fraction: a bowed line can cross a bowl-shaped sheet
-        // three times (out through its rising rim and back), and the first
-        // crossing put a duct's cut 100 mm from where the duct was — a 51 mm
-        // fairing radius on one case, an 11 mm protrusion on another
-        const jStar = (q / (S - 1)) * (Sd - 1);
-        for (let k = 0; k < Nd; k++) {
-          total++;
-          let best = null, bestD = Infinity, prevF = sheetF(d[0].pts[k], q);
-          for (let j = 1; j < Sd; j++) {
-            const fv = sheetF(d[j].pts[k], q);
-            if (prevF <= 0 && fv > 0) {
-              const f = -prevF / (fv - prevF), dj = Math.abs(j - 1 + f - jStar);
-              if (dj < bestD) { bestD = dj; best = { j, f }; }
-            }
-            prevF = fv;
-          }
-          if (best) {
-            const { j, f } = best, prev = d[j - 1].pts[k], p = d[j].pts[k];
-            const pt = [prev[0] + (p[0] - prev[0]) * f, prev[1] + (p[1] - prev[1]) * f, prev[2] + (p[2] - prev[2]) * f];
-            poly.push(to2(pt)); p3.push(pt); dr.push(dirAt(j - 1, j, k));
-            found++;
-          }
-        }
-      }
-      if (poly.length >= 3) { polys.push(poly); pts3.push(p3); dirs.push(dr); }
-    }
-    return { polys, pts3, dirs, valid: found / total, q };
-  };
-
-  // THE SLEEVE of a duct on a sheet is the duct grown by a ball of radius
-  // `wall`, cut by the sheet — the wall measured perpendicular to the duct,
-  // wherever the duct is heading. Built directly as a 2-D polygon:
-  //   - along a flank (the plane through the edge's two crossing points and
-  //     the vertex line), the sheet meets the slab of half-width `wall` at an
-  //     offset of wall / |e·n| along the edge's outward 2-D normal, e being
-  //     that normal's own 3-D direction within the sheet and n the flank's;
-  //   - round a convex corner, the sheet meets the CYLINDER about the corner
-  //     line at an ELLIPSE: radius wall / sqrt(1 - (e·T)^2) in each direction,
-  //     T the line's unit direction — the semi-minor is the wall, the
-  //     semi-major wall / cos(phi) along the line's own heading, phi its
-  //     inclination to the sheet normal.
-  // A circle of radius wall at a corner heading out at 65 deg measured 2.2 mm
-  // of wall on a 3 mm spec: the offset that way runs nearly along the corner
-  // line, and only cos(65 deg) of it is perpendicular to it. The 2-D metric
-  // is taken from the sheet itself (finite differences of its 3-D map), so
-  // none of it assumes (u, v) isometric. Offsets are capped at 3·wall.
-  const sleeveOf = (P, p3, dr, q, allow) => {
-    const n = P.length;
-    let A2 = 0;
-    for (let k = 0; k < n; k++) A2 += P[k][0] * P[(k + 1) % n][1] - P[(k + 1) % n][0] * P[k][1];
-    const sg = A2 >= 0 ? 1 : -1;
-    const E = (u, v) => { const L = lift(u, v); return [L[0], L[1], sheetZ[q](u, v)]; };
-    const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1e-12; return [v[0] / l, v[1] / l, v[2] / l]; };
-    const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-    const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    const eps = 0.5, cap = 3 * wall;
-    // the sheet's 3-D direction for a 2-D direction at vertex k
-    const jac = P.map(([u, v]) => {
-      const Eu = E(u + eps, v), Eu0 = E(u - eps, v), Ev = E(u, v + eps), Ev0 = E(u, v - eps);
-      return [[(Eu[0] - Eu0[0]) / (2 * eps), (Eu[1] - Eu0[1]) / (2 * eps), (Eu[2] - Eu0[2]) / (2 * eps)],
-              [(Ev[0] - Ev0[0]) / (2 * eps), (Ev[1] - Ev0[1]) / (2 * eps), (Ev[2] - Ev0[2]) / (2 * eps)]];
-    });
-    const dir3 = (k, u2) => unit([jac[k][0][0] * u2[0] + jac[k][1][0] * u2[1], jac[k][0][1] * u2[0] + jac[k][1][1] * u2[1], jac[k][0][2] * u2[0] + jac[k][1][2] * u2[1]]);
-    // per edge: outward 2-D normal and the flank normal at each end
-    const eNorm = [], fNorm = [];
-    for (let k = 0; k < n; k++) {
-      const a = P[k], b = P[(k + 1) % n];
-      const e = [b[0] - a[0], b[1] - a[1]], l = Math.hypot(e[0], e[1]) || 1e-12;
-      eNorm.push([(sg * e[1]) / l, (-sg * e[0]) / l]);
-      const U = [p3[(k + 1) % n][0] - p3[k][0], p3[(k + 1) % n][1] - p3[k][1], p3[(k + 1) % n][2] - p3[k][2]];
-      fNorm.push([unit(cross3(U, dr[k])), unit(cross3(U, dr[(k + 1) % n]))]);
-    }
-    const flankR = (k, e, end) => Math.min(cap, wall / Math.max(Math.abs(dot3(dir3(k, eNorm[e]), fNorm[e][end])), 1 / 3));
-    const lineR = (k, u2) => { const c = dot3(dir3(k, u2), dr[k]); return Math.min(cap, wall / Math.max(Math.sqrt(Math.max(0, 1 - c * c)), 1 / 3)); };
-    const off = [];
-    for (let k = 0; k < n; k++) {
-      const ePrev = (k - 1 + n) % n, eNext = k;
-      const b = P[k], n1 = eNorm[ePrev], n2 = eNorm[eNext];
-      const turn = n1[0] * n2[1] - n1[1] * n2[0];   // > 0 where the outline turns left (CCW), i.e. a convex corner
-      const r1 = flankR(k, ePrev, 1) + allow, r2 = flankR(k, eNext, 0) + allow;
-      // the end of the previous flank's offset edge
-      off.push([b[0] + n1[0] * r1, b[1] + n1[1] * r1]);
-      if (turn >= 0) {
-        // convex: the ellipse from n1 to n2
-        const a1 = Math.atan2(n1[1], n1[0]);
-        let dth = Math.atan2(n2[1], n2[0]) - a1;
-        if (dth > Math.PI) dth -= 2 * Math.PI; if (dth < -Math.PI) dth += 2 * Math.PI;
-        const steps = Math.max(1, Math.ceil(Math.abs(dth) / (Math.PI / 12)));
-        for (let j = 0; j <= steps; j++) {
-          const th = a1 + (dth * j) / steps, u2 = [Math.cos(th), Math.sin(th)];
-          const r = lineR(k, u2) + allow;
-          off.push([b[0] + u2[0] * r, b[1] + u2[1] * r]);
-        }
-      } else {
-        // concave: the mitre, limited to twice the larger offset
-        let m = [n1[0] + n2[0], n1[1] + n2[1]];
-        const ml = Math.hypot(m[0], m[1]);
-        m = ml < 1e-9 ? n1 : [m[0] / ml, m[1] / ml];
-        const cosHalf = Math.max(0.5, m[0] * n1[0] + m[1] * n1[1]);
-        const r = Math.max(r1, r2);
-        off.push([b[0] + (m[0] * r) / cosHalf, b[1] + (m[1] * r) / cosHalf]);
-      }
-      // the start of the next flank's offset edge
-      off.push([b[0] + n2[0] * r2, b[1] + n2[1] * r2]);
-    }
-    return off;
-  };
-
-  // the raster of a station at `px` mm per pixel: every duct's cut filled
-  // together with its sleeve. One pixel is added to the offsets: the two
-  // thresholded steps that follow each round at the pixel, and measured on
-  // a square the outline lands 0.6 px under to 1.3 px over the offset asked
-  // for, so the allowance turns that into never under (worst case measured
-  // wall + 0.03 to wall + 1.3 px).
-  const rasterOf = (cut, fairMm, coarse) => {
-    const { polys, pts3, dirs, q } = cut;
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const P of polys) for (const p of P) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
-    const margin = 3 * wall + fairMm + 2;
-    const ext = Math.max(x1 - x0, y1 - y0) + 2 * margin;
-    const pxFine = Math.max(0.2, Math.min(0.6, ext / 900)), px = pxFine * coarse;
-    const W = Math.ceil((x1 - x0 + 2 * margin) / px) + 1, H = Math.ceil((y1 - y0 + 2 * margin) / px) + 1;
-    const ox = x0 - margin, oy = y0 - margin;
-    const mask = new Uint8Array(W * H);
-    const toPx = (p) => [(p[0] - ox) / px, (p[1] - oy) / px];
-    polys.forEach((P, i) => {
-      fillPoly(mask, W, H, sleeveOf(P, pts3[i], dirs[i], q, pxFine).map(toPx), true);
-      fillPoly(mask, W, H, P.map(toPx));
-    });
-    return { W, H, px, ox, oy, A: mask, d2: edt2d(mask, W, H) };
-  };
-  // the closing of the sleeves by a disc of radius `fairMm`, as a distance
-  // field: dilate by the radius, then the distance to the complement of that
-  // dilation — its iso-line at the radius is the erosion boundary, i.e. the
-  // closing's outline, exact to a fraction of a pixel and tangent-continuous
-  const closingField = (ras, fairMm) => {
-    const { W, H, px, d2 } = ras;
-    const fairPx = fairMm / px;
-    const B = new Uint8Array(W * H);
-    for (let i = 0; i < W * H; i++) B[i] = d2[i] <= fairPx * fairPx ? 0 : 1;
-    const d3f = edt2d(B, W, H);
-    const field = new Float64Array(W * H);
-    for (let i = 0; i < W * H; i++) field[i] = Math.sqrt(d3f[i]);
-    return { field, fairPx };
-  };
-  // how many pieces the closing leaves (4-connected flood fill)
-  const pieces = (ras, fairMm) => {
-    const { W, H, px } = ras, { field, fairPx } = closingField(ras, fairMm);
-    const seen = new Uint8Array(W * H);
-    let n = 0;
-    const stack = [], minArea = ((2 * wall) / px) ** 2;   // anything smaller is a sliver, not a piece
-    for (let i = 0; i < W * H; i++) {
-      if (seen[i] || field[i] < fairPx) continue;
-      let area = 0;
-      seen[i] = 1; stack.push(i);
-      while (stack.length) {
-        const j = stack.pop(), x = j % W, y = (j - x) / W;
-        area++;
-        for (const k of [x > 0 ? j - 1 : -1, x < W - 1 ? j + 1 : -1, y > 0 ? j - W : -1, y < H - 1 ? j + W : -1])
-          if (k >= 0 && !seen[k] && field[k] >= fairPx) { seen[k] = 1; stack.push(k); }
-      }
-      if (area >= minArea) n++;
-    }
-    return n;
-  };
-  // the smallest fairing radius that leaves this station in ONE piece — the
-  // closing joins two pieces once the radius reaches half their gap, so the
-  // count is monotone in the radius and bisection finds it. Searched on a
-  // coarse raster; the station is then built on the fine one.
-  const fairNeeded = (cut) => {
-    const cap = 200;
-    const ras = rasterOf(cut, cap, 4);
-    if (pieces(ras, 0.01) === 1) return 0;
-    let lo = 0, hi = cap;
-    if (pieces(ras, hi) > 1) return Infinity;
-    while (hi - lo > 0.25) { const mid = (lo + hi) / 2; if (pieces(ras, mid) === 1) hi = mid; else lo = mid; }
-    return hi;
-  };
-  // the outline of a station at the chosen fairing radius
-  const outlineOf = (cut, fairMm) => {
-    const ras = rasterOf(cut, fairMm, 1);
-    const { W, H, px, ox, oy } = ras;
-    const { field, fairPx } = closingField(ras, fairMm);
-    const loop = isoLoop(field, W, H, fairPx);
-    return loop ? loop.map((p) => [ox + p[0] * px, oy + p[1] * px]) : null;
-  };
-
-  // split a closed outline at the four corner rays about its centre and
-  // resample each run to `per` points. The parameter is arc length PLUS
-  // 2·wall per radian of turning, so a round of radius `wall` (a quarter
-  // turn in 4.7 mm of arc at wall 3) carries three or four vertices instead
-  // of one: at ~5 mm of plain arc-length spacing the loft's chord across
-  // such a corner measured 0.9 mm of wall on a 3 mm spec. The turning is read
-  // off a copy smoothed over ±2·wall, so the trace's sub-pixel jitter does
-  // not add up along the straights.
-  const ringFromOutline = (O, ctr, rays) => {
-    // orient counter-clockwise
-    let A2 = 0;
-    for (let i = 0; i < O.length; i++) { const a = O[i], b = O[(i + 1) % O.length]; A2 += a[0] * b[1] - b[0] * a[1]; }
-    if (A2 < 0) O = O.slice().reverse();
-    // resample uniformly at a fine step, after a light smoothing of the trace
-    // (±2 of its ~0.6 mm samples): marching squares on a pixel-centre field
-    // leaves sub-pixel jitter that read as 10 rad of turning on a 247 mm
-    // near-circle. Nothing the smoothing touches is under 1 mm, and the
-    // smallest real feature is the wall-radius round.
-    const step = 0.5;
-    const F = [];
-    {
-      const M0 = O.length;
-      const Os = O.map((_, i) => { let x = 0, y = 0; for (let j = -2; j <= 2; j++) { const p = O[(i + j + M0) % M0]; x += p[0]; y += p[1]; } return [x / 5, y / 5]; });
-      const L = [0];
-      for (let i = 0; i < M0; i++) { const a = Os[i], b = Os[(i + 1) % M0]; L.push(L[i] + Math.hypot(b[0] - a[0], b[1] - a[1])); }
-      const tot = L[M0], n = Math.max(16, Math.round(tot / step));
-      let i = 0;
-      for (let k = 0; k < n; k++) {
-        const target = (tot * k) / n;
-        while (i < M0 - 1 && L[i + 1] < target) i++;
-        const u = (target - L[i]) / Math.max(L[i + 1] - L[i], 1e-12), a = Os[i], b = Os[(i + 1) % M0];
-        F.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]);
-      }
-    }
-    const M = F.length;
-    // turning per sample, read over ±3 samples (±1.5 mm) — wide enough to
-    // sit above the residual jitter, narrow enough that a round next to a
-    // fillet keeps its own turning rather than cancelling against it
-    const win = 3;
-    const ang = F.map((_, i) => { const a = F[(i - win + M) % M], b = F[(i + win) % M]; return Math.atan2(b[1] - a[1], b[0] - a[0]); });
-    const weight = new Float64Array(M);   // weight of the step from i to i+1
-    for (let i = 0; i < M; i++) {
-      let dth = ang[(i + 1) % M] - ang[i];
-      if (dth > Math.PI) dth -= 2 * Math.PI; if (dth < -Math.PI) dth += 2 * Math.PI;
-      const a = F[i], b = F[(i + 1) % M];
-      weight[i] = Math.hypot(b[0] - a[0], b[1] - a[1]) + 4 * wall * Math.abs(dth);
-    }
-    const angOf = (p) => Math.atan2(p[1] - ctr[1], p[0] - ctr[0]);
-    // the OUTERMOST forward crossing of the ray — the outline need not be
-    // star-shaped about the centre once the fillets are deep
-    const cross = (a) => {
-      let best = null, br = -Infinity;
-      const ux = Math.cos(a), uy = Math.sin(a);
-      for (let i = 0; i < M; i++) {
-        const P = F[i], Q = F[(i + 1) % M];
-        let d = angOf(Q) - angOf(P); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
-        let e = a - angOf(P); if (e > Math.PI) e -= 2 * Math.PI; if (e < -Math.PI) e += 2 * Math.PI;
-        if (d > 0 && e >= 0 && e <= d) {
-          const den = (Q[0] - P[0]) * uy - (Q[1] - P[1]) * ux;
-          let pt;
-          if (Math.abs(den) < 1e-12) pt = P;
-          else { const sPar = ((P[0] - ctr[0]) * uy - (P[1] - ctr[1]) * ux) / -den; pt = [P[0] + (Q[0] - P[0]) * sPar, P[1] + (Q[1] - P[1]) * sPar]; }
-          const r = (pt[0] - ctr[0]) * ux + (pt[1] - ctr[1]) * uy;
-          if (r > br) { br = r; best = { i, pt }; }
-        }
-      }
-      return best;
-    };
-    const cs = rays.map(cross);
-    if (cs.some((c) => !c)) return null;
-    const ring = [];
-    for (let sd = 0; sd < 4; sd++) {
-      const c0 = cs[sd], c1 = cs[(sd + 1) % 4];
-      const pts = [c0.pt], wts = [];
-      // the partial first step and the whole steps up to the crossing edge
-      {
-        const a = c0.pt, b = F[(c0.i + 1) % M];
-        const full = Math.hypot(F[(c0.i + 1) % M][0] - F[c0.i][0], F[(c0.i + 1) % M][1] - F[c0.i][1]) || 1e-12;
-        wts.push((weight[c0.i] * Math.hypot(b[0] - a[0], b[1] - a[1])) / full);
-      }
-      let i = (c0.i + 1) % M, guard = 0;
-      while (i !== c1.i && guard++ < M) { pts.push(F[i]); wts.push(weight[i]); i = (i + 1) % M; }
-      pts.push(F[c1.i]);
-      {
-        const a = F[c1.i], b = c1.pt;
-        const full = Math.hypot(F[(c1.i + 1) % M][0] - F[c1.i][0], F[(c1.i + 1) % M][1] - F[c1.i][1]) || 1e-12;
-        wts.push((weight[c1.i] * Math.hypot(b[0] - a[0], b[1] - a[1])) / full);
-      }
-      pts.push(c1.pt);
-      const L = [0];
-      for (let j = 0; j < wts.length; j++) L.push(L[j] + wts[j]);
-      const tot = L[L.length - 1] || 1e-12;
-      for (let k = 0; k < per; k++) {
-        const target = (tot * k) / per; let j = 0;
-        while (j < pts.length - 2 && L[j + 1] < target) j++;
-        const u = (target - L[j]) / Math.max(L[j + 1] - L[j], 1e-12), a = pts[j], b = pts[j + 1];
-        ring.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]);
-      }
-    }
-    return ring;
-  };
-
-  // ── the cuts, and the fairing radius they need ───────────────────────────
-  const cuts = [];
-  const tCut = Date.now();
-  for (let q = 0; q < S; q++) {
-    const cut = cutAt(q);
-    body.validity.push(cut.valid);
-    if (!cut.polys.length || cut.valid < 0.9) { say("q", q, "cut invalid", cut.polys.length, cut.valid); return null; }
-    cuts.push(cut);
-  }
-  // One radius for the whole horn, so the fillets read as one form down the
-  // body: the largest any station needs to stay in one piece (mid-path the
-  // rows of this horn stand ~26 mm apart sleeve to sleeve, so a 12 mm ball
-  // leaves three tubes), with a margin, and never under 2·wall.
-  let needMax = 0, needAt = -1;
-  const tFair = Date.now();
-  say("cuts", tFair - tCut, "ms");
-  // searched on every fourth station (connectivity changes slowly along the
-  // horn); a station the sparse search missed is caught by the enclosure
-  // check below, which raises the radius and rebuilds
-  for (let q = 0; q < S; q += (q + 4 < S - 1 ? 4 : S - 1 - q || 1)) { const nd = fairNeeded(cuts[q]); if (nd > needMax) { needMax = nd; needAt = q; } }
-  say("fair search", Date.now() - tFair, "ms");
-  if (!isFinite(needMax)) { say("no fairing radius under 200 mm joins station", needAt); return null; }
-  let FAIR = fair == null ? Math.max(2 * wall, Math.ceil(needMax * 1.15)) : fair;
-  body.fairNeeded = needMax; body.fairAt = needAt;
-
-  // ── the rings ─────────────────────────────────────────────────────────────
-  // The radius was searched on a coarse raster; if the fine one still leaves
-  // a station in pieces (the outline traced does not go round every duct),
-  // the radius is raised and every station rebuilt, so the whole body
-  // carries one radius.
-  const encloses = (O, P) => {
-    // winding of O about the polygon's centroid
-    let cx = 0, cy = 0;
-    for (const p of P) { cx += p[0] / P.length; cy += p[1] / P.length; }
-    let wnd = 0;
-    for (let i = 0; i < O.length; i++) {
-      const a = O[i], b = O[(i + 1) % O.length];
-      let d = Math.atan2(b[1] - cy, b[0] - cx) - Math.atan2(a[1] - cy, a[0] - cx);
-      if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
-      wnd += d;
-    }
-    return Math.abs(wnd) > Math.PI;
-  };
-  const tRings = Date.now();
-  for (let attempt = 0; attempt < 12; attempt++) {
-    body.sections.length = 0;
-    let ok = true;
-    for (let q = 0; q < S && ok; q++) {
-      const polys = cuts[q].polys;
-      const O = outlineOf(cuts[q], FAIR);
-      if (!O || O.length < 8 || !polys.every((P) => encloses(O, P))) { say("q", q, "fair", FAIR, "outline in pieces"); ok = false; break; }
-      if (outlines) (body.outlines = body.outlines || [])[q] = O;
-      // the centre and corner rays: the flow envelope's four rim corners, in
-      // arc-length coordinates about the cut's own centre
-      let cu = 0, cv = 0, cn = 0;
-      for (const P of polys) for (const p of P) { cu += p[0]; cv += p[1]; cn++; }
-      const ctr = [cu / cn, cv / cn];
-      const rays = cornerPts(q).map((p) => { const w = to2(p); return Math.atan2(w[1] - ctr[1], w[0] - ctr[0]); });
-      const ring2 = ringFromOutline(O, ctr, rays);
-      if (!ring2) { say("q", q, "ring split failed", O.length, ctr, rays); return null; }
-      let out = ring2.map(([u, v]) => { const [x, y] = lift(u, v); return [x, y, sheetZ[q](u, v)]; });
-      if (q === 0) out = out.map((p) => [p[0], p[1], 0]);
-      if (q === 0 && R > 0) out = polishThroat(out, R + wall, 0.5 * wall + 0.5);
-      body.sections.push({ s: q / stations, area: polyArea3(out), pts: out, origin: env.rows[0].sched[q].origin });
-    }
-    if (ok) break;
-    if (fair != null) return null;   // a radius the caller fixed is not raised behind their back
-    FAIR = Math.ceil(FAIR * 1.1 + 1);
-  }
-  if (body.sections.length !== S) return null;
-  body.fair = FAIR;
-  say("rings", Date.now() - tRings, "ms");
-  if (debug) { body.cuts = cuts; body.to2 = to2; body.lift = lift; body.sheetZ = sheetZ; body.sleeves = cuts.map((cut) => cut.polys.map((P, i) => sleeveOf(P, cut.pts3[i], cut.dirs[i], cut.q, 0))); }
-  say("fair", FAIR, "needed", needMax, "at", needAt);
-  const tClr = Date.now();
-  body.clearance = skinClearance(throat, map, body, { t, ku: 2, kv: 3, wall: 0, reach: 1, step: 2 });
-  say("clearance", Date.now() - tClr, "ms");
-  return body;
-}
-
-// The throat is the driver's disc, so its skin ring is a concentric circle:
-// made exact when it is already that circle to within the sleeve's own
-// allowances (the pixel added to every offset, and the 16 deg exit cone's
-// 1/cos on the outer flank — together 0.2-0.4 mm at wall 3), and left alone
-// otherwise — a layout whose throat is not the disc must not be reshaped.
-// The mating face therefore carries EXACTLY R + wall of material in its own
-// plane; perpendicular to the flank leaving at the exit half-angle that is
-// wall·cos(angle), 2.87 mm at 16.55 deg, and it recovers within a station.
-function polishThroat(ring, want, tol = 0.3) {
-  let off = 0;
-  for (const p of ring) off = Math.max(off, Math.abs(Math.hypot(p[0], p[1]) - want), Math.abs(p[2]));
-  if (off >= tol) return ring;
-  return ring.map((p) => { const r = Math.hypot(p[0], p[1]) || 1e-12; return [(p[0] * want) / r, (p[1] * want) / r, 0]; });
-}
-
-// TRUE 3-D CLEARANCE of the ducts from the body's skin — against the B-spline
-// surface the file carries, not against ring indices or a projection. Every
-// sampled duct point is measured to the nearest tessellated skin triangle in
-// its station band; sign by the shell's outward normal. `worst` is the
-// smallest clearance (negative = outside the horn); `deficits` lists the
-// (station, vertex) bins where it falls under the wall, for the feedback
-// loop above.
-export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall = 0, reach = 1, step = 2, qMin = 1, qMax = null, ringOf = null } = {}) {
-  const secs = body.sections, S = secs.length, N = secs[0].pts.length;
-  const ap = body.surf ? apertureFrame(body.surf) : null;
-  const br = ductBrep(secs, { capMouthPts: ap ? apertureCapGrid(secs[S - 1].pts, ap) : null });
-  if (!br) return null;
-  const n = br.n, NU = n * ku, NV = (S - 1) * kv;
-  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  // closest point on a triangle (Ericson, Real-Time Collision Detection 5.1.5)
-  const closest = (p, a, b, c) => {
-    const ab = sub(b, a), ac = sub(c, a), apv = sub(p, a);
-    const d1 = dot(ab, apv), d2 = dot(ac, apv);
-    if (d1 <= 0 && d2 <= 0) return a;
-    const bp = sub(p, b), d3 = dot(ab, bp), d4 = dot(ac, bp);
-    if (d3 >= 0 && d4 <= d3) return b;
-    const vc = d1 * d4 - d3 * d2;
-    if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); return [a[0] + ab[0] * v, a[1] + ab[1] * v, a[2] + ab[2] * v]; }
-    const cp = sub(p, c), d5 = dot(ab, cp), d6 = dot(ac, cp);
-    if (d6 >= 0 && d5 <= d6) return c;
-    const vb = d5 * d2 - d1 * d6;
-    if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); return [a[0] + ac[0] * w, a[1] + ac[1] * w, a[2] + ac[2] * w]; }
-    const va = d3 * d6 - d5 * d4;
-    if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); return [b[0] + (c[0] - b[0]) * w, b[1] + (c[1] - b[1]) * w, b[2] + (c[2] - b[2]) * w]; }
-    const den = 1 / (va + vb + vc), v = vb * den, w = vc * den;
-    return [a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w, a[2] + ab[2] * v + ac[2] * w];
-  };
-  // Tessellate the skin into a SPATIAL HASH. The first version bucketed
-  // triangles by station band and looked only a few bands either side of the
-  // duct point's own station; near the curved mouth the nearest skin
-  // triangle can sit many bands away, and the nearest triangle FOUND was then
-  // a far one whose normal gave a false "outside" — a 1 m deficit at the
-  // defaults. Space, not station index, is what "nearest" means.
-  const tP = globalThis.__hgProfile ? Date.now() : 0;
-  const cellSz = Math.max(4 * (wall || 3), 6);
-  const grid = new Map();
-  const gk = (ix, iy, iz) => `${ix},${iy},${iz}`;
-  const gi = (v) => Math.floor(v / cellSz);
-  // THE OUTWARD SENSE OF THE WALLS is one bit for the whole shell, decided
-  // by majority vote of every wall triangle's natural normal against the
-  // ray from its station's ring centroid. The whole-shell volume integral
-  // (brepShellOrientation) assumes the caps' senses relative to the walls
-  // in the duct rings' winding; a block whose rim chain winds the other way
-  // let its far cap dominate the sum and read every wall backwards, and a
-  // duct 12 mm inside the skin measured 12 mm outside it.
-  const ringCtr = secs.map((sec) => { const c = [0, 0, 0]; for (const p of sec.pts) { c[0] += p[0] / N; c[1] += p[1] / N; c[2] += p[2] / N; } return c; });
-  const grids = [];
-  let vote = 0;
-  for (let wI = 0; wI < 4; wI++) {
-    const w = br.walls[wI], g = [];
-    for (let i = 0; i <= NU; i++) { const row = []; for (let j = 0; j <= NV; j++) row.push(evalBsplineSurf(w, br.uKnots, br.vKnots, i / NU, j / NV)); g.push(row); }
-    grids.push(g);
-    for (let i = 0; i < NU; i++)
-      for (let j = 0; j < NV; j++) {
-        const A = g[i][j], B = g[i + 1][j], C = g[i + 1][j + 1];
-        const nr = cross(sub(B, A), sub(C, A)), ctr = ringCtr[Math.min(S - 1, Math.round(j / kv))];
-        const cc = [(A[0] + B[0] + C[0]) / 3 - ctr[0], (A[1] + B[1] + C[1]) / 3 - ctr[1], (A[2] + B[2] + C[2]) / 3 - ctr[2]];
-        vote += Math.sign(dot(nr, cc));
-      }
-  }
-  const sgn = vote >= 0 ? 1 : -1;
-  const tris = [];
-  for (let wI = 0; wI < 4; wI++) {
-    const g = grids[wI];
-    for (let i = 0; i < NU; i++)
-      for (let j = 0; j < NV; j++) {
-        const A = g[i][j], B = g[i + 1][j], C = g[i + 1][j + 1], D = g[i][j + 1];
-        for (const [P, Q, Rr] of [[A, B, C], [A, C, D]]) {
-          let nr = cross(sub(Q, P), sub(Rr, P)); const L = Math.hypot(...nr) || 1e-12; nr = [nr[0] * sgn / L, nr[1] * sgn / L, nr[2] * sgn / L];
-          const cc = [(P[0] + Q[0] + Rr[0]) / 3, (P[1] + Q[1] + Rr[1]) / 3, (P[2] + Q[2] + Rr[2]) / 3];
-          const rad = Math.max(Math.hypot(P[0] - cc[0], P[1] - cc[1], P[2] - cc[2]), Math.hypot(Q[0] - cc[0], Q[1] - cc[1], Q[2] - cc[2]), Math.hypot(Rr[0] - cc[0], Rr[1] - cc[1], Rr[2] - cc[2]));
-          const tri = { a: P, b: Q, c: Rr, nrm: nr, k: wI * n + Math.floor(i / ku), qf: (j + 0.5) / kv, cc, rad };
-          tris.push(tri);
-          const xs = [P[0], Q[0], Rr[0]], ys = [P[1], Q[1], Rr[1]], zs = [P[2], Q[2], Rr[2]];
-          for (let ix = gi(Math.min(...xs)); ix <= gi(Math.max(...xs)); ix++)
-            for (let iy = gi(Math.min(...ys)); iy <= gi(Math.max(...ys)); iy++)
-              for (let iz = gi(Math.min(...zs)); iz <= gi(Math.max(...zs)); iz++) {
-                const kk = gk(ix, iy, iz);
-                if (!grid.has(kk)) grid.set(kk, []);
-                grid.get(kk).push(tri);
-              }
-        }
-      }
-  }
-  // nearest triangle within `rad` cells of the point, or null if the skin is
-  // further away than that — which for a duct point means "well inside"
-  const nearest = (p, rad) => {
-    const cx = gi(p[0]), cy = gi(p[1]), cz = gi(p[2]);
-    let best = Infinity, bt = null;
-    for (let ix = cx - rad; ix <= cx + rad; ix++)
-      for (let iy = cy - rad; iy <= cy + rad; iy++)
-        for (let iz = cz - rad; iz <= cz + rad; iz++) {
-          const list = grid.get(gk(ix, iy, iz)); if (!list) continue;
-          for (const tr of list) {
-            // bounding-sphere reject: no point of the triangle can be nearer
-            // than the centroid distance less the circumradius
-            if (Math.hypot(p[0] - tr.cc[0], p[1] - tr.cc[1], p[2] - tr.cc[2]) - tr.rad >= best) continue;
-            const f = closest(p, tr.a, tr.b, tr.c);
-            const dd = Math.hypot(p[0] - f[0], p[1] - f[1], p[2] - f[2]);
-            if (dd < best) { best = dd; bt = { tr, f, d: dd }; }
-          }
-        }
-    // a hit further than the search radius guarantees may not be the true
-    // nearest; only trust distances the searched cube fully covers
-    return bt && bt.d <= rad * cellSz ? bt : null;
-  };
-  // fallback for points the grid cannot see: the polar test against the
-  // matched-station ring, which is crude but only has to answer "grossly
-  // outside, and by how much" for a point the skin has not reached yet
-  // each ring in ITS OWN best-fit plane: the containment test below is a
-  // polar test in that plane, not in xy — a tilted, strongly non-planar
-  // ring (a block station over a bowed horn) projects to xy with its
-  // off-plane points shifted, and a duct 3 mm inside read 11 mm outside
-  const ringFrames = secs.map((sec) => {
-    const P0 = sec.pts, ctr = [0, 0, 0];
-    for (const q of P0) { ctr[0] += q[0] / N; ctr[1] += q[1] / N; ctr[2] += q[2] / N; }
-    let ax = 0, ay = 0, az = 0;
-    for (let k = 0; k < N; k++) {
-      const a = P0[k], b = P0[(k + 1) % N];
-      ax += (a[1] - ctr[1]) * (b[2] - ctr[2]) - (a[2] - ctr[2]) * (b[1] - ctr[1]);
-      ay += (a[2] - ctr[2]) * (b[0] - ctr[0]) - (a[0] - ctr[0]) * (b[2] - ctr[2]);
-      az += (a[0] - ctr[0]) * (b[1] - ctr[1]) - (a[1] - ctr[1]) * (b[0] - ctr[0]);
-    }
-    const nl = Math.hypot(ax, ay, az) || 1, Nn = [ax / nl, ay / nl, az / nl];
-    let e1 = [P0[0][0] - ctr[0], P0[0][1] - ctr[1], P0[0][2] - ctr[2]];
-    const dp0 = e1[0] * Nn[0] + e1[1] * Nn[1] + e1[2] * Nn[2];
-    e1 = [e1[0] - dp0 * Nn[0], e1[1] - dp0 * Nn[1], e1[2] - dp0 * Nn[2]];
-    const l1 = Math.hypot(...e1) || 1; e1 = e1.map((v) => v / l1);
-    const e2 = [Nn[1] * e1[2] - Nn[2] * e1[1], Nn[2] * e1[0] - Nn[0] * e1[2], Nn[0] * e1[1] - Nn[1] * e1[0]];
-    const to2 = (p) => { const d = [p[0] - ctr[0], p[1] - ctr[1], p[2] - ctr[2]]; return [d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2], d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2], 0]; };
-    return { P: P0.map(to2), ctr: [0, 0, 0], to2 };
-  });
-  const polarExcess = (p3, q) => {
-    const { P, ctr, to2 } = ringFrames[q];
-    const p = to2(p3);
-    const dx = p[0] - ctr[0], dy = p[1] - ctr[1], r = Math.hypot(dx, dy);
-    if (r < 1e-9) return -Infinity;
-    const ux = dx / r, uy = dy / r;
-    let rh = 0;
-    for (let k = 0; k < N; k++) {
-      const A = P[k], B = P[(k + 1) % N];
-      const ax = A[0] - ctr[0], ay = A[1] - ctr[1], bx = B[0] - ctr[0], by = B[1] - ctr[1];
-      const den = (bx - ax) * uy - (by - ay) * ux;
-      if (Math.abs(den) < 1e-12) continue;
-      const sPar = (ax * uy - ay * ux) / -den;
-      if (sPar < -1e-9 || sPar > 1 + 1e-9) continue;
-      const proj = (ax + (bx - ax) * sPar) * ux + (ay + (by - ay) * sPar) * uy;
-      if (proj > rh) rh = proj;
-    }
-    return r - rh;
-  };
-  const vertexByAngle = (p3, q) => {
-    const { P, ctr, to2 } = ringFrames[q];
-    const p = to2(p3);
-    const a = Math.atan2(p[1] - ctr[1], p[0] - ctr[0]);
-    let best = 0, bd = Infinity;
-    for (let k = 0; k < N; k++) {
-      let d = Math.abs(a - Math.atan2(P[k][1] - ctr[1], P[k][0] - ctr[0])); if (d > Math.PI) d = 2 * Math.PI - d;
-      if (d < bd) { bd = d; best = k; }
-    }
-    return best;
-  };
-
-  if (tP) console.log(`      brep+tessellate+grid: ${Date.now() - tP} ms (${tris.length} tris)`);
-  let worst = Infinity, at = null, cell = null, point = null, farOutside = 0;
-  const deficitMap = new Map();
-  const RAD = Math.max(1, reach);
-  for (const cellRec of throat.cells) {
-    const row = map.rows.find((r) => r.id === cellRec.id);
-    if (!row) continue;
-    const d = ductSections(cellRec, row, { t });
-    if (!d) continue;
-    const qHi = qMax == null ? d.length - 2 : qMax;
-    for (let q = qMin; q <= qHi; q++)
-      for (let k = 0; k < d[q].pts.length; k += step) {
-        const p = d[q].pts[k];
-        const bt = nearest(p, RAD);
-        // the skin may carry more rings than the duct has stations, or
-        // cover only a band of them; the ring of the same PATH FRACTION (or
-        // the caller's own mapping) is the one to compare against
-        const qRing = ringOf ? Math.max(0, Math.min(S - 1, ringOf(q))) : Math.round((q / (d.length - 1)) * (S - 1));
-        let clr;
-        if (bt) {
-          // the SIGN is the ring's containment, the MAGNITUDE the nearest
-          // triangle: a point deep inside the solid can still lie on the
-          // outward side of a nearby concave flank (the notch between two
-          // rim ducts' outer sides), and the triangle's own normal then read
-          // a duct 12 mm inside the block as 12 mm outside it
-          // ... but the ring test has its own failure (a bowl-shaped ring
-          // projects a point near its rim outside), so the two are combined:
-          // the triangle's side stands unless the point is deeper inside the
-          // ring than it is from the surface, which no outside point can be
-          const triIn = dot(sub(p, bt.f), bt.tr.nrm) <= 0;
-          const ins = triIn || polarExcess(p, Math.min(qRing, S - 1)) < -Math.max(1, bt.d);
-          clr = ins ? bt.d : -bt.d;
-        } else {
-          // beyond the grid's reach: inside (the common case) unless the
-          // matched ring says it is grossly out, in which case that excess
-          // stands in for the distance until the skin has moved out to it
-          const ex = polarExcess(p, Math.min(qRing, S - 1));
-          clr = ex > 0 ? -ex : RAD * cellSz;
-          if (ex > 0) farOutside++;
-        }
-        if (clr < worst) { worst = clr; at = q; cell = cellRec.label; point = p; }
-        if (wall > 0 && clr < wall) {
-          // a point measured between two rings needs BOTH pushed: pushing
-          // one alone moves the surface between them by only half, and the
-          // loop then closes half the gap per round and stalls
-          const qf = bt ? bt.tr.qf : qRing;
-          const qs = [Math.floor(qf), Math.ceil(qf)].filter((qq) => qq >= 1 && qq <= S - 2);
-          for (const qb of qs) {
-            const kk = bt ? bt.tr.k : vertexByAngle(p, qb);
-            const nrm = bt ? bt.tr.nrm : null;
-            const kkey = qb * N + kk;
-            const prev = deficitMap.get(kkey);
-            if (!prev || wall - clr > prev.deficit)
-              deficitMap.set(kkey, { q: qb, k: kk, deficit: wall - clr, nrm, p, foot: bt ? bt.f : null, cell: cellRec.label, dq: q });
-          }
-        }
-      }
-  }
-  return { worst, at, cell, point, deficits: [...deficitMap.values()], minWall: worst, farOutside, tris: tris.length };
-}
-
-// How far the ducts poke outside the body's skin — the TRUE 3-D clearance
-// against the exported B-spline surface (skinClearance), not an index-matched
-// projection: that proxy read +2.96 mm on a horn whose duct was 20.6 mm
-// outside the skin. `worst` is the excursion beyond the skin (positive =
-// outside); `minWall` is the smallest clearance; both ends are excluded, as
-// the cells tile there.
-export function bodyContainment(throat, map, body, { t = 0, wall = 3 } = {}) {
-  if (!body || !map) return null;
-  const clr = body.clearance && body.clearance.worst != null
-    ? body.clearance : skinClearance(throat, map, body, { t, ku: 2, kv: 3, reach: 1 });
-  if (!clr) return null;
-  return {
-    worst: -clr.worst, at: clr.at, cell: clr.cell, ok: clr.worst >= 0,
-    minWall: clr.worst, wallNeeded: wall + Math.max(0, wall - clr.worst),
-  };
-}
-
 export function extendSections(sections, ext = 3) {
   const Q = sections.length - 1;
   const cen = (pts) => {
@@ -6002,390 +5075,6 @@ export function extendSections(sections, ext = 3) {
   const shift = (pts, n) => pts.map((p) => [p[0] + n[0] * ext, p[1] + n[1] * ext, p[2] + n[2] * ext]);
   const clone = (sec, n) => ({ s: sec.s, area: sec.area, pts: shift(sec.pts, n), origin: sec.origin });
   return [clone(sections[0], nT), ...sections, clone(sections[Q], nM)];
-}
-
-// ── THE BANDED SHELL KIT: blocks where the ducts tile, tubes and webs where
-// they do not, every join a transversal overlap ─────────────────────────────
-//
-// WHY. Two solids that overlap at one end of the horn and stand apart at the
-// other must touch exactly once in between, and at that station their facing
-// walls are parallel with nothing between them: the kernel is asked to
-// classify a face-to-face contact rather than a crossing. Measured at the
-// tool's defaults, wall 3: all 27 adjacent pairs cross twice — the column
-// pairs at u = 0.056-0.125, the row pairs near u = 0.30, everything again at
-// u = 0.970-0.976 — and the default bow moves the row crossings to u = 0.28-
-// 0.34 and halves their rate, which is more degenerate, not less. A one-piece
-// skin avoided the union but its outline had to be found by a discrete search
-// at every station (a raster, a trace, a resample), and noise that does not
-// correlate from one station to the next lofts into surface texture. The
-// ducts are built from stations too and come out clean, because their rings
-// are EVALUATED from a smooth map with fixed correspondence rather than
-// derived. So: use each construction only where it is exact.
-//
-//   band 1, the throat: the ducts tile or nearly so, so the material is one
-//     block and its outline at a station is ONE closed curve — the rim ducts'
-//     rim sides chained and offset by the wall — with fixed correspondence
-//     and no search. Its throat face is the exact circle R + wall.
-//   band 2, mid-path: every adjacent pair of ducts stands more than
-//     2·wall + margin apart, so each duct's TUBE (its own rings offset by the
-//     wall in their own planes, exact) clears every other tube by at least
-//     the margin. Neighbouring tubes are joined by WEB plates: a curved box
-//     between the two facing sides over the middle fraction of their height,
-//     buried a fixed depth inside each tube's wall so its faces are never
-//     coincident with a tube face and its top and bottom cross the tube
-//     faces transversally.
-//   band 3, the mouth: the ducts tile again (and with a bulge they engage),
-//     so it is a block, and its mouth face lies on the aperture.
-//   The blocks extend a few stations INTO band 2, so every block-tube and
-//   block-web join is a transversal interpenetration, and the block's offset
-//   tapers up by the same burial depth toward the band so its rim never
-//   coincides with a tube's rim in the overlap.
-//
-// The bands are MEASURED, not assumed: the minimum adjacent-pair gap at every
-// station, and band 2 is the longest contiguous run above the threshold. A
-// horn whose ducts never separate that far gets one block from throat to
-// mouth — the construction degrades into the envelope skin, which is exact
-// precisely when everything tiles. Then eighteen cutters, unchanged.
-//
-// The CAD work: union every positive solid in one operation, subtract the
-// cutters. No tangency exists anywhere for it to fail on, and the tool
-// measures that before writing: tube-tube clearance over band 2, the
-// blocks' containment of every duct over their bands, web widths.
-
-// minimum distance between two closed space polygons (point-to-segment, both ways)
-function ringGap(P, Q) {
-  const seg = (p, A, B) => {
-    const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
-    const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
-    let s = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
-    s = Math.max(0, Math.min(1, s));
-    return Math.hypot(p[0] - A[0] - ab[0] * s, p[1] - A[1] - ab[1] * s, p[2] - A[2] - ab[2] * s);
-  };
-  let m = Infinity;
-  for (const p of P) for (let k = 0; k < Q.length; k++) m = Math.min(m, seg(p, Q[k], Q[(k + 1) % Q.length]));
-  for (const q of Q) for (let k = 0; k < P.length; k++) m = Math.min(m, seg(q, P[k], P[(k + 1) % P.length]));
-  return m;
-}
-
-// the adjacent pairs of an H-grid layout, by label "col,row"
-function gridPairs(throat) {
-  const byLabel = new Map(throat.cells.map((c, i) => [c.label, i]));
-  const pairs = [];
-  for (const c of throat.cells) {
-    const [col, row] = c.label.split(",").map(Number);
-    for (const [dc, dr] of [[1, 0], [0, 1]]) {
-      const nb = `${col + dc},${row + dr}`;
-      if (byLabel.has(nb)) pairs.push({ a: byLabel.get(c.label), b: byLabel.get(nb), la: c.label, lb: nb, kind: dc ? "row" : "column" });
-    }
-  }
-  return pairs;
-}
-
-// Where the ducts stand apart: the minimum gap over all adjacent pairs at
-// every station, and the longest contiguous run of stations where it clears
-// 2·wall + margin — the band where tubes cannot touch. `ov` stations of
-// overlap are reserved at each end for the blocks.
-export function shellBands(throat, map, { t = 0, wall = 3, margin = 2, ov = 2 } = {}) {
-  const ducts = throat.cells.map((c) => ductSections(c, map.rows.find((r) => r.id === c.id), { t }));
-  if (ducts.some((d) => !d)) return null;
-  const S = ducts[0].length, pairs = gridPairs(throat);
-  const gapMin = new Array(S).fill(Infinity), gapAt = new Array(S).fill(null);
-  for (let q = 0; q < S; q++)
-    for (const pr of pairs) {
-      const g = ringGap(ducts[pr.a][q].pts, ducts[pr.b][q].pts);
-      if (g < gapMin[q]) { gapMin[q] = g; gapAt[q] = `${pr.la}-${pr.lb}`; }
-    }
-  const threshold = 2 * wall + margin;
-  let best = null, run = null;
-  for (let q = 0; q < S; q++) {
-    if (gapMin[q] >= threshold) { if (!run) run = [q, q]; else run[1] = q; }
-    else run = null;
-    if (run && (!best || run[1] - run[0] > best[1] - best[0])) best = run.slice();
-  }
-  // the tubes need room for the overlaps at both ends and a stretch between
-  const tubes = best && best[1] - best[0] >= 2 * ov + 2 ? { qB: best[0], qC: best[1] } : null;
-  return { S, pairs, gapMin, gapAt, threshold, margin, ov, tubes, ducts };
-}
-
-// The rim loop of the layout: the rim sides of the rim cells chained into
-// one closed loop, split into four runs at the H-grid's four singular rim
-// vertices. Returns the chain order (a list of {i: duct index, s: side,
-// rev}) and the run starts, chained at station 0.
-function rimChain(throat, ducts) {
-  const N0 = ducts[0][0].pts.length, per0 = N0 / 4;
-  const segs = [];
-  throat.cells.forEach((cell, i) => {
-    const rim = cell.rimSide || [];
-    for (let sd = 0; sd < 4; sd++) if (rim[sd]) segs.push({ i, s: sd, rev: false });
-  });
-  if (segs.length < 4) return null;
-  const raw = (seg, q) => {
-    const P = ducts[seg.i][q].pts, out = [];
-    for (let j = 0; j <= per0; j++) out.push(P[(seg.s * per0 + j) % N0]);
-    return seg.rev ? out.reverse() : out;
-  };
-  const d3 = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]);
-  const order = [segs[0]];
-  let pool = segs.slice(1), chainErr = 0;
-  while (pool.length) {
-    const end = raw(order[order.length - 1], 0)[per0];
-    let best = -1, bd = Infinity, rev = false;
-    pool.forEach((sg, k) => {
-      const p = raw({ ...sg, rev: false }, 0);
-      const a = d3(p[0], end), b = d3(p[per0], end);
-      if (a < bd) { bd = a; best = k; rev = false; }
-      if (b < bd) { bd = b; best = k; rev = true; }
-    });
-    chainErr = Math.max(chainErr, bd);
-    const sg = pool.splice(best, 1)[0]; sg.rev = rev; order.push(sg);
-  }
-  const K = order.length;
-  const isCorner = (k) => order[k].i === order[(k + 1) % K].i;
-  const starts = [];
-  for (let k = 0; k < K; k++) if (isCorner(k)) starts.push((k + 1) % K);
-  if (starts.length !== 4) return null;
-  return { order, starts, isCorner, raw, per0, N0, chainErr };
-}
-
-// A BLOCK over stations [q0, q1]: at each station the CONVEX HULL of the rim
-// ducts' rim-side points, in the loop's best-fit plane, offset outward by the
-// wall with a true ROUND at every hull vertex (the Minkowski sum of a convex
-// polygon with a disc: offset edges and arcs, nothing mitred). The hull is
-// the point: a block is the smallest solid that contains the tiled group, and
-// the notches between neighbouring rim ducts' outer sides (1-3 mm wide near
-// the throat, deepening toward the band) are exactly where a mitred offset
-// self-intersects — measured 1.8 mm under the wall at a bowed rim cell. The
-// offset at a vertex is wall / |e·n| (e the offset direction, n the duct
-// flank there), capped at 3x, because a rim duct leaving obliquely sees only
-// cos(phi) of an in-plane offset; it rises by `m` toward the band end so the
-// block's rim clears the tubes' rims where they overlap. Runs split at the
-// H-grid's four singular rim vertices. Throat end the exact circle R + wall
-// (planar), mouth end on the aperture.
-export function blockSections(throat, map, ducts, { wall = 3, m = 1, q0, q1, end, R = 0, per = 48, ov = 2 } = {}) {
-  const chain = rimChain(throat, ducts);
-  if (!chain) return null;
-  const { order, starts, raw, per0, N0 } = chain;
-  const S = ducts[0].length;
-  const ap = map.mouthSurf ? apertureFrame(map.mouthSurf) : null;
-  const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1e-12; return [v[0] / l, v[1] / l, v[2] / l]; };
-  const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  // the unit direction of the vertex line through duct i's ring point k
-  const lineAt = (i, k, q) => {
-    const d = ducts[i];
-    const qa = Math.max(0, q - 1), qb = Math.min(S - 1, q + 1);
-    return unit([0, 1, 2].map((c) => d[qb].pts[k][c] - d[qa].pts[k][c]));
-  };
-  const smooth = (x) => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
-  const out = [];
-  for (let q = q0; q <= q1; q++) {
-    // EVERY duct point with its flank normal (a bowed duct can turn a shared
-    // side's corner past its own rim side — measured 0.17 mm of wall with a
-    // short-axis bow when only the rim sides were hulled), and the 4
-    // singular rim corners
-    const P = [], F = [], corners = [];
-    ducts.forEach((d, i) => { for (let k = 0; k < N0; k++) { P.push(d[q].pts[k]); F.push(lineAt(i, k, q)); } });
-    for (const oi of starts) { const seg = order[oi]; corners.push(seg.i * N0 + ((seg.s * per0 + (seg.rev ? per0 : 0)) % N0)); }
-    // best-fit plane
-    const n = P.length, o = [0, 0, 0];
-    for (const p of P) { o[0] += p[0] / n; o[1] += p[1] / n; o[2] += p[2] / n; }
-    let ax = 0, ay = 0, az = 0;
-    for (let k = 0; k < n; k++) {
-      const a = P[k], b = P[(k + 1) % n];
-      ax += (a[1] - o[1]) * (b[2] - o[2]) - (a[2] - o[2]) * (b[1] - o[1]);
-      ay += (a[2] - o[2]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[2] - o[2]);
-      az += (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-    }
-    const nl = Math.hypot(ax, ay, az) || 1;
-    const Nn = [ax / nl, ay / nl, az / nl];
-    let e1 = [P[0][0] - o[0], P[0][1] - o[1], P[0][2] - o[2]];
-    const dp = e1[0] * Nn[0] + e1[1] * Nn[1] + e1[2] * Nn[2];
-    e1 = unit([e1[0] - dp * Nn[0], e1[1] - dp * Nn[1], e1[2] - dp * Nn[2]]);
-    const e2 = cross3(Nn, e1);
-    const flat = P.map((p) => { const d = [p[0] - o[0], p[1] - o[1], p[2] - o[2]]; return [d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2], d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2], d[0] * Nn[0] + d[1] * Nn[1] + d[2] * Nn[2]]; });
-    // convex hull (monotone chain), counter-clockwise, as indices into P
-    const idx = flat.map((_, i) => i).sort((i, j) => flat[i][0] - flat[j][0] || flat[i][1] - flat[j][1]);
-    const cr = (O, A, B) => (flat[A][0] - flat[O][0]) * (flat[B][1] - flat[O][1]) - (flat[A][1] - flat[O][1]) * (flat[B][0] - flat[O][0]);
-    const lower = [], upper = [];
-    for (const i of idx) { while (lower.length >= 2 && cr(lower[lower.length - 2], lower[lower.length - 1], i) <= 1e-9) lower.pop(); lower.push(i); }
-    for (let k = idx.length - 1; k >= 0; k--) { const i = idx[k]; while (upper.length >= 2 && cr(upper[upper.length - 2], upper[upper.length - 1], i) <= 1e-9) upper.pop(); upper.push(i); }
-    const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
-    const H = hull.length;
-    // the offset with rounds: wall (+ m toward the band end). Each hull
-    // vertex is a duct point through which a vertex LINE runs at direction
-    // T; the sheet meets the cylinder of radius w about that line at an
-    // ellipse, radius w / sqrt(1 - (e·T)^2) in direction e — the same
-    // section the sleeves used. On a smooth flank it equals w / |e·n|; at a
-    // duct corner, where no single flank normal exists (a straddling chord
-    // gave |e·n| = 0.04 and a 3x round at the throat), it is exact. Cap 3x.
-    const span = Math.max(1, q1 - q0 - ov);
-    const frac = end === "throat" ? (q - q0) / span : (q1 - q) / span;
-    const w = wall + m * smooth(frac);
-    const ring2 = [], ring3 = [], vertexOf = [];
-    for (let h = 0; h < H; h++) {
-      const ia = hull[(h - 1 + H) % H], ib = hull[h], ic = hull[(h + 1) % H];
-      const a = flat[ia], b = flat[ib], c = flat[ic];
-      const t1 = [b[0] - a[0], b[1] - a[1]], t2 = [c[0] - b[0], c[1] - b[1]];
-      const l1 = Math.hypot(t1[0], t1[1]) || 1e-12, l2 = Math.hypot(t2[0], t2[1]) || 1e-12;
-      const n1 = [t1[1] / l1, -t1[0] / l1], n2 = [t2[1] / l2, -t2[0] / l2];   // outward for a CCW hull
-      const a1 = Math.atan2(n1[1], n1[0]);
-      let dth = Math.atan2(n2[1], n2[0]) - a1;
-      if (dth > Math.PI) dth -= 2 * Math.PI; if (dth < -Math.PI) dth += 2 * Math.PI;
-      const steps = Math.max(1, Math.ceil(Math.abs(dth) / (Math.PI / 12)));
-      const fl = F[ib];
-      for (let j = 0; j <= steps; j++) {
-        const th = a1 + (dth * j) / steps, u2 = [Math.cos(th), Math.sin(th)];
-        const e3 = [u2[0] * e1[0] + u2[1] * e2[0], u2[0] * e1[1] + u2[1] * e2[1], u2[0] * e1[2] + u2[1] * e2[2]];
-        const cT = e3[0] * fl[0] + e3[1] * fl[1] + e3[2] * fl[2];
-        const d = w / Math.max(Math.sqrt(Math.max(0, 1 - cT * cT)), 1 / 3);
-        const qx = b[0] + u2[0] * d, qy = b[1] + u2[1] * d;
-        ring2.push([qx, qy]);
-        ring3.push([o[0] + qx * e1[0] + qy * e2[0] + b[2] * Nn[0], o[1] + qx * e1[1] + qy * e2[1] + b[2] * Nn[1], o[2] + qx * e1[2] + qy * e2[2] + b[2] * Nn[2]]);
-        vertexOf.push(ib);
-      }
-    }
-    // run boundaries: the ring point of the hull vertex nearest each singular corner
-    const bounds = corners.map((ci) => {
-      let best = 0, bd = Infinity;
-      ring2.forEach((_, k) => { const v = flat[vertexOf[k]]; const dd = Math.hypot(v[0] - flat[ci][0], v[1] - flat[ci][1]); if (dd < bd) { bd = dd; best = k; } });
-      // the middle of that vertex's round
-      let lo = best, hi = best;
-      while (lo > 0 && vertexOf[lo - 1] === vertexOf[best]) lo--;
-      while (hi < ring2.length - 1 && vertexOf[hi + 1] === vertexOf[best]) hi++;
-      return (lo + hi) >> 1;
-    }).sort((x, y) => x - y);
-    if (new Set(bounds).size !== 4) return null;
-    const M = ring3.length, pts = [];
-    for (let r = 0; r < 4; r++) {
-      const b0 = bounds[r], b1 = bounds[(r + 1) % 4];
-      const run = [];
-      for (let k = b0; ; k = (k + 1) % M) { run.push(ring3[k]); if (k === b1) break; }
-      const L = [0];
-      for (let i = 0; i < run.length - 1; i++) L.push(L[i] + Math.hypot(run[i + 1][0] - run[i][0], run[i + 1][1] - run[i][1], run[i + 1][2] - run[i][2]));
-      const tot = L[L.length - 1] || 1e-12;
-      for (let k = 0; k < per; k++) {
-        const target = (tot * k) / per; let i = 0;
-        while (i < run.length - 2 && L[i + 1] < target) i++;
-        const u = (target - L[i]) / Math.max(L[i + 1] - L[i], 1e-12), A = run[i], B = run[i + 1];
-        pts.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u, A[2] + (B[2] - A[2]) * u]);
-      }
-    }
-    let ring = pts;
-    if (q === 0) { ring = ring.map((p) => [p[0], p[1], 0]); if (R > 0) ring = polishThroat(ring, R + wall, 0.5 * wall + 0.5); }
-    if (q === S - 1 && ap) ring = ring.map(ap.snap);
-    out.push({ s: ducts[0][q].s, area: polyArea3(ring), pts: ring, origin: ducts[0][q].origin });
-  }
-  return out;
-}
-
-// A TUBE: the duct's own rings offset outward by the wall on every side, in
-// their own planes — swept sections are normal to the duct's centreline, so
-// the in-plane offset is the wall measured perpendicular to the flanks —
-// over stations [q0, q1].
-export function tubeSections(duct, { wall = 3, q0, q1 } = {}) {
-  const out = [];
-  for (let q = q0; q <= q1; q++) {
-    const st = duct[q];
-    const pts = insetSection3(st.pts, [-wall, -wall, -wall, -wall]);
-    out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
-  }
-  return out;
-}
-
-// A WEB between two neighbouring ducts over stations [q0, q1]: run 0 is the
-// middle `frac` of A's facing side, offset outward by wall - m (buried m
-// inside A's tube wall); run 2 the same on B, reversed; runs 1 and 3 the
-// straight connectors. Four runs of `per` points, corners at multiples of
-// `per`, as ductBrep wants.
-export function webSections(dA, dB, { wall = 3, m = 1, frac = 0.5, q0, q1, per = 48 } = {}) {
-  const N = dA[0].pts.length, per0 = N / 4;
-  const cen = (P) => { const c = [0, 0, 0]; for (const p of P) { c[0] += p[0] / P.length; c[1] += p[1] / P.length; c[2] += p[2] / P.length; } return c; };
-  const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-  // the facing sides: the side of each whose midpoint is nearest the other's centroid, at q0
-  const facing = (d, other) => {
-    const co = cen(other[q0].pts);
-    let best = 0, bd = Infinity;
-    for (let sd = 0; sd < 4; sd++) { const mid = d[q0].pts[(sd * per0 + (per0 >> 1)) % N]; const x = d3(mid, co); if (x < bd) { bd = x; best = sd; } }
-    return best;
-  };
-  const sA = facing(dA, dB), sB = facing(dB, dA);
-  const side = (ring, sd) => { const o = []; for (let j = 0; j <= per0; j++) o.push(ring[(sd * per0 + j) % N]); return o; };
-  // the middle fraction of a polyline, as per+1 points inclusive
-  const middle = (P, f) => {
-    const L = [0];
-    for (let i = 0; i < P.length - 1; i++) L.push(L[i] + d3(P[i], P[i + 1]));
-    const tot = L[L.length - 1] || 1e-12, lo = tot * (0.5 - f / 2), hi = tot * (0.5 + f / 2);
-    const at = (s) => { let i = 0; while (i < P.length - 2 && L[i + 1] < s) i++; const u = (s - L[i]) / Math.max(L[i + 1] - L[i], 1e-12); return [0, 1, 2].map((c) => P[i][c] + (P[i + 1][c] - P[i][c]) * u); };
-    const o = []; for (let k = 0; k <= per; k++) o.push(at(lo + ((hi - lo) * k) / per));
-    return o;
-  };
-  // per points from a toward b, b excluded
-  const line = (a, b) => { const o = []; for (let k = 0; k < per; k++) { const u = k / per; o.push([0, 1, 2].map((c) => a[c] + (b[c] - a[c]) * u)); } return o; };
-  const out = [];
-  let width = Infinity;
-  for (let q = q0; q <= q1; q++) {
-    const dd = [-(wall - m), -(wall - m), -(wall - m), -(wall - m)];
-    const oA = insetSection3(dA[q].pts, dd), oB = insetSection3(dB[q].pts, dd);
-    const a = middle(side(oA, sA), frac);
-    let b = middle(side(oB, sB), frac).reverse();
-    // orient B's run so the connectors do not cross
-    if (d3(a[per], b[0]) + d3(b[per], a[0]) > d3(a[per], b[per]) + d3(b[0], a[0])) b = b.reverse();
-    width = Math.min(width, d3(a[per], b[0]), d3(b[per], a[0]));
-    const pts = [...a.slice(0, per), ...line(a[per], b[0]), ...b.slice(0, per), ...line(b[per], a[0])];
-    out.push({ s: dA[q].s, area: polyArea3(pts), pts, origin: dA[q].origin });
-  }
-  return { sections: out, width, sA, sB };
-}
-
-// THE KIT: the solids and the measurements that prove them union-safe.
-export function bandedShell(throat, map, {
-  t = 0, wall = 3, ext = 3, margin = 2, m = null, webFrac = 0.5, per = 48, R = 0, ov = 2,
-} = {}) {
-  if (m == null) m = Math.min(1, wall / 3);
-  const bands = shellBands(throat, map, { t, wall, margin, ov });
-  if (!bands) return null;
-  const { S, ducts, tubes, pairs } = bands;
-  const surf = map.mouthSurf || null;
-  const solids = [], checks = { tubeClear: Infinity, tubeClearAt: null, webWidth: Infinity, webs: 0, tubes: 0, blocks: 0 };
-  const push = (label, sections, opts = {}) => solids.push({ label, sections, ...opts });
-  const contain = (sections, q0, q1, useSurf) => {
-    const clr = skinClearance(throat, map, { sections, surf: useSurf ? surf : null }, { t, ku: 2, kv: 3, wall: 0, reach: 1, step: 2, qMin: Math.max(1, q0 + 1), qMax: Math.min(S - 2, q1 - 1), ringOf: (q) => q - q0 });
-    return clr ? { worst: clr.worst, at: clr.at, cell: clr.cell } : null;
-  };
-  if (!tubes) {
-    const block = blockSections(throat, map, ducts, { wall, m: 0, q0: 0, q1: S - 1, end: "throat", R, per, ov });
-    if (!block) return null;
-    push("horn block", block, { capZ: 0, mouth: true });
-    checks.blocks = 1;
-    checks.throatBlock = contain(block, 0, S - 1, true);
-  } else {
-    const { qB, qC } = tubes;
-    const b1 = blockSections(throat, map, ducts, { wall, m, q0: 0, q1: qB + ov, end: "throat", R, per, ov });
-    const b3 = blockSections(throat, map, ducts, { wall, m, q0: qC - ov, q1: S - 1, end: "mouth", R, per, ov });
-    if (!b1 || !b3) return null;
-    push("throat block", b1, { capZ: 0 });
-    push("mouth block", b3, { mouth: true });
-    checks.blocks = 2;
-    checks.throatBlock = contain(b1, 0, qB + ov, false);
-    checks.mouthBlock = contain(b3, qC - ov, S - 1, true);
-    const tubeSecs = ducts.map((d) => tubeSections(d, { wall, q0: qB, q1: qC }));
-    tubeSecs.forEach((ts, i) => { push(`tube ${throat.cells[i].label}`, ts); checks.tubes++; });
-    // no two tubes touch anywhere in the band: measured on the tube rings
-    for (const pr of pairs)
-      for (let q = 0; q < tubeSecs[pr.a].length; q++) {
-        const g = ringGap(tubeSecs[pr.a][q].pts, tubeSecs[pr.b][q].pts);
-        if (g < checks.tubeClear) { checks.tubeClear = g; checks.tubeClearAt = { pair: `${pr.la}-${pr.lb}`, q: qB + q }; }
-      }
-    for (const pr of pairs) {
-      const w = webSections(ducts[pr.a], ducts[pr.b], { wall, m, frac: webFrac, q0: qB, q1: qC, per: 16 });
-      push(`web ${pr.la}|${pr.lb}`, w.sections);
-      checks.webs++;
-      checks.webWidth = Math.min(checks.webWidth, w.width);
-    }
-  }
-  const positives = solids.length;
-  for (let i = 0; i < throat.cells.length; i++)
-    push(`duct cutter ${throat.cells[i].label}`, extendSections(ducts[i], ext), { capZ: -ext, cutter: true });
-  return { solids, positives, bands: { ...bands, ducts: undefined }, checks, m, margin, webFrac, wall };
 }
 
 // Signed volume of a closed triangle soup, by the divergence theorem. Positive
@@ -7206,74 +5895,40 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
 
 // The material, in two forms.
 //
-// mode "solid" (the default): ONE horn body plus one duct cutter per cell.
-// The user's boolean is subtractions only — no unions at all — because the
-// body is already the union: its skin is the horn's tiling envelope offset
-// by the wall, and the passages are cut out of it. What is left between two
-// passages is the duct-to-duct gap, which is the layout's t at the throat
-// and the knife edge at the mouth, so the dividers come out right without
-// any per-cell wall bookkeeping.
-//
-// mode "bundle": the original 18 blanks + 18 cutters, kept because it is the
-// literal multicell-bundle form. It needs the union, and the union is what
-// grazes — see the body comment for the measured tangency. Offered, warned
-// about, not the default.
+// ONE BLANK AND ONE CUTTER PER CELL, and the CAD work is eighteen
+// independent subtractions: cutter i out of blank i. No unions — the union
+// of per-cell blanks is ill-posed by construction (every adjacent pair
+// overlaps near both ends and stands apart mid-path, so it passes through
+// exact tangential contact twice: measured, all 27 pairs at the defaults,
+// at u = 0.056-0.125, u ~ 0.30 and u = 0.970-0.976, and the default bow
+// halves the crossing rate, which is worse). If the cell shells are to
+// become one horn, that merge is a modelling decision to make in CAD on
+// solids whose faces are all exact, not something this writer can hand over
+// pre-merged.
 export function buildShellSTEP(throat, map, {
-  t = 0, wall = 3, ext = 3, mode = "solid", body = null, name = "ginkgo_horn_shell", bands = {},
+  t = 0, wall = 3, ext = 3, name = "ginkgo_horn_shell",
 } = {}) {
   if (!map) return null;
   const surf = map.mouthSurf || null;
   const ap = surf ? apertureFrame(surf) : null;
-  const capOf = (sections) => {
-    if (!ap) return null;
-    return apertureCapGrid(sections[sections.length - 1].pts, ap);
-  };
+  const capOf = (sections) => (ap ? apertureCapGrid(sections[sections.length - 1].pts, ap) : null);
   const solidsSpec = [];
-  if (mode === "bands") {
-    const kit = bandedShell(throat, map, { t, wall, ext, R: throat.R || 0, ...bands });
-    if (!kit) return null;
-    for (const sd of kit.solids)
-      solidsSpec.push({ label: sd.label, sections: sd.sections, capZ: sd.capZ == null ? null : sd.capZ, capMouthPts: sd.mouth ? capOf(sd.sections) : null });
-    const out = stepEmit({
-      name, solidsSpec,
-      desc: "ginkgo multicell horn: blocks, tubes and webs, then duct cutters",
-      fileDesc: `ginkgo multicell horn shell kit: union the first ${kit.positives} solids (blocks, tubes, webs) in one operation, then subtract the ${throat.cells.length} duct cutters`,
-    });
-    if (out) { out.mode = "bands"; out.kit = kit; }
-    return out;
-  }
-  const useBody = mode === "solid" && body && body.sections;
-  if (mode === "solid" && !useBody) return null;
-  if (useBody)
-    solidsSpec.push({
-      label: "horn body", sections: body.sections, capZ: 0,
-      capMouthPts: capOf(body.sections),
-    });
   for (const cellRec of throat.cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
     const duct = ductSections(cellRec, row, { t });
-    if (!duct) return null;
-    if (!useBody) {
-      const blank = shellSections(cellRec, row, { t, wall, surf });
-      if (!blank) return null;
-      solidsSpec.push({
-        label: `shell blank ${cellRec.label}`, sections: blank, capZ: 0,
-        capMouthPts: capOf(blank),
-      });
-    }
+    const blank = shellSections(cellRec, row, { t, wall, surf });
+    if (!duct || !blank) return null;
+    solidsSpec.push({ label: `shell blank ${cellRec.label}`, sections: blank, capZ: 0, capMouthPts: capOf(blank) });
     solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, ext), capZ: -ext });
   }
+  const n = solidsSpec.length / 2;
   const out = stepEmit({
     name, solidsSpec,
-    desc: useBody
-      ? "ginkgo multicell horn: body and duct cutters, subtract only"
-      : "ginkgo multicell horn shell kit: union blanks, subtract cutters",
-    fileDesc: useBody
-      ? "ginkgo multicell horn, one body plus one cutter per duct; subtract every cutter from the body, no unions"
-      : "ginkgo multicell horn shell kit, lofted B-spline solids; union the blanks and subtract the cutters",
+    desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
+    fileDesc: `ginkgo multicell horn shell kit: ${n} blanks and ${n} cutters, in pairs — subtract each 'duct cutter' from the 'shell blank' of the same cell; no unions`,
   });
-  if (out) out.mode = useBody ? "solid" : "bundle";
+  if (out) { out.mode = "cells"; out.cells = n; }
   return out;
 }
 

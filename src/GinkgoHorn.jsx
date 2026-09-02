@@ -510,8 +510,6 @@ export default function GinkgoHorn() {
   // mid-path, so every pair passes through exact tangential contact on the
   // way. Solid is the default because that tangency is geometry, not a
   // tolerance, and no kernel setting makes it well posed.
-  const [shellMode, setShellMode] = useState("bands");
-  const [webFrac, setWebFrac] = useState(0.5);
   // The live mapping at 64 stations cost ~136 ms per slider tick (~7 fps on
   // a drag); at 24 it is ~60 ms, and every readout that matters on a drag —
   // path lengths, dL, fc — comes from the centreline sampling, which is a
@@ -1943,66 +1941,31 @@ export default function GinkgoHorn() {
             if (ok) dl(`${stem}.step`, r.text, "application/step");
           }}>STEP · B-spline solids</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            // the body's skin is built station by station around the ducts
-            // and then measured in 3-D (several seconds), so say so before
-            // the click freezes the page
-            setStepNote({ ok: true, msg: "building the horn body — wrapping the ducts…" });
+            // the blanks are an offset of the ducts' own rings, so this is
+            // fast, but the file is large enough to be worth a word first
+            setStepNote({ ok: true, msg: "building the shell — offsetting each duct outwards…" });
             setTimeout(() => {
             const em = exportMap();
-            let body = null, cont = null;
-            if (shellMode === "solid") {
-              body = G.hornBodySections(throat, { ...mapOpts, depth, profileT },
-                { wall: shellWall, stations, map: em, t: thickness });
-              if (!body) { setStepNote({ ok: false, msg: "the rim loop did not close — solid mode needs an H-grid" }); return; }
-              cont = G.bodyContainment(throat, em, body, { t: thickness, wall: shellWall });
-            }
-            const r = G.buildShellSTEP(throat, em, {
-              t: thickness, wall: shellWall, mode: shellMode, body, name: `${stem}_shell`, bands: { webFrac },
-            });
+            const r = G.buildShellSTEP(throat, em, { t: thickness, wall: shellWall, name: `${stem}_shell` });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
-            let what, extra = "";
-            if (r.mode === "bands") {
-              const k = r.kit, c = k.checks, b = k.bands;
-              const N = throat.N;
-              what = b.tubes
-                ? `${c.blocks} blocks + ${c.tubes} tubes + ${c.webs} webs, then ${N} cutters — union the first ${k.positives} in one operation, subtract the ${N}`
-                : `1 block + ${N} cutters — the ducts never stand ${fmt(b.threshold, 0)} mm apart, so there is no tube band; subtract only`;
-              const blk = [c.throatBlock, c.mouthBlock].filter(Boolean).map((x) => x.worst);
-              extra = ` · min block wall ${fmt(Math.min(...blk), 2)} mm (3-D)`
-                + (b.tubes ? ` · tubes clear each other by ≥ ${fmt(c.tubeClear, 2)} mm over stations ${b.tubes.qB}–${b.tubes.qC} of ${b.S - 1} · webs ≥ ${fmt(c.webWidth, 1)} mm wide, buried ${fmt(k.m, 1)} mm` : "");
-            } else {
-              what = r.mode === "solid"
-                ? `1 body + ${r.checks.ducts - 1} cutters — subtract only`
-                : `${r.checks.ducts / 2} blanks + ${r.checks.ducts / 2} cutters — union then subtract`;
-              if (cont) extra = ` · min outer wall ${fmt(cont.minWall, 2)} mm (3-D) · fairing radius ${fmt(body.fair, 0)} mm${body.fairNeeded > 2 * shellWall ? ` (${fmt(body.fairNeeded, 0)} needed to keep station ${body.fairAt} of ${body.sections.length - 1} in one piece)` : ""} · ${body.sections.length - 1} skin stations`;
-            }
+            const ov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
             setStepNote({
               ok,
-              msg: `${what} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${extra} · ${
+              msg: `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions · ${
+                integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
+                ov ? ` · adjacent blanks share material over ${fmt(ov.fracTouching * 100, 0)}% of the path, deepest ${fmt(ov.deepest, 1)} mm` : ""} · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
             if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
             }, 30);
           }}>STEP · horn shell</button>
-          <div style={{ display: "flex", gap: 4 }}>
-            {[["bands", "blocks + tubes"], ["solid", "one body"], ["bundle", "per-cell blanks"]].map(([v, l]) => (
-              <button key={v} onClick={() => setShellMode(v)} style={btn(shellMode === v, C.series2)}>{l}</button>
-            ))}
-          </div>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             shell wall (mm)
             <input type="number" value={shellWall} min={0.5} max={20} step={0.5} onChange={(e) => setShellWall(Math.max(0.5, Math.min(20, parseFloat(e.target.value) || 3)))}
               style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
           </label>
-          {shellMode === "bands" && (
-            <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
-              web height (of the facing wall)
-              <input type="number" value={webFrac} min={0.1} max={1} step={0.1} onChange={(e) => setWebFrac(Math.max(0.1, Math.min(1, parseFloat(e.target.value) || 0.5)))}
-                style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
-            </label>
-          )}
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             export stations
             <input type="number" value={stations} min={2} max={64} step={1} onChange={(e) => setStations(Math.max(2, Math.min(64, parseInt(e.target.value) || 16)))}
@@ -2018,39 +1981,19 @@ export default function GinkgoHorn() {
           The STL carries the {throat.N} ducts as faceted closed solids; the <strong style={{ color: C.inkDim }}>STEP</strong> carries the
           same ducts as lofted B-spline solids — the file for CAD when the ducts need filleting, offsetting or joint cuts.
           <br />
-          The <strong style={{ color: C.inkDim }}>horn shell</strong> is the material around that air, and it ships as solids to boolean
-          because the material's topology <em>changes</em> along the path — one block threaded by passages at the throat, separate tubes
-          mid-path, knife edges at the mouth — which no single loft can carry.
-          {shellMode === "bands" ? <>
-            {" "}<strong style={{ color: C.inkDim }}>Blocks + tubes</strong> uses each construction only where it is exact. Where the ducts
-            tile — the throat, and the mouth — the material is one <em>block</em> whose skin is the convex hull of the ducts offset by the wall
-            with true rounds. Where every neighbouring pair stands more than 2 × wall + 2 mm apart (measured, station by station) each duct
-            gets its own <em>tube</em>, its rings offset by exactly the wall, and neighbours are tied by <em>web</em> plates over the middle{" "}
-            {fmt(webFrac * 100, 0)}% of their facing height, buried 1 mm inside each tube's wall. The blocks reach a few stations into the
-            tube band, so every join is a transversal overlap and no two solids ever graze — that grazing is what made the earlier union fail.
-            In CAD: <strong style={{ color: C.inkDim }}>select every positive solid and union once, then subtract the {throat.N} cutters</strong>.
-            The tube band's boundary faces are flat and ready to be joint faces for a multi-part print.
-          </> : shellMode === "solid" ? <>
-            {" "}<strong style={{ color: C.inkDim }}>One body</strong> emits the horn as a single solid plus one cutter per duct: in CAD you{" "}
-            <strong style={{ color: C.inkDim }}>subtract the {throat.N} cutters and union nothing</strong>. The passages leave the layout's{" "}
-            {fmt(thickness, 1)} mm divider at the throat and a knife edge at the mouth, because what is left between two passages is exactly
-            the duct-to-duct gap. The skin is <em>wrapped</em> round the ducts: at each station every duct is grown by the wall — a sleeve
-            with rounds of that radius at its corners, measured perpendicular to the duct however obliquely it crosses the station — and
-            the sleeves are closed by a rolling ball whose radius is the smallest that keeps every station in one piece (never under twice
-            the wall). Where ducts stand apart the skin follows the outermost ones at the wall and bridges the gaps with fillets of that
-            radius; a bowed duct carries its own sleeve out through the skin. The throat face is the exact circle R + wall.
-          </> : <>
-            {" "}<strong style={{ color: C.inkDim }}>Per-cell blanks</strong> is the literal bundle: a blank per duct, so the {throat.N}{" "}
-            blanks must be <em>unioned</em> before the cutters are subtracted. Be warned that the union is ill-posed by construction —
-            blanks overlap near both ends and stand apart mid-path, so every neighbouring pair passes through exact tangential contact
-            somewhere, which is the case CAD kernels fail on. Only a wall above half the widest duct gap
-            {map && clearance ? ` (${fmt(clearance.max / 2, 1)} mm here)` : ""} keeps every pair robustly overlapping.
-          </>}
-          {" "}The mouth end faces of every solid lie on the aperture surface itself, so after the boolean the mouth is one continuous
-          surface with a {fmt(shellWall, 1)} mm rim margin — and that outer rim edge is the one to fillet against edge diffraction. The shell
-          wall is a <strong style={{ color: C.inkDim }}>minimum</strong>, not a constant: the sleeves are laid a pixel over it and the loft
-          between stations is measured in 3-D against the exported surface, which is the figure the note reports. DXF is 2-D per plane,
-          so only the throat layer imports as a sketch.
+          The <strong style={{ color: C.inkDim }}>horn shell</strong> is the material around that air, and it ships as{" "}
+          <strong style={{ color: C.inkDim }}>one blank and one cutter per cell</strong>: the blank is that cell's duct offset outwards by{" "}
+          {fmt(shellWall, 1)} mm on every side, the cutter is the duct extended past both end faces. In CAD you{" "}
+          <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell — {throat.N} independent subtractions,
+          no unions</strong>, and what comes back is {throat.N} cell shells of exactly {fmt(shellWall, 1)} mm wall.
+          {" "}Adjacent blanks share material wherever their ducts run closer than {fmt(2 * shellWall, 0)} mm — most of the throat half of
+          the horn — which is what a multicell's shared walls are; the note above measures how much. Merging them into one horn is a
+          modelling decision to make in CAD, on solids whose faces are all exact.
+          {" "}The mouth end faces of every solid lie on the aperture surface the coverage arcs define, so the mouths are co-surface and
+          that outer rim edge is the one to fillet against edge diffraction. The wall is exactly {fmt(shellWall, 1)} mm on every face at
+          every station — the blank is an offset of the duct's own rings, not a shape fitted to them — with two stated exceptions: a mitred
+          corner reaches further than the wall by construction (1/sin of the half-angle), and the mouth lip measures about 0.26 mm under
+          because it is snapped onto the curved aperture. DXF is 2-D per plane, so only the throat layer imports as a sketch.
         </div>
       </Stage>
 
