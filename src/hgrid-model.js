@@ -5207,8 +5207,9 @@ function followDucts(throat, map, body, { wall, t, ap }) {
   // nearest an angle — used to place a deficit radially outside the point
   const hitAt = (poly, ux, uy) => {
     let rh = 0, hit = -1;
-    for (let k = 0; k < N; k++) {
-      const A = poly[k], B = poly[(k + 1) % N];
+    const M = poly.length;
+    for (let k = 0; k < M; k++) {
+      const A = poly[k], B = poly[(k + 1) % M];
       const den = (B[0] - A[0]) * uy - (B[1] - A[1]) * ux;
       if (Math.abs(den) < 1e-12) continue;
       const sPar = (A[0] * uy - A[1] * ux) / -den;
@@ -5217,6 +5218,16 @@ function followDucts(throat, map, body, { wall, t, ap }) {
       if (proj > rh) { rh = proj; hit = k; }
     }
     return { rh, hit };
+  };
+  // Andrew's monotone chain, counter-clockwise
+  const hullOf = (P) => {
+    const pts = P.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], hi = [];
+    for (const p of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+    lo.pop(); hi.pop();
+    return lo.concat(hi);
   };
   const nearestVertex = (fr, a) => {
     let best = 0, bd = Infinity;
@@ -5236,11 +5247,91 @@ function followDucts(throat, map, body, { wall, t, ap }) {
   // because pushing a vertex out by e raises the clearance there by ~e.
   const E0 = Array.from({ length: S }, () => new Array(N).fill(0));
 
+  // ── THE SLEEVE HULL: the bulge IS the duct's own outline ──────────────────
+  // Grown from single deficit points, the hill peaked at a duct's two outer
+  // CORNERS with a valley between — two knuckles per duct, which the owner
+  // read (correctly) as not following the duct. So the field is now seeded
+  // from geometry, not points: each bowed duct's SLEEVE — its own rings
+  // offset by the wall, exactly the blank of the bundle mode — is laid into
+  // the ring plane of every station it passes through, and the station's
+  // outline becomes the CONVEX HULL of the envelope with those sleeves. The
+  // envelope is convex, so the hull touches nothing where no sleeve pokes
+  // out, and where one does it fairs the sleeve into the skin with tangent
+  // lines: a rounded-rectangle bump that is the duct, following the bow
+  // station by station because the sleeves do. Which ducts get a sleeve is
+  // decided by the 3-D measurement of the bare skin, so a sleeve can never
+  // be laid where nothing is under the wall. The per-point loop below then
+  // only mops up residuals.
+  {
+    const bare = skinClearance(throat, map, body, { t, ku: 2, kv: 2, wall, reach: 1, step: 4 });
+    const span = new Map();   // cell label -> [qMin, qMax] of its REAL deficits
+    // a sleeve is laid only for a duct measured OUTSIDE the bare skin — that
+    // is what a bow does. A thin spot (inside, under the wall) gets its own
+    // small nudge below; gating a whole sleeve on it put a 7 mm hill where a
+    // 2 mm nudge was the honest answer
+    if (bare) for (const d of bare.deficits) {
+      if (d.deficit <= wall) continue;
+      const r = span.get(d.cell) || [Infinity, -Infinity];
+      r[0] = Math.min(r[0], d.dq); r[1] = Math.max(r[1], d.dq);
+      span.set(d.cell, r);
+    }
+    if (span.size) {
+      const sleeves = [];
+      for (const cellRec of throat.cells) {
+        if (!span.has(cellRec.label)) continue;
+        const row = map.rows.find((r) => r.id === cellRec.id);
+        if (!row) continue;
+        const sec = shellSections(cellRec, row, { t, wall, surf: body.surf });
+        if (sec) sleeves.push({ sec, span: span.get(cellRec.label) });
+      }
+      const hull2 = hullOf;
+      for (let q = 1; q < S - 1; q++) {
+        const fr = frames[q];
+        const pts = fr.poly.map((p) => [p[0], p[1]]);
+        let any = false;
+        // The sleeve ring of the SAME PATH FRACTION is laid into this ring's
+        // plane — station index, not a plane slab. The rings of a flaring
+        // horn fan apart, so a slab around ring q admits sleeve points from
+        // three stations ahead that are far outside ring q's outline while
+        // well inside the skin where they actually are: measured as a 12 mm
+        // phantom hill on a plain horn. At equal path fraction the sleeve is
+        // the duct's own size there, projected; the 3-D loop below corrects
+        // the small tilt error that projection leaves.
+        for (const { sec, span: sp } of sleeves) {
+          if (q < sp[0] - 3 || q > sp[1] + 3) continue;
+          for (let k = 0; k < sec[q].pts.length; k++)
+            for (const f of [-0.5, 0, 0.5]) {
+              const j0 = f < 0 ? q - 1 : q, j1 = j0 + 1;
+              if (j0 < 0 || j1 >= sec.length) continue;
+              const ff = f < 0 ? 0.5 : f;
+              {
+                const a = sec[j0].pts[k], b = sec[j1].pts[k];
+                const w = fr.to2([a[0] + (b[0] - a[0]) * ff, a[1] + (b[1] - a[1]) * ff, a[2] + (b[2] - a[2]) * ff]);
+                const r = Math.hypot(w[0], w[1]);
+                if (r < 1e-9) continue;
+                const { rh, hit } = hitAt(fr.poly, w[0] / r, w[1] / r);
+                if (hit >= 0 && r > rh) { pts.push([w[0], w[1]]); any = true; }
+              }
+            }
+        }
+        if (!any) continue;
+        const H = hull2(pts);
+        for (let k = 0; k < N; k++) {
+          const v = fr.poly[k], r0 = Math.hypot(v[0], v[1]);
+          if (r0 < 1e-9) continue;
+          const { rh, hit } = hitAt(H, v[0] / r0, v[1] / r0);
+          if (hit >= 0 && rh > r0 + 1e-9) E0[q][k] = Math.max(E0[q][k], rh - r0);
+        }
+      }
+    }
+  }
+
   // slope limit along the ring (against each vertex's own spacing) and along
   // the path (against the centroid step), then a rounding pass that may only
   // ADD material. Ends are pinned at zero: the cells tile there and no bow
   // reaches them.
-  const SLOPE = 1.0; // radial rise per unit of ring/path distance: the hill's steepest flank
+  const SLOPE = 1.0;      // along the path: radial rise per unit of centroid step
+  const SLOPE_RING = 1.6; // along the ring: the hull's own tangent flanks are steeper than 1:1
   const shape = (E) => {
     const F = E.map((r) => r.slice());
     F[0].fill(0); F[S - 1].fill(0);
@@ -5252,7 +5343,7 @@ function followDucts(throat, map, body, { wall, t, ap }) {
           const kp = (k + 1) % N, km = (k - 1 + N) % N;
           const dp = Math.hypot(P[kp][0] - P[k][0], P[kp][1] - P[k][1]);
           const dm = Math.hypot(P[km][0] - P[k][0], P[km][1] - P[k][1]);
-          const need = Math.max(F[q][kp] - dp * SLOPE, F[q][km] - dm * SLOPE);
+          const need = Math.max(F[q][kp] - dp * SLOPE_RING, F[q][km] - dm * SLOPE_RING);
           if (need > F[q][k] + 1e-9) { F[q][k] = need; moved = true; }
         }
       }
@@ -5275,6 +5366,29 @@ function followDucts(throat, map, body, { wall, t, ap }) {
           G[q][k] = Math.max(F[q][k], m);
         }
       for (let q = 1; q < S - 1; q++) F[q] = G[q];
+    }
+    // CONVEXITY IS A POST-CONDITION. The path slope limit copies a bump onto
+    // its neighbouring rings vertex by vertex, minus a constant and clamped
+    // at zero, and the clamp puts a concave kink where the copied bump meets
+    // the ring — a valley the loft then dips into between stations. Every
+    // ring that carries any excess is therefore re-hulled in its own plane
+    // after shaping: the outline is the convex hull of the pushed ring, and
+    // the field is raised to it (never lowered).
+    for (let q = 1; q < S - 1; q++) {
+      if (!F[q].some((e) => e > 1e-9)) continue;
+      const fr = frames[q];
+      const pts = fr.poly.map((v, k) => {
+        const r0 = Math.hypot(v[0], v[1]) || 1e-9;
+        const sc = (r0 + F[q][k]) / r0;
+        return [v[0] * sc, v[1] * sc];
+      });
+      const H = hullOf(pts);
+      for (let k = 0; k < N; k++) {
+        const v = fr.poly[k], r0 = Math.hypot(v[0], v[1]);
+        if (r0 < 1e-9) continue;
+        const { rh, hit } = hitAt(H, v[0] / r0, v[1] / r0);
+        if (hit >= 0 && rh - r0 > F[q][k]) F[q][k] = rh - r0;
+      }
     }
     return F;
   };
@@ -5320,47 +5434,66 @@ function followDucts(throat, map, body, { wall, t, ap }) {
     const clr = skinClearance(throat, map, body, { t, ku: 2, kv: 2, wall: tol, reach: 1, step: 4 });
     done();
     body.clearance = clr;
+    if (globalThis.__hgDebug && clr) {
+      const w = clr.deficits.slice().sort((a, b) => b.deficit - a.deficit).slice(0, 3);
+      console.log(`    round ${round}: worst ${clr.worst.toFixed(2)} @${clr.cell}/${clr.at}, ${clr.deficits.length} deficits; top: ` +
+        w.map((d) => `${d.cell}/${d.dq} def ${d.deficit.toFixed(2)} foot-band ${d.q} p=(${d.p.map((v) => v.toFixed(0))}) n·ẑ=${d.nrm ? d.nrm[2].toFixed(2) : "?"}`).join(" | "));
+    }
     if (!clr || clr.deficits.length === 0) break;
     done = prof(`round ${round} shape+apply`);
-    for (const { q, deficit, nrm, p } of clr.deficits) {
-      // WHERE THE MATERIAL GOES: radially over the point, in the planes of
-      // the TWO rings that bracket it along the horn. The nearest skin point
-      // to a duct sticking out of a flaring horn lies further ALONG the horn
-      // (the skin comes back toward the duct as it flares), so any push
-      // placed at that foot lands one to three stations ahead of the bow,
-      // oblique and over-sized — measured 10.5 mm of wall at stations 6-7
-      // against 3.4 at the bow's peak, which the owner saw as a second hill.
-      // Both bracketing rings, or the loft between them dips under the wall
-      // where the point actually is.
-      //
-      // HOW MUCH: a point OUTSIDE the skin takes the in-plane excess
-      // r + wall - r_ring in each ring's own plane; a point inside but under
-      // the wall is a flank or a dip between rings, and takes the measured
-      // 3-D residual over the flank cosine n·r̂ on top of the push it has.
-      let bq = -1, bd = Infinity, bz = 0;
-      for (let qq = Math.max(1, q - 3); qq <= Math.min(S - 2, q + 3); qq++) {
-        const w = frames[qq].to2(p);
-        if (Math.abs(w[2]) < bd) { bd = Math.abs(w[2]); bq = qq; bz = w[2]; }
-      }
-      if (bq < 0) continue;
-      const other = bz >= 0 ? bq + 1 : bq - 1;
-      const rings = [bq, other].filter((qq) => qq >= 1 && qq <= S - 2);
+    // EVERY PUSH IS A HULL. Each deficit point names a radius its two
+    // bracketing rings must reach in its direction; the ring then becomes
+    // the convex hull of itself with all such targets, so two corner points
+    // of one duct are joined by the duct's own flat side and faired into the
+    // skin by tangent lines, never left as two knuckles with a valley
+    // between — which is what pushing vertices one at a time produced, in
+    // every round, whatever seeded the field.
+    const targets = Array.from({ length: S }, () => []);
+    for (const { q, k, deficit, nrm, p } of clr.deficits) {
       const outside = deficit > wall;
-      for (const qq of rings) {
-        const fr = frames[qq], w = fr.to2(p), r = Math.hypot(w[0], w[1]);
-        if (r < 1e-9) continue;
-        const kk = nearestVertex(fr, Math.atan2(w[1], w[0]));
-        let want;
-        if (outside) {
-          const { rh, hit } = hitAt(fr.poly, w[0] / r, w[1] / r);
-          if (hit < 0) continue;
-          want = r + wall * 1.03 - rh;                       // against the BASE ring
-        } else {
-          const rd = radialOf(qq, kk);
-          const cosine = nrm ? Math.max(0.5, Math.abs(nrm[0] * rd[0] + nrm[1] * rd[1] + nrm[2] * rd[2])) : 1;
-          want = E[qq][kk] + (deficit + 0.03 * wall) / cosine;
+      if (outside) {
+        // OUTSIDE the skin: material goes radially over the point, in the
+        // planes of the two rings that bracket it along the horn
+        let bq = -1, bd = Infinity, bz = 0;
+        for (let qq = Math.max(1, q - 3); qq <= Math.min(S - 2, q + 3); qq++) {
+          const w = frames[qq].to2(p);
+          if (Math.abs(w[2]) < bd) { bd = Math.abs(w[2]); bq = qq; bz = w[2]; }
         }
-        if (want > E0[qq][kk]) E0[qq][kk] = want;
+        if (bq < 0) continue;
+        const other = bz >= 0 ? bq + 1 : bq - 1;
+        for (const qq of [bq, other].filter((x) => x >= 1 && x <= S - 2)) {
+          const fr = frames[qq], w = fr.to2(p), r = Math.hypot(w[0], w[1]);
+          if (r < 1e-9) continue;
+          const want = r + wall * 1.03;
+          targets[qq].push([w[0] / r * want, w[1] / r * want]);
+        }
+      } else {
+        // INSIDE but thin: the surface nearest the point is what must move,
+        // and the measurement names it exactly — the band and vertex column
+        // of the triangle it was measured against. Attributing a thin spot
+        // to the ring whose plane holds the point put the push beside it on
+        // a non-planar ring, and the loop chased the same 1.3 mm for five
+        // rounds without moving it.
+        const fr = frames[q], v = fr.poly[k], r0 = Math.hypot(v[0], v[1]);
+        if (r0 < 1e-9) continue;
+        const rd = radialOf(q, k);
+        const cosine = nrm ? Math.max(0.5, Math.abs(nrm[0] * rd[0] + nrm[1] * rd[1] + nrm[2] * rd[2])) : 1;
+        // over-push a thin spot by half: the surplus is harmless material,
+        // and a residual that creeps by hundredths per round otherwise
+        // exhausts the round budget at ~85% of the wall
+        const want = r0 + E[q][k] + (1.5 * deficit + 0.03 * wall) / cosine;
+        targets[q].push([v[0] / r0 * want, v[1] / r0 * want]);
+      }
+    }
+    for (let q = 1; q < S - 1; q++) {
+      if (!targets[q].length) continue;
+      const fr = frames[q];
+      const H = hullOf(fr.poly.map((v) => [v[0], v[1]]).concat(targets[q]));
+      for (let k = 0; k < N; k++) {
+        const v = fr.poly[k], r0 = Math.hypot(v[0], v[1]);
+        if (r0 < 1e-9) continue;
+        const { rh, hit } = hitAt(H, v[0] / r0, v[1] / r0);
+        if (hit >= 0 && rh > r0 + 1e-9 && rh - r0 > E0[q][k]) E0[q][k] = rh - r0;
       }
     }
     reset();
@@ -5540,7 +5673,7 @@ export function skinClearance(throat, map, body, { t = 0, ku = 2, kv = 3, wall =
             const kkey = qb * N + kk;
             const prev = deficitMap.get(kkey);
             if (!prev || wall - clr > prev.deficit)
-              deficitMap.set(kkey, { q: qb, k: kk, deficit: wall - clr, nrm, p, foot: bt ? bt.f : null });
+              deficitMap.set(kkey, { q: qb, k: kk, deficit: wall - clr, nrm, p, foot: bt ? bt.f : null, cell: cellRec.label, dq: q });
           }
         }
       }

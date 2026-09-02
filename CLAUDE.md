@@ -748,16 +748,38 @@ exists.
   skin takes the in-plane excess in each ring's plane, a point inside but
   thin takes the 3-D residual over the flank cosine. No push is ever placed
   at the foot. Measured at the tool's defaults, 64 stations, wall 3: min
-  outer wall 2.86 mm plain (hill 0.9 mm), 2.87 mm with the default
-  throat-fifth radial bow (hill 24 mm, ONE hump in the section), 2.83 mm
-  with a throat-half bow (hill 55 mm), 2.82 mm with a bulge and a
-  short-axis bow (hill 65 mm); 2-6 fitting rounds, ~4-5 s. One consequence
+  outer wall 2.87 mm plain (hill 2.3 mm), 2.87 mm with the default
+  throat-fifth radial bow (hill 24 mm, ONE hump in the section), 2.82 mm
+  with a throat-half bow (hill 55 mm), 2.67 mm with a bulge and a
+  short-axis bow (hill 56 mm); 1-6 fitting rounds, ~3-5 s. One consequence
   to know: a bow window that starts AT the throat (the default [0, 0.2])
   makes the skin step up behind the throat face within one station,
   because the bow is steeper there than the 1:1 slope limit and the throat
   ring is pinned to the flange circle — the mating face is untouched, but
   the body swells right behind it. A window starting a little after the
-  throat lets the skin rise smoothly; that is a design knob, not a build. It is
+  throat lets the skin rise smoothly; that is a design knob, not a build.
+  (5) EVERY PUSH IS A CONVEX HULL, or the hill grows KNUCKLES. Grown from
+  single deficit points, the skin peaked at a duct's two outer CORNERS with
+  a valley between — two ridges over one duct, which the owner's axial
+  section showed and rightly read as not following the duct. Pushing ring
+  vertices one at a time produces that whatever seeds the field, so a push
+  is now a point set the ring must enclose, and the ring becomes the convex
+  hull of itself with those points in its own plane: two corners are joined
+  by the duct's own flat side and faired into the skin by tangent lines.
+  The field is also seeded from the bowed ducts' SLEEVES (their own rings
+  offset by the wall — the bundle mode's blanks — gated on a duct measured
+  OUTSIDE the bare skin, and laid into the ring of the SAME PATH FRACTION,
+  never a plane slab: the rings of a flaring horn fan apart, and a slab
+  admitted sleeve points from three stations ahead as a 12 mm phantom hill
+  on a plain horn) and every shaped ring is re-hulled, because the path
+  slope limit copies a bump vertex by vertex and its clamp leaves concave
+  kinks. Measured: zero concave vertices on the throat-side rings in every
+  case; the polar profile at the peak reads 43-46-46-45-46-46-43 across the
+  duct (the 1 mm dip is its flat side). Thin spots — inside but under the
+  wall — are pushed at the measured foot (band and vertex column of the
+  nearest skin triangle), over-pushed by half; attributing them by ring
+  plane put the push beside the point on a non-planar ring and the loop
+  chased 1.3 mm for five rounds. It is
   still MEASURED afterwards (`bodyContainment`) and reported. What is left
   between two passages after the subtraction is exactly the duct-to-duct gap:
   the layout's t at the throat, a knife edge at the mouth, no per-cell wall

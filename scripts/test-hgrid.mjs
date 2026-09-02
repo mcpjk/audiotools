@@ -2679,6 +2679,38 @@ head("Aperture surface, horn body, shell orientation");
         }
     checkTrue("the skin stays close to the straight loft through the hill", ripple < 2.5,
       `worst ${ripple.toFixed(2)} mm mid-station, under a ${bowBody.pushMax.toFixed(0)} mm hill`);
+    // NO KNUCKLES. Grown from single deficit points the hill peaked at a
+    // duct's two outer corners with a valley between; every push is now a
+    // convex-hull fill in the ring's own plane, so a fitted ring can have no
+    // concave vertex where the envelope had none. Measured on the near-planar
+    // throat-side rings, where the projection is exact.
+    const concaveCount = (b, qMax) => {
+      let n = 0;
+      for (let q = 1; q <= qMax; q++) {
+        const P = b.sections[q].pts, Nn = P.length, ctr = [0, 0, 0];
+        for (const p of P) { ctr[0] += p[0] / Nn; ctr[1] += p[1] / Nn; ctr[2] += p[2] / Nn; }
+        let nx = 0, ny = 0, nz = 0;
+        for (let k = 0; k < Nn; k++) { const a = P[k], c2 = P[(k + 1) % Nn]; nx += (a[1] - c2[1]) * (a[2] + c2[2]); ny += (a[2] - c2[2]) * (a[0] + c2[0]); nz += (a[0] - c2[0]) * (a[1] + c2[1]); }
+        const L = Math.hypot(nx, ny, nz), nn = [nx / L, ny / L, nz / L];
+        const tt = Math.abs(nn[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+        let U = [tt[1] * nn[2] - tt[2] * nn[1], tt[2] * nn[0] - tt[0] * nn[2], tt[0] * nn[1] - tt[1] * nn[0]];
+        const ul = Math.hypot(...U); U = U.map((v) => v / ul);
+        const V = [nn[1] * U[2] - nn[2] * U[1], nn[2] * U[0] - nn[0] * U[2], nn[0] * U[1] - nn[1] * U[0]];
+        const w = P.map((p) => { const d = [p[0] - ctr[0], p[1] - ctr[1], p[2] - ctr[2]]; return [d[0] * U[0] + d[1] * U[1] + d[2] * U[2], d[0] * V[0] + d[1] * V[1] + d[2] * V[2]]; });
+        let A = 0; for (let k = 0; k < Nn; k++) A += w[k][0] * w[(k + 1) % Nn][1] - w[(k + 1) % Nn][0] * w[k][1];
+        const sg = A > 0 ? 1 : -1;
+        for (let k = 0; k < Nn; k++) {
+          const a = w[(k - 1 + Nn) % Nn], b2 = w[k], d = w[(k + 1) % Nn];
+          const cr = (b2[0] - a[0]) * (d[1] - b2[1]) - (b2[1] - a[1]) * (d[0] - b2[0]);
+          const l1 = Math.hypot(b2[0] - a[0], b2[1] - a[1]), l2 = Math.hypot(d[0] - b2[0], d[1] - b2[1]);
+          if (cr * sg < -0.05 * l1 * l2) n++;
+        }
+      }
+      return n;
+    };
+    const cBare = concaveCount(bowBare, 12), cFit = concaveCount(bowBody, 12);
+    checkTrue("the fitted rings are as convex as the envelope — no knuckles", cFit <= cBare,
+      `concave vertices on the throat-side rings: envelope ${cBare}, fitted ${cFit}`);
     // and the measurement is a real inversion of the push: with no map there
     // is no hill, and the clearance reads whatever the envelope gives
     checkTrue("the bare envelope reports no hill", bowBare.pushMax === 0 && bowBare.clearance === null, "");
