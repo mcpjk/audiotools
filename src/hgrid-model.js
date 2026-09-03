@@ -3158,9 +3158,20 @@ export function solveSeparation(throat, opts, cfg = {}) {
       best = { gap: gapOf(cl), acc: Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, v.slice()])), dL: m.dL };
     if (gapOf(cl) >= floor - tol) break;
   }
-  // hand back the best configuration, rebuilt if the last step was not it
-  if (best.acc && best.gap > gapOf(cl)) {
-    for (const id in best.acc) acc[id] = best.acc[id];
+  // Hand back the BEST configuration, rebuilt if the last step was not it.
+  // `best` starts at the UNSEPARATED gap with a null field, so when no
+  // iterate ever beats doing nothing the answer is "no displacement" — and
+  // that case has to be handled explicitly. Guarding the restore on
+  // `best.acc` alone fell through to the LAST iterate instead, which is the
+  // one the chain had just driven furthest into trouble: measured on the
+  // tool's own default lengthening (throat fifth, 1 lobe) the solver
+  // returned a field that took the worst gap from -5.10 mm to -6.80 mm,
+  // and the UI applies whatever field comes back, so a failed solve made
+  // the horn WORSE. A solver that cannot improve on the input must return
+  // the input.
+  if (best.gap > gapOf(cl)) {
+    if (best.acc) for (const id in best.acc) acc[id] = best.acc[id];
+    else for (const id in acc) acc[id] = [0, 0];
     m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
     cl = measure(m);
   }

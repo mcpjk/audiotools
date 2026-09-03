@@ -809,11 +809,30 @@ exists.
   station 5. So a dive past -floor ENDS the run. Verified both ways — at the
   old defaults, depth 150, T 0.7 and 1.0, minMid stays -2.955 and -3.640 mm
   at the same stations with the rule on as with it off.
-  **THE WOBBLE DOES NOT REFINE AWAY, which is why a station COUNT could not
-  have worked**: measured -0.002 / -0.122 / -0.241 / -0.122 mm at 24 / 32 /
-  48 / 64 stations, non-monotone, i.e. the sampled minimum near the throat
-  depends on where the stations land. Keyed to the floor instead, the answer
-  is stable: 0.528 / 0.513 / 0.513 / 0.513 mm across the same four.
+  **THE "WOBBLE" IS NOT A WOBBLE — IT IS REAL INTERPENETRATION THAT 24
+  STATIONS CANNOT SEE, and this bullet said otherwise for two sessions.**
+  The station-dependent readings (-0.002 / -0.122 / -0.241 / -0.122 mm at
+  24 / 32 / 48 / 64) were read as sampled noise about zero. They are not.
+  The gap has a SHARP MINIMUM near u = 0.021, and a station grid finds it
+  only if a station lands there: 48, 96 and 192 stations all contain
+  u = 1/48 and all read exactly -0.2422 mm; 64 straddles it (1/64 = 0.0156,
+  2/64 = 0.0313) and reads -0.125; 24 (u = 0, 0.042, ...) misses it entirely
+  and reads -0.002. So it is a RESOLUTION failure, not noise, and the live
+  UI at 24 stations under-reports it by about 100x.
+  Confirmed against an INDEPENDENT test — point-in-closed-mesh by jittered
+  ray casting on the triangles the STL writes, with a closed-form
+  point-triangle distance, both unit-tested against a cube — which finds
+  0.2577 mm of penetration on the same gross outlines at 48 stations, and
+  `ductClearance` with its ring stride set to 1 returns -0.2577. The two
+  agree to four decimals, which is a mutual check rather than a tautology:
+  one measures ring-to-ring at a station, the other a point against the
+  lofted solid.
+  Refining the RING moves it the same way and less: 32 / 64 / 128 / 192
+  points round the outline read -0.211 / -0.242 / -0.258 / -0.263, so the
+  hardcoded `nMs = 16` (64 points) and `signedGap`'s `k += 2` stride cost
+  about 0.03 mm between them. **Stations are the binding resolution, 48 is
+  enough, and the ring is not the problem.** Cost of the move, measured:
+  map + clearance 235 ms at 24 stations against 353 ms at 48.
   Two guards, both tested. The run is capped two stations short of the joint
   so the defect set can never be EMPTY — a floor of 40 mm on this horn would
   otherwise return minMid = Infinity and read as "clear"; it now reports the
@@ -824,6 +843,20 @@ exists.
   the boundary-less form to the last bit, every statistic and the whole
   per-station profile — asserted, because every other clearance test in the
   suite is written against that form.
+- **`ductClearance` MEASURES THE GROSS OUTLINES; THE EXPORT CARRIES THE
+  INSET ONES, so the reported gap is NOT the printed wall.** It reads
+  `row.sched[q].pts`, while `ductSections` — what the STL and STEP write —
+  insets each shared side by (t/2)(1-s). Two neighbours therefore have
+  0.4(1-s) mm MORE room in the exported solid than the metric says, which
+  near the throat is the whole story. Measured on the 2026-09-02 default
+  horn at 48 stations: the gross outlines interpenetrate 0.242 mm at
+  u = 0.021, and the inset outlines DO NOT interpenetrate at all — the
+  independent point-in-solid test on the exported mesh finds nothing. What
+  they leave instead is a 0.123 mm WALL SLIVER there, and the tool reports
+  +0.568 mm. So the number on screen is wrong in two directions that partly
+  cancel: gross understates the wall by the inset, and the throat rule hides
+  the dip. Neither the sign nor the magnitude of "min gap" can be quoted as
+  a printable wall thickness today.
 - **THE SEPARATION SOLVER IS A CONTACT-CHAIN ITERATION, because pairwise
   pushes diffuse and one shared knob is non-monotone.** Three measured
   facts drove the design. (1) Uniform radial spread improves the worst gap
@@ -843,11 +876,39 @@ exists.
   stations) with dL PRESERVED (2.13 -> 2.06), mirrors at 3e-11, ends
   pinned at 5e-14, and lengthening re-equalising on top to dL 0.006. It
   returns the BEST state visited, not the last — the iteration flip-flops
-  at the threshold — and annealing the relaxation was tried and REMOVED
+  at the threshold — **and for two sessions it did NOT, in the one case that
+  matters most.** `best` starts at the UNSEPARATED gap with a null field,
+  and the restore was guarded on that field being non-null, so when no
+  iterate ever beat doing nothing the function fell through and handed back
+  the LAST iterate — the one the contact chain had just driven furthest into
+  trouble. The UI applies whatever field comes back, so a failed solve made
+  the horn WORSE: measured on the tool's own default geometry with the
+  default lengthening (throat fifth, 1 lobe), nudge took the worst gap from
+  -5.10 mm to -6.80 mm while reporting `ok: false`. Fixed — a solver that
+  cannot improve on its input returns its input — and `gapAfter >=
+  gapBefore` is now asserted for BOTH modes on that exact case, together
+  with an independent rebuild of the returned field. Annealing the
+  relaxation was tried and REMOVED
   (0.85/iter decays too fast; measured +0.29 un-annealed against +0.04).
   Higher floors saturate honestly: floor 1.0 reaches +0.73 at the 40 mm
   amplitude cap with dL 10.6 — the throat region genuinely runs out of
   room, and the report says so instead of pretending.
+- **THE THROAT-FIFTH BOW AND THE SEPARATION SOLVE FIGHT OVER THE SAME ROOM,
+  AND THE THROAT FIFTH IS WHERE THERE IS NONE.** The owner's standing choice
+  of bow region since the solve was removed is [0, 0.2]; the recorded signed
+  gap profile is negative or near zero until about u = 0.31 and only peaks
+  near u = 0.78. So the bow is placed exactly where the clearance budget is
+  already spent. Measured on the 2026-09-02 defaults with lengthening at
+  throat fifth, 1 lobe, radial: the worst gap is -5.10 mm before any
+  separation, the independent point-in-solid test on the EXPORTED (inset)
+  mesh confirms 4.44 mm of real interpenetration at u = 0.083, and NEITHER
+  separation mode can fix it — uniform reaches -2.39 mm at 30.8 mm of
+  spread, nudge cannot improve on the input at all. Both report `ok: false`
+  with a reason, so the tool is not lying; but the geometry the owner most
+  often builds is not manufacturable as it stands, and no amount of
+  separation solving will make it so. The levers that CAN work are upstream:
+  a wider bow region, more lobes (amplitude falls as 1/n), a lower T, or
+  more depth.
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now

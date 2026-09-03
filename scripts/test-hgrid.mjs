@@ -2378,6 +2378,40 @@ head("Duct separation (field and solver)");
     !u.ok && u.gapAfter > u.gapBefore && /nudge/.test(u.reason),
     `best ${u.gapAfter.toFixed(2)} mm at ${u.ampMax.toFixed(1)} mm spread`);
 
+  // ── A SOLVER THAT CANNOT IMPROVE MUST RETURN THE INPUT ──────────────────
+  // The postcondition that was violated: nudge tracks the best state visited,
+  // but `best` starts at the UNSEPARATED gap with a null field, and the
+  // restore was guarded on that field being non-null — so when nothing ever
+  // beat doing nothing, it fell through and returned the LAST iterate, the
+  // one the contact chain had just driven furthest into trouble. The UI
+  // applies whatever field comes back, so a failed solve made the horn worse.
+  // The case below is the tool's own 2026-09-02 default geometry with the
+  // default lengthening (throat fifth, 1 lobe) — the setting the owner
+  // reports using almost always — where no separation field helps at all,
+  // because the bow has already spent the room the solver needs.
+  {
+    const hard = {
+      ...opts, exitHalfAngle: 16.55, thetaV: 0, arcH: 555, arcV: 245, depth: 300,
+      lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2 },
+    };
+    const gBase = M.ductClearance(M.mapThroatToMouth(th, hard).rows, { throatFloor: 0.5 }).minMid;
+    checkTrue("the hard case genuinely cannot be separated", gBase < -1,
+      `baseline worst gap ${gBase.toFixed(2)} mm`);
+    for (const mode of ["uniform", "nudge"]) {
+      const r = M.solveSeparation(th, hard, { floor: 0.5, mode, maxIter: 8 });
+      checkTrue(`${mode} never returns a field worse than no separation`,
+        r.gapAfter >= r.gapBefore - 1e-9,
+        `${r.gapBefore.toFixed(2)} -> ${r.gapAfter.toFixed(2)} mm`);
+      // and the field it hands back must REPRODUCE that gap on a fresh build
+      const sepH = r.amps ? { amps: r.amps, uStart: r.uStart, uEnd: r.uEnd, lobes: r.lobes } : null;
+      const mh = M.mapThroatToMouth(th, { ...hard, separate: sepH });
+      const gh = M.ductClearance(mh.rows, { throatFloor: 0.5 }).minMid;
+      check(`${mode}'s reported gap survives an independent rebuild`, gh, r.gapAfter, 1e-9, "mm");
+      checkTrue(`${mode} reports the failure rather than claiming success`,
+        r.ok === false && !!r.reason, r.reason || "no reason given");
+    }
+  }
+
   // and the two features compose: separation under a bulge clears the defect
   // without disturbing a single joint
   const nb = M.solveSeparation(th, { ...opts, bulge: { amp: 5 } }, { floor: 0.2, mode: "nudge", maxIter: 20 });

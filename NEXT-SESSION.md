@@ -1,5 +1,53 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-03 clearance session
+
+- **DUCT SEPARATION IS NOW STAGE 8, AFTER COPED JOINTS** (owner's request).
+  Every stage above it moves the geometry it has to clear, and the bulge
+  most directly — it widens each cell toward its neighbour and so eats the
+  very gap being solved for. The solve was already computed WITH the bulge
+  in its options and already invalidated when the bulge moved; what was
+  wrong was the reading order, which invited solving it before the joints
+  existed. Export is now stage 9.
+- **A REAL BUG IN `solveSeparation` NUDGE MODE IS FIXED: a failed solve
+  returned a field WORSE than no separation, and the UI applied it.**
+  Measured on the tool's own defaults with the default lengthening, nudge
+  took the worst gap from -5.10 mm to -6.80 mm. `best` starts at the
+  unseparated gap with a null field and the restore was guarded on that
+  field being non-null, so "nothing beat doing nothing" fell through to the
+  last iterate. 7 new checks, suite at 410. **This is the most likely cause
+  of the reported "the separation solve still leaves intersecting ducts".**
+
+## THE OPEN QUESTION THIS SESSION RAISED — the clearance metric itself
+
+Three separate measurements say the metric cannot currently be read as a
+printable wall thickness. All are in the CLAUDE.md findings with numbers.
+
+1. **Resolution.** The gap has a sharp minimum near u = 0.021 and the live
+   UI samples at 24 stations, which steps straight over it: it reads
+   -0.002 mm where 48 stations read -0.242 and an independent point-in-solid
+   test reads -0.258. 48 stations is enough and costs 353 ms against 235 ms
+   for the map + clearance pass, which is already deferred off the render.
+   The RING is not the problem (32/64/128/192 points span 0.05 mm).
+2. **Gross vs inset.** `ductClearance` reads the gross outlines; the STL and
+   STEP carry outlines inset by (t/2)(1-s). On the default horn the gross
+   outlines interpenetrate 0.242 mm while the EXPORTED ones do not
+   interpenetrate at all — they leave a 0.123 mm wall sliver, and the tool
+   reports +0.568 mm. The two errors partly cancel, which is why this went
+   unnoticed.
+3. **The throat rule.** The symmetric (-floor, +floor) band classifies
+   stations 1..4 as knife edge for 19 of 27 pairs at the defaults, so a real
+   dip inside the band never reaches `minMid` — the number the separation
+   solver optimises. The owner's proposal is to require the gap to INCREASE
+   monotonically away from the throat until it reaches the floor, which is
+   strictly stronger and would catch exactly this. Note it needs (1) first:
+   at 24 stations the dip is not sampled, so a monotonicity test would give
+   the right verdict with the wrong magnitude (-0.002 rather than -0.24).
+
+**None of these three is built. They change every clearance number the tool
+prints, and (3) replaces a documented deliberate design, so they were put to
+the owner rather than taken.**
+
 ## Done in the 2026-09-02 refinements session
 
 - **The "horn — shell blanks" 3-D VIEW IS REMOVED** (owner's call: it adds

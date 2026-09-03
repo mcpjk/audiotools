@@ -914,7 +914,7 @@ export default function GinkgoHorn() {
     if (map && clearance && clearance.throat && clearance.throat.saturated > 0)
       w.push(`${clearance.throat.saturated} of ${clearance.throat.pairs} neighbour pairs never open to the ${fmt(sepFloor, 1)} mm minimum anywhere along the path, so the throat knife-edge run would have swallowed the whole duct — it is capped, and the gap reported is the best those pairs actually have. Lower the minimum, or give the profile more room (lower T, or more depth).`);
     if (map && clearance && clearance.thin && clearance.thin.count > 0 && !(clearance.overlap > 1e-3))
-      w.push(`${clearance.thin.count} spot(s) between ducts carry a wall sliver thinner than ${fmt(sepFloor, 1)} mm (worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at}) — separate ducts that close will not print as two walls. Solve the separation in stage 6, or let them merge by raising the bulge.`);
+      w.push(`${clearance.thin.count} spot(s) between ducts carry a wall sliver thinner than ${fmt(sepFloor, 1)} mm (worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at}) — separate ducts that close will not print as two walls. Solve the separation in stage 8, or let them merge by raising the bulge.`);
     if (map && map.lengthen && map.lengthen.shortfall > 0.1)
       w.push(`Path lengthening hit its amplitude cap: the worst cell is still ${fmt(map.lengthen.shortfall, 1)} mm short of the ${fmt(map.lengthen.target, 1)} mm target. More lobes reach the same length at 1/n the amplitude — raise the lobe count rather than accepting the shortfall.`);
     // Only one fc when dL is small — past a few percent the horn does not have
@@ -1785,79 +1785,6 @@ export default function GinkgoHorn() {
           <strong style={{ color: C.inkDim }}> wall spread</strong> in the verdict pane, never by gross turning. Sections are swept in
           specified planes{map && map.sweptRollMax != null ? ` — imposed roll ${fmt(map.sweptRollMax, 1)}°, landing to ${map.sweptAimMax.toExponential(0)}°` : ""}.
         </div>
-
-        {/* ── DUCT SEPARATION ─────────────────────────────────────────────
-            The other use of the same lever: displace centrelines to clear
-            interpenetration and thin slivers, with the amplitudes SOLVED
-            against the measured clearance rather than dialled. */}
-        <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 10 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ ...secTitle, marginBottom: 0 }}>Duct separation</span>
-            <span style={{ fontSize: 10, color: C.inkMuted }}>min gap</span>
-            <input type="number" value={sepFloor} min={0.1} max={5} step={0.1}
-              onChange={(e) => setSepFloor(Math.max(0.1, parseFloat(e.target.value) || 0.5))}
-              style={{ ...sInput, width: 58, padding: "3px 5px", fontSize: 11 }} />
-            <span style={{ fontSize: 10, color: C.inkMuted }}>mm</span>
-            <button disabled={sepBusy} onClick={() => {
-              setSepBusy(true);
-              setTimeout(() => {
-                const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
-                  { floor: sepFloor, mode: "uniform" });
-                setSepSolve(r);
-                setSepBusy(false);
-              }, 30);
-            }} style={{ ...btn(false, C.series4), opacity: sepBusy ? 0.4 : 1 }}>
-              {sepBusy ? "solving…" : "solve · quick spread"}</button>
-            <button disabled={sepBusy} onClick={() => {
-              setSepBusy(true);
-              setTimeout(() => {
-                const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
-                  { floor: sepFloor, mode: "nudge", maxIter: 20 });
-                setSepSolve(r);
-                setSepBusy(false);
-              }, 30);
-            }} style={{ ...btn(false, C.series3), opacity: sepBusy ? 0.4 : 1 }}>
-              {sepBusy ? "solving…" : "solve · per-duct nudge"}</button>
-            {sepSolve && sepSolve.amps && (
-              <button onClick={() => setSepSolve(null)} style={btn(false, C.series5)}>clear</button>
-            )}
-          </div>
-          {sepSolve && (
-            <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
-              {sepSolve.already
-                ? <span style={{ color: C.series4 }}>nothing to solve — the worst gap is already {fmt(sepSolve.gapBefore, 2)} mm</span>
-                : <>
-                    <span style={{ color: sepSolve.ok ? C.series4 : C.series1 }}>
-                      {sepSolve.mode === "uniform" ? "quick spread" : "per-duct nudge"}: worst gap {fmt(sepSolve.gapBefore, 2)} → {fmt(sepSolve.gapAfter, 2)} mm
-                    </span>
-                    <span style={{ color: C.inkMuted }}>
-                      {" "}· amplitude up to {fmt(sepSolve.ampMax, 1)} mm over [{fmt(sepSolve.uStart, 2)}, {fmt(sepSolve.uEnd, 2)}] of the path
-                      {" "}· ΔL {fmt(sepSolve.dLBefore, 2)} → {fmt(sepSolve.dL, 2)} mm
-                      {" "}· {sepSolve.iters != null ? `${sepSolve.iters} rounds` : `${sepSolve.evals} evaluations`}
-                    </span>
-                    {!sepSolve.ok && <div style={{ color: C.series5 }}>{sepSolve.reason}</div>}
-                  </>}
-            </div>
-          )}
-          <div style={{ ...hintStyle, marginTop: 6 }}>
-            The centrelines are displaced with the same windowed bow the lengthening uses, but with the amplitudes
-            <strong style={{ color: C.inkDim }}> solved against the measured clearance</strong>, and the window placed where the trouble is.
-            Ducts touching or merging is a joint; a gap between 0 and the minimum above is a <strong style={{ color: C.inkDim }}>sliver of
-            wall too thin to print</strong>, and this is the lever that clears both it and real interpenetration.
-            {" "}<em>Quick spread</em> pushes every duct outward by one shared amount — cheap, one knob, and it honestly reports when that
-            single knob cannot fix the geometry. <em>Per-duct nudge</em> resolves each over-packed row and column as a contact chain and
-            moves every duct individually — a few seconds, and the field keeps both mirrors by construction. Both leave the throat face and
-            the mouth tiling untouched, and lengthening re-equalises the separated paths if it is on.
-            <br />
-            The minimum also sets <strong style={{ color: C.inkDim }}>where it starts applying</strong>. The cells tile at the throat exactly
-            as they tile at the mouth, so the first stations are a knife edge too, and asking for a gap there asks the ducts for room they have
-            had no path length to open. Each pair's <strong style={{ color: C.inkDim }}>throat run</strong> is the stretch from the throat over
-            which the gap is still within one minimum of touching — inside it, contact is the knife edge; after it, a gap under the minimum is
-            the defect it always was. The band is symmetric, and the negative half is what keeps this honest: a duct driven <em>through</em> its
-            neighbour by more than the minimum ends the run and is reported, so the profile's own interpenetration can never be filed away as a
-            knife edge. Whatever contact the run does contain is reported beside it, never hidden.
-          </div>
-        </div>
       </Stage>
 
       <Stage n={7} title="Coped joints" why="bulge the mouth tiles; ducts overlap before the mouth and meet at knife edges">
@@ -1911,7 +1838,81 @@ export default function GinkgoHorn() {
         </div>
       </Stage>
 
-      <Stage n={8} title="Export" why="exports build at full resolution on click; the preview stays at 24 stations">
+      <Stage n={8} title="Duct separation" why="displace centrelines until the ducts clear — solved against the measured gap, and solved LAST">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>min gap</span>
+          <input type="number" value={sepFloor} min={0.1} max={5} step={0.1}
+            onChange={(e) => setSepFloor(Math.max(0.1, parseFloat(e.target.value) || 0.5))}
+            style={{ ...sInput, width: 58, padding: "3px 5px", fontSize: 11 }} />
+          <span style={{ fontSize: 10, color: C.inkMuted }}>mm</span>
+          <button disabled={sepBusy} onClick={() => {
+            setSepBusy(true);
+            setTimeout(() => {
+              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
+                { floor: sepFloor, mode: "uniform" });
+              setSepSolve(r);
+              setSepBusy(false);
+            }, 30);
+          }} style={{ ...btn(false, C.series4), opacity: sepBusy ? 0.4 : 1 }}>
+            {sepBusy ? "solving…" : "solve · quick spread"}</button>
+          <button disabled={sepBusy} onClick={() => {
+            setSepBusy(true);
+            setTimeout(() => {
+              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
+                { floor: sepFloor, mode: "nudge", maxIter: 20 });
+              setSepSolve(r);
+              setSepBusy(false);
+            }, 30);
+          }} style={{ ...btn(false, C.series3), opacity: sepBusy ? 0.4 : 1 }}>
+            {sepBusy ? "solving…" : "solve · per-duct nudge"}</button>
+          {sepSolve && sepSolve.amps && (
+            <button onClick={() => setSepSolve(null)} style={btn(false, C.series5)}>clear</button>
+          )}
+        </div>
+        {sepSolve && (
+          <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+            {sepSolve.already
+              ? <span style={{ color: C.series4 }}>nothing to solve — the worst gap is already {fmt(sepSolve.gapBefore, 2)} mm</span>
+              : <>
+                  <span style={{ color: sepSolve.ok ? C.series4 : C.series1 }}>
+                    {sepSolve.mode === "uniform" ? "quick spread" : "per-duct nudge"}: worst gap {fmt(sepSolve.gapBefore, 2)} → {fmt(sepSolve.gapAfter, 2)} mm
+                  </span>
+                  <span style={{ color: C.inkMuted }}>
+                    {" "}· amplitude up to {fmt(sepSolve.ampMax, 1)} mm over [{fmt(sepSolve.uStart, 2)}, {fmt(sepSolve.uEnd, 2)}] of the path
+                    {" "}· ΔL {fmt(sepSolve.dLBefore, 2)} → {fmt(sepSolve.dL, 2)} mm
+                    {" "}· {sepSolve.iters != null ? `${sepSolve.iters} rounds` : `${sepSolve.evals} evaluations`}
+                  </span>
+                  {!sepSolve.ok && <div style={{ color: C.series5 }}>{sepSolve.reason}</div>}
+                </>}
+          </div>
+        )}
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          <strong style={{ color: C.inkDim }}>This stage comes last on purpose.</strong> Every stage above it moves the geometry this
+          solve has to clear — the coped joints most directly, since a bulge widens each cell toward its neighbour and so eats the very gap
+          being solved for. Solve it here, and the answer is measured on the ducts you are actually going to export; solve it earlier and
+          the next change silently invalidates it. The solve is discarded automatically whenever anything upstream moves, including the
+          bulge, so a stale field can never survive on screen.
+          <br />
+          The centrelines are displaced with the same windowed bow the lengthening uses, but with the amplitudes
+          <strong style={{ color: C.inkDim }}> solved against the measured clearance</strong>, and the window placed where the trouble is.
+          Ducts touching or merging is a joint; a gap between 0 and the minimum above is a <strong style={{ color: C.inkDim }}>sliver of
+          wall too thin to print</strong>, and this is the lever that clears both it and real interpenetration.
+          {" "}<em>Quick spread</em> pushes every duct outward by one shared amount — cheap, one knob, and it honestly reports when that
+          single knob cannot fix the geometry. <em>Per-duct nudge</em> resolves each over-packed row and column as a contact chain and
+          moves every duct individually — a few seconds, and the field keeps both mirrors by construction. Both leave the throat face and
+          the mouth tiling untouched, and lengthening re-equalises the separated paths if it is on.
+          <br />
+          The minimum also sets <strong style={{ color: C.inkDim }}>where it starts applying</strong>. The cells tile at the throat exactly
+          as they tile at the mouth, so the first stations are a knife edge too, and asking for a gap there asks the ducts for room they have
+          had no path length to open. Each pair's <strong style={{ color: C.inkDim }}>throat run</strong> is the stretch from the throat over
+          which the gap is still within one minimum of touching — inside it, contact is the knife edge; after it, a gap under the minimum is
+          the defect it always was. The band is symmetric, and the negative half is what keeps this honest: a duct driven <em>through</em> its
+          neighbour by more than the minimum ends the run and is reported, so the profile's own interpenetration can never be filed away as a
+          knife edge. Whatever contact the run does contain is reported beside it, never hidden.
+        </div>
+      </Stage>
+
+      <Stage n={9} title="Export" why="exports build at full resolution on click; the preview stays at 24 stations">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button style={expBtn} onClick={() => dl(`${stem}.dxf`, buildDXF(exportMap()), "application/dxf")}>DXF · one layer per station</button>
           <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(exportMap()), "application/json")}>JSON cell definition</button>
@@ -2208,7 +2209,7 @@ export default function GinkgoHorn() {
               sub={!clearance || !clearance.thin ? `gaps under ${fmt(sepFloor, 1)} mm, before the joints`
                 : clearance.thin.count === 0
                   ? `no duct gap under ${fmt(sepFloor, 1)} mm outside the joints`
-                  : `slivers under ${fmt(sepFloor, 1)} mm · worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at} — solve separation (stage 6)`}
+                  : `slivers under ${fmt(sepFloor, 1)} mm · worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at} — solve separation (stage 8)`}
               color={!clearance || !clearance.thin ? C.inkMuted : clearance.thin.count === 0 ? C.series4 : C.series1} />
           )}
           <Metric label="Shell" value={`⌀ ${fmt(fab.dShell, 2)} mm`}
