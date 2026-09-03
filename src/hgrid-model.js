@@ -5958,6 +5958,44 @@ export function buildSTEP(throat, map, { t = 0, only = null, name = "ginkgo_duct
   });
 }
 
+// The narrowest width of each throat cell, as a rotating caliper on its own
+// outline. This is the number `wall` has to be read against: at the throat the
+// cells TILE, so a blank pushes `wall` into its neighbour's territory across
+// the whole shared face, and when 2·wall exceeds a cell's width the blanks on
+// either side of it reach past each other — two solids that share no edge at
+// all end up sharing material. Measured at the defaults: cells 4.47-7.25 mm
+// wide against 2·wall = 7.0 mm, and the blanks then stack SIX deep at the
+// throat. It is the FACE offset that does this, not the corner mitre: clamping
+// every mitre to a full round left the stack at 6 and the non-adjacent sharing
+// at 29 pairs of 153, while dropping the wall moved both at once (stack
+// 6/5/4 and non-adjacent 29/18/2 at wall 3/2.5/2, zero at 1.5).
+// Measured on the DUCT ring when a map is given — that is the outline the
+// blank is actually offset from — and on the layout polygon otherwise.
+export function throatCellWidth(throat, map = null, { t = 0 } = {}) {
+  const per = [];
+  for (const c of throat.cells) {
+    let poly = c.poly;
+    if (map) {
+      const row = map.rows.find((r) => r.id === c.id);
+      const d = row && ductSections(c, row, { t });
+      if (d) poly = d[0].pts;
+    }
+    if (!poly || poly.length < 3) continue;
+    let w = Infinity;
+    for (let a = 0; a < 180; a += 1) {
+      const ux = Math.cos((a * Math.PI) / 180), uy = Math.sin((a * Math.PI) / 180);
+      let lo = Infinity, hi = -Infinity;
+      for (const p of poly) { const s = p[0] * ux + p[1] * uy; if (s < lo) lo = s; if (s > hi) hi = s; }
+      if (hi - lo < w) w = hi - lo;
+    }
+    per.push({ label: c.label, w });
+  }
+  if (!per.length) return null;
+  const ws = per.map((x) => x.w);
+  const min = Math.min(...ws);
+  return { min, max: Math.max(...ws), per, narrowest: per.find((x) => x.w === min).label };
+}
+
 // ---------------------------------------------------------------------------
 // SYMMETRY REGIONS
 //

@@ -810,17 +810,51 @@ exists.
   (128 mm2). Everything at 3 or less succeeded; the 6 failed. Six overlapping
   solids is 15 mutual surface-surface intersections to resolve in one small
   region.
-  **WHY SIX AND NOT FOUR — a grid node joins four cells, so four was the most
-  I expected. The mitre spikes are longer than a throat cell is wide.**
-  Measured: throat cell calipers 4.47-7.25 mm against a blank corner reach of
-  up to 8.49 mm at a 48.7 deg corner (a mitre is 1/sin(half-angle) = 2.43x the
-  wall), and **17 of 18 blanks reach further than the narrowest cell is
-  wide** — so a corner pokes clean past its neighbour into the cell beyond.
-  That is why this only bites at the throat, where the cells are small enough
-  to be crossed. Capping or rounding the mitre is the fix and is NOT built:
-  rounding keeps the wall exact but breaks the shared corner-column identity
-  that makes the seams measure 0, and clamping keeps the topology but thins
-  the wall at the sharpest corners (about 1.5 mm at 48 deg for a 1.2x clamp).
+  **WHY SIX AND NOT FOUR: 2xWALL EXCEEDS THE THROAT CELL WIDTH. It is the FACE
+  offset, not the corner mitre, and the mitre reading in the first version of
+  this bullet was wrong.** A grid node joins four cells, so four is the
+  structural floor. Six needs a blank to reach clean across a cell, and the
+  face offset alone does it: at the throat the cells TILE, so each blank pushes
+  `wall` into its neighbour across the whole shared face, and the two blanks on
+  either side of a narrow cell then meet inside it. Measured: throat cells
+  4.47-7.25 mm wide (duct rings, `throatCellWidth`) against 2·wall + jitter =
+  6.5 mm. Sweeping the wall moves both numbers together —
+    wall           3.0   2.5   2.0   1.5   1.0
+    throat stack     6     5     4     4     4
+    area >=4 deep  309   226   133    69    26  mm2
+    NON-adjacent    29    18     2     0     0  pairs of 153
+  — and the closed form predicts the crossing exactly: 2·wall + jitter is
+  6.50 / 5.50 / 4.50 / 3.50 mm against a narrowest cell of 4.47, so the last
+  clear wall is between 2.0 and 1.5, which is where the measurement puts it.
+  **CLAMPING THE MITRE WAS TESTED AND IS NOT THE FIX**: a full round (clamp to
+  1.0x wall, the tightest a corner can be without thinning the face) left the
+  stack at 6 on the tool's defaults and took it 6 -> 5 on the test geometry,
+  with 24 of 28 non-adjacent pairs still sharing — while halving the wall
+  removed all of them. A previous session recommended the cap as the highest-
+  value fix; that recommendation was withdrawn on this measurement, and the
+  suite now asserts the negative so it cannot be re-proposed by memory.
+- **THE PAIR THAT FAILS IS NOT PREDICTABLE FROM THE PAIR'S GEOMETRY, and that
+  is the result that ends the pair-hunting.** On the owner's own quarter export
+  (6 cells, x- y-, wall 3, jitter 0.5, ext 3 — parameters read back OUT of the
+  STEP: the throat cap z per blank reproduced `cellPhase5` exactly), 13 pair
+  unions gave 5 failures and 8 successes. The blanks' own B-spline surfaces
+  were evaluated from the shipped file — no assumption about UI settings — and
+  every candidate discriminator came out flat:
+    - overlap depth: FAILED 4.80-6.57 mm, ok 1.40-6.88 mm
+    - surface points inside the neighbour: FAILED 71-642, ok 18-524
+    - separate contact runs along the path: FAILED 1-4, ok 1-4
+    - knife-edge fraction (inside by < 0.1 mm): FAILED 1.2-50.5%, ok 0-58.2%
+    - closest approach: 0.000-0.038 mm on EVERY pair, failed and ok alike
+  Two pairs are near-twins and land on opposite sides: 1,1-2,2 FAILED at
+  overlap 5.05 mm / 200 points / 4 runs / 50.5% knife, while 2,1-3,2 SUCCEEDED
+  at 5.09 / 194 / 3 / 58.2%. Likewise 1,2-2,1 succeeded and 2,2-3,1 failed at
+  92 vs 71 points and 4.61 vs 4.80 mm. **Every pair in that file overlaps
+  millimetres deep AND touches within 40 um somewhere**, so the whole
+  configuration sits on the kernel's tolerance boundary and which side a pair
+  lands on is not readable from its shape. Do not look for the bad pair; change
+  the geometry class. Note also 1,1-3,2 — two columns apart, no shared edge —
+  overlapping 4.62 mm over 40 mm of path, which is the reaching above, measured
+  on the shipped file rather than in the model.
 - **A HALF OR A QUARTER CAN BE EXPORTED (`xSide` / `ySide`), and the one thing
   that does NOT survive mirroring is the wall jitter.** `symmetryRegion`
   selects cells by THROAT CENTROID, and a cell whose centroid sits ON a plane

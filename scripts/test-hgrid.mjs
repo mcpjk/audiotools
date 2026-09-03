@@ -2861,6 +2861,74 @@ head("Aperture surface, per-cell shell, orientation");
       plain.mode === "cells" && plain.trims === 0 && /no unions/.test(plain.text), "");
   }
 
+  // ── the wall against the cell width, which is what stacks the blanks ─────
+  // At the throat the cells tile, so a blank pushes `wall` into its neighbour
+  // across the whole shared face. Once 2·wall passes a cell's width the blanks
+  // on either side of that cell reach past each other. The closed form and the
+  // measured throat-plane stack must agree, and the mitre must be ruled OUT as
+  // the cause — clamping every corner to a full round leaves the stack alone.
+  {
+    const cw = M.throatCellWidth(th, map, { t });
+    checkTrue("the narrowest throat cell is measured on the duct ring",
+      cw.min > 3 && cw.min < cw.max && cw.max < 12,
+      `${cw.min.toFixed(2)}-${cw.max.toFixed(2)} mm, narrowest ${cw.narrowest}`);
+    const insideXY = (pt, poly) => {
+      let ins = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
+        if ((poly[i][1] > pt[1]) !== (poly[j][1] > pt[1])
+          && pt[0] < ((poly[j][0] - poly[i][0]) * (pt[1] - poly[i][1])) / (poly[j][1] - poly[i][1]) + poly[i][0]) ins = !ins;
+      return ins;
+    };
+    // how many blanks share throat material with a cell they are NOT adjacent
+    // to — the thing that can only happen by reaching across a whole cell
+    const farSharing = (w, cap = 0) => {
+      const B = new Map();
+      for (const c of th.cells) {
+        const row = map.rows.find((r) => r.id === c.id);
+        const b = M.shellSections(c, row, { t, wall: w, surf: map.mouthSurf, jitter: 0, stations: 32, snapMouth: false })[0].pts;
+        if (cap) {
+          const D = M.ductSections(c, row, { t })[0].pts, lim = cap * w;
+          for (let k = 0; k < b.length; k++) {
+            const o = D[k], v = [b[k][0] - o[0], b[k][1] - o[1], b[k][2] - o[2]];
+            const L = Math.hypot(v[0], v[1], v[2]);
+            if (L > lim) b[k] = [o[0] + (v[0] * lim) / L, o[1] + (v[1] * lim) / L, o[2] + (v[2] * lim) / L];
+          }
+        }
+        B.set(c.label, b);
+      }
+      const L = [...B.keys()];
+      let far = 0, stack = 0;
+      for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+        const [ci, ri] = L[i].split(",").map(Number), [cj, rj] = L[j].split(",").map(Number);
+        if (Math.abs(ci - cj) <= 1 && Math.abs(ri - rj) <= 1) continue;
+        const P = B.get(L[i]), Q = B.get(L[j]);
+        if (P.some((p) => insideXY(p, Q)) || Q.some((q) => insideXY(q, P))) far++;
+      }
+      for (let x = -26; x <= 26; x += 0.4) for (let y = -26; y <= 26; y += 0.4) {
+        let n = 0;
+        for (const [, P] of B) if (insideXY([x, y], P)) n++;
+        if (n > stack) stack = n;
+      }
+      return { far, stack };
+    };
+    const thick = farSharing(3), thin = farSharing(1.5);
+    checkTrue("a wall over half the narrowest cell reaches past a neighbour",
+      2 * 3 > cw.min && thick.far > 0 && thick.stack > 4,
+      `2x3 = 6.0 mm against ${cw.min.toFixed(2)} mm: ${thick.far} non-adjacent pairs share, stack ${thick.stack}`);
+    checkTrue("and a wall under it does not, down to the structural floor",
+      2 * 1.5 < cw.min && thin.far === 0 && thin.stack === 4,
+      `2x1.5 = 3.0 mm: ${thin.far} non-adjacent pairs, stack ${thin.stack} (four cells meet at a node)`);
+    // The mitre is NOT the cause, and this is the test that says so. Stated as
+    // a BOUND rather than an equality: clamping every corner to a full round
+    // does move the stack a little on some geometries (6 -> 6 at the tool's
+    // defaults, 6 -> 5 here), but it leaves the great majority of the reaching
+    // in place, where halving the wall removes ALL of it.
+    const round = farSharing(3, 1);
+    checkTrue("clamping every mitre to a full round does NOT fix it",
+      round.stack >= thick.stack - 1 && round.far > 0.8 * thick.far,
+      `stack ${thick.stack} -> ${round.stack}, non-adjacent pairs ${thick.far} -> ${round.far} — it is the face offset, not the corner`);
+  }
+
   // ── symmetry regions: a half is a half, and the mirror is MEASURED ───────
   // A region export rests on the horn being mirror-symmetric. That is a
   // property of the built geometry, not of the intent — a world-axis bow
