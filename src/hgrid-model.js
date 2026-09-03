@@ -881,6 +881,26 @@ export function mapThroatToMouth(throat, opts) {
     const {
       lobes = 1, dir = "radial", tol = 0.02, ampCap = 150, targetLen = null,
       uStart = 0, uEnd = 1,
+      // ── REGION GRADE (owner's proposal, 2026-09-03) ──────────────────────
+      // Widen the bow window with the cell's distance from the horn axis,
+      // keeping the window's CENTRE fixed: the innermost cell in a row gets
+      // span x (1 - grade), the outermost span x (1 + grade), everything in
+      // between interpolated on its own radius.
+      // THE POINT IS THE AMPLITUDE ORDERING, NOT THE TIMING. Amplitude for a
+      // given added length goes as sqrt(span) (recorded), so a narrow window
+      // buys its length with a SMALL displacement and a wide one with a
+      // large one. Grading the span therefore makes displacement grow
+      // outward while every cell still lands on the same target length — so
+      // a row of cells sharing one outward direction EXPANDS instead of
+      // translating, and the spacing between them opens.
+      // This is NOT the rejected stagger, which shifted the windows so a
+      // cell at peak displacement sat beside an undisplaced neighbour. Here
+      // the windows stay concentric and only their widths differ, so the
+      // cells still move together — which the stagger measurement showed is
+      // the property worth keeping.
+      // Mirror-safe by construction: the grade is keyed to |radius|, which a
+      // mirror does not change, so mirrored cells get identical windows.
+      regionGrade = 0,
     } = lengthen;
     // the OUTWARD ray from the horn axis through this duct, at mid-path,
     // where its position off the axis is representative of the whole run.
@@ -934,7 +954,34 @@ export function mapThroatToMouth(throat, opts) {
         for (let q = 0; q <= samples; q++) P.push(tr(q / samples));
         target = Math.max(target, arcLenOf(P));
       }
-    return { target, lobes, dir, dirFor, tol, ampCap, uStart, uEnd };
+    // the radius spread the grade interpolates over, measured on the throat
+    // centroids rather than assumed from the grid index — a cell's distance
+    // from the axis is what decides which of its neighbours it bows toward
+    let radMin = Infinity, radMax = 0;
+    for (const cc of throat.cells) {
+      const r = Math.hypot(cc.centroid[0], cc.centroid[1]);
+      radMin = Math.min(radMin, r); radMax = Math.max(radMax, r);
+    }
+    const windowFor = (cellRec) => {
+      if (!(Math.abs(regionGrade) > 1e-9) || !(radMax - radMin > 1e-9))
+        return [uStart, uEnd];
+      const r = Math.hypot(cellRec.centroid[0], cellRec.centroid[1]);
+      const rank = (r - radMin) / (radMax - radMin);           // 0 in, 1 out
+      const mid = 0.5 * (uStart + uEnd), half = 0.5 * (uEnd - uStart);
+      // CONCENTRIC: the window's centre is fixed and only its width moves,
+      // 1-g at the innermost cell to 1+g at the outermost.
+      // TWO OTHER ANCHORINGS WERE BUILT AND MEASURED. Both grew the OUTER
+      // window instead of shrinking the inner one, which produces the same
+      // ordering by inflating the outer cell's displacement rather than
+      // trimming the inner cell's — measured amp 20.5 -> 61.3 mm at grade 3
+      // on a 325 mm path, against 20.5 -> 21.7 concentric. They avoid the
+      // fold the concentric form can cause, and they are worse everywhere
+      // else; the numbers are in CLAUDE.md.
+      const k = 1 - regionGrade + 2 * regionGrade * rank;      // 1-g .. 1+g
+      return [Math.max(0, mid - half * k), Math.min(1, mid + half * k)];
+    };
+    return { target, lobes, dir, dirFor, tol, ampCap, uStart, uEnd,
+             regionGrade, windowFor };
   })();
 
   for (const cellRec of throat.cells) {
@@ -1041,8 +1088,9 @@ export function mapThroatToMouth(throat, opts) {
       // a bow. Both are in arc-length fraction of THIS cell's own path, so a
       // run of a given mm length excises the right amount from every cell
       // whatever its length.
-      const u0 = Math.max(snake.uStart, divergeLen > 0 ? divergeLen / L0 : 0);
-      const u1 = Math.min(snake.uEnd, arriveLen > 0 ? 1 - arriveLen / L0 : 1);
+      const [rq0, rq1] = snake.windowFor(cellRec);
+      const u0 = Math.max(rq0, divergeLen > 0 ? divergeLen / L0 : 0);
+      const u1 = Math.min(rq1, arriveLen > 0 ? 1 - arriveLen / L0 : 1);
       const span = u1 - u0;
       snakeSpan = span;
       // the runs (or the request) have squeezed the support to nothing: there
@@ -1838,6 +1886,16 @@ export function mapThroatToMouth(throat, opts) {
       shortfall: Math.max(...rows.map((r) => r.snakeShort)),
       // ducts sitting on the axis, which a radial bow cannot move symmetrically
       onAxis: rows.reduce((n, r) => n + (r.snakeOnAxis ? 1 : 0), 0),
+      // the graded window, reported so the amplitude ORDERING it exists to
+      // produce can be read rather than assumed
+      regionGrade: snake.regionGrade,
+      // null rather than Infinity when nothing is bowed, so a caller that
+      // prints these does not have to special-case an empty horn
+      ampMin: rows.some((r) => r.snakeAmp > 1e-9)
+        ? Math.min(...rows.filter((r) => r.snakeAmp > 1e-9).map((r) => r.snakeAmp)) : null,
+      spanMin: rows.some((r) => r.snakeSpan > 1e-9)
+        ? Math.min(...rows.filter((r) => r.snakeSpan > 1e-9).map((r) => r.snakeSpan)) : null,
+      spanMax: Math.max(0, ...rows.map((r) => r.snakeSpan)),
     } : null,
     separate: separate && sectionMode === "swept" && separate.amps ? {
       ampMax: Math.max(0, ...rows.map((r) => r.sepAmp)),
