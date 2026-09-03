@@ -19,15 +19,14 @@
 // and that is what the solve equalises once the walls have thickness. The
 // GEOMETRIC areas still sum to pi R^2 exactly whatever the parameters are.
 //
-// Two topologies, both reduced to the same cell record so everything
-// downstream is family-agnostic:
-//
-//   ogrid      concentric rings              no singular vertices
-//   hgrid      one (i,j) index on the disc   4 singular vertices, on the rim
-//
-// A singular vertex is one where the number of cells meeting is not 4. Mapping
-// a rectangular index onto a disc cannot avoid them — this is a fact about the
-// disc, not a layout failure.
+// The partition is an H-GRID: one (i, j) index laid on the disc, with 4
+// singular vertices on the rim. A singular vertex is one where the number of
+// cells meeting is not 4, and mapping a rectangular index onto a disc cannot
+// avoid them — a fact about the disc, not a layout failure. That rectangular
+// index is the whole reason this family was chosen: it is what lets each
+// throat cell be matched to one mouth cell. (A concentric-ring O-grid has no
+// singular vertices and no rectangular index either; it was the comparison
+// baseline until 2026-09-03 and is recorded in CLAUDE.md.)
 //
 // ── GRID LINES ARE THE PRIMITIVE ───────────────────────────────────────────
 // A fixed square-to-disc map with adjustable u and v division values offers
@@ -353,10 +352,8 @@ export function analyseThroat(cells, opts = {}) {
 // and no EQ removes that. So the surface is an INPUT here and is never derived
 // from the paths.
 //
-// The cell-for-cell mapping needs a rectangular index at both ends, which only
-// the H-grid has. An O-grid throat has no cell-for-cell match to
-// a rectangular mouth grid — that is a property of their topology, not a gap
-// in the tool — so this section runs for the H-grid only.
+// The cell-for-cell mapping needs a rectangular index at BOTH ends, which is
+// what the H-grid supplies and why it is the only throat family here.
 
 const v3 = (x, y, z) => [x, y, z];
 const a3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -715,9 +712,9 @@ export function mapThroatToMouth(throat, opts) {
     separate = null,
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
-  // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
-  // the H-grid has. An O-grid throat has no such match — that is a
-  // property of its topology, not a gap in the tool.
+  // A cell-for-cell mapping needs a rectangular index at BOTH ends. Guarded
+  // rather than assumed, so a caller handing in a layout without one gets
+  // null instead of a half-built map.
   if (!rectangular || !nc || !nr) return null;
   // Arc mode needs the cap to be a true SPHERE about the apex, or the
   // equal-solid-angle subdivision stops being equal-area and the mouth points
@@ -3364,7 +3361,7 @@ export function lineGrid(cfg, p, seed, tWall = 0, gl = 32) {
       const A = latE[i][j].area + lonE[i + 1][j].area - latE[i][j + 1].area - lonE[i][j].area;
       // Open area is what the air sees: the cell loses t/2 along every edge it
       // shares with a divider. That is what the equal-area solve is asked to
-      // equalise once the walls have thickness, exactly as the O-grid does.
+      // equalise once the walls have thickness.
       let dl = 0;
       for (const e of [latE[i][j], lonE[i + 1][j], latE[i][j + 1], lonE[i][j]]) if (!e.rim) dl += e.len;
       areas.push(A);
