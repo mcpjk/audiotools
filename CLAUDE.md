@@ -792,6 +792,56 @@ exists.
   **What none of this removes is the tangency crossings**: every pair still
   passes from overlap to clearance twice, and that is inherent to per-cell
   blanks at any wall under half the widest duct gap.
+- **UNION THE BLANKS ONE CELL AT A TIME, AND CUT ONLY AFTER THE UNION. Both
+  halves are the owner's CAD results, and the second one overturned a
+  hypothesis of mine that the numbers had not supported.** Three experiments
+  on the shipped 18-cell kit, in order: (1) split at 100 mm THEN union pairs —
+  4 of 27 pairs failed, and `cutdiag` found those four indistinguishable from
+  the other 23 on crossing z, rate, gap at the cut and near-copy arc, i.e. my
+  tangency reading did not survive the data; (2) the same pairs UNCUT — both
+  union fine, so **the cut was the cause**, exactly as predicted by the
+  coplanar-cut-face argument; (3) uncut, three row-runs of three cells each
+  unioned fine and **unioning the three merged bodies failed**. Incremental
+  one-cell-at-a-time unions then worked.
+  The one metric that separates every result is **how many blanks cover the
+  same volume at the throat**, measured on a 0.2 mm grid over the throat
+  plane: any orthogonal pair 2, a row-run of three 3 (0.0 mm2 covered 4 deep),
+  rows 1+2 together **6** (64 mm2 covered 4 or more deep), all three rows 6
+  (128 mm2). Everything at 3 or less succeeded; the 6 failed. Six overlapping
+  solids is 15 mutual surface-surface intersections to resolve in one small
+  region.
+  **WHY SIX AND NOT FOUR — a grid node joins four cells, so four was the most
+  I expected. The mitre spikes are longer than a throat cell is wide.**
+  Measured: throat cell calipers 4.47-7.25 mm against a blank corner reach of
+  up to 8.49 mm at a 48.7 deg corner (a mitre is 1/sin(half-angle) = 2.43x the
+  wall), and **17 of 18 blanks reach further than the narrowest cell is
+  wide** — so a corner pokes clean past its neighbour into the cell beyond.
+  That is why this only bites at the throat, where the cells are small enough
+  to be crossed. Capping or rounding the mitre is the fix and is NOT built:
+  rounding keeps the wall exact but breaks the shared corner-column identity
+  that makes the seams measure 0, and clamping keeps the topology but thins
+  the wall at the sharpest corners (about 1.5 mm at 48 deg for a 1.2x clamp).
+- **A HALF OR A QUARTER CAN BE EXPORTED (`xSide` / `ySide`), and the one thing
+  that does NOT survive mirroring is the wall jitter.** `symmetryRegion`
+  selects cells by THROAT CENTROID, and a cell whose centroid sits ON a plane
+  is its own mirror image: it is exported WHOLE and reported as `onPlane`, so
+  it is never duplicated when the region is mirrored back. An odd row or
+  column count is exactly when that happens — 6x3 splits clean left/right
+  (9 + 9, none on the plane) and straddles top/bottom (12 cells, 6 of them the
+  middle row, in BOTH halves), so a quarter is 6 cells of which 3 are shared.
+  `mirrorSymmetry` MEASURES the mirror the region rests on rather than
+  assuming it, because a world-axis bow breaks one outright: 2.2e-9 mm on both
+  axes at the defaults and with radial or short-axis bows, 15-54 mm on the y
+  axis with `dir: "y"`. The measurement pairs cells by mirrored centroid and
+  compares each mirrored point against the partner's ring as a POLYLINE, so no
+  index correspondence is assumed — a mirror reverses ring orientation.
+  **DO NOT MIRROR A SHELL HALF AND UNION IT TO ITSELF.** `jitter` is keyed to
+  grid PARITY, so a mirrored copy carries the same wall as the cell it now
+  sits beside and the near-copy surface the jitter exists to break comes
+  straight back at the seam. No label-based parity can fix this — the mirrored
+  solid is the same cell, so it carries the same number by construction.
+  Export the opposite side instead; the passages are mirror images either way
+  and only the blanks' walls differ.
 - **THE HORN SHELL IS EXPORTED AS ONE BLANK AND ONE CUTTER PER CELL, and the
   CAD work is N independent SUBTRACTIONS with no unions at all.** A blank is
   that cell's duct rings offset outward by `wall` on all four sides through
