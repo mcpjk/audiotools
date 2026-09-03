@@ -503,6 +503,9 @@ export default function GinkgoHorn() {
   // 2x this number. EXPORT ONLY: the blanks are not drawn, see the 3-D
   // preview note below.
   const [shellWall, setShellWall] = useState(3);
+  const [shellExtend, setShellExtend] = useState(true);
+  const [wallJitter, setWallJitter] = useState(0.5);
+  const [shellStations, setShellStations] = useState(32);
   // HOW THE SHELL IS DELIVERED. "solid" is one horn body plus one cutter per
   // duct, so the CAD work is subtractions only — no unions at all. "bundle"
   // is a blank per cell, the literal multicell form, and it needs the union
@@ -1946,24 +1949,74 @@ export default function GinkgoHorn() {
             setStepNote({ ok: true, msg: "building the shell — offsetting each duct outwards…" });
             setTimeout(() => {
             const em = exportMap();
-            const r = G.buildShellSTEP(throat, em, { t: thickness, wall: shellWall, name: `${stem}_shell` });
+            const cfg = { t: thickness, wall: shellWall, extend: shellExtend, jitter: wallJitter, stations: shellStations };
+            const r = G.buildShellSTEP(throat, em, { ...cfg, name: `${stem}_shell` });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+            const co = G.shellCoincidence(throat, em, cfg);
             const ov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
+            const recipe = shellExtend
+              ? `${r.cells} blanks + ${r.cells} cutters + 2 trims — union the blanks, subtract both trims, subtract the cutters`
+              : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`;
             setStepNote({
               ok,
-              msg: `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions · ${
-                integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
-                ov ? ` · adjacent blanks share material over ${fmt(ov.fracTouching * 100, 0)}% of the path, deepest ${fmt(ov.deepest, 1)} mm` : ""} · ${
+              msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
+                co ? ` · near-copy surface ${fmt(co.arc, 1)} mm${co.arc > 1 ? " — RAISE THE JITTER" : ""}` : ""}${
+                ov ? ` · blanks share material over ${fmt(ov.fracTouching * 100, 0)}% of the path` : ""} · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
             if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
             }, 30);
           }}>STEP · horn shell</button>
+          <button style={expBtn} disabled={!map} onClick={() => {
+            // the smallest thing that can fail: one adjacent pair, same
+            // settings. If the union of two blanks fails, nothing about the
+            // other sixteen matters, and the repro is two solids instead of 38.
+            const em = exportMap();
+            // the first ORTHOGONALLY ADJACENT pair — two cells that do not
+            // share a grid line have none of the near-copy surface the test
+            // is for
+            let lab = null;
+            for (const c of throat.cells) {
+              const [col, rw] = c.label.split(",").map(Number);
+              for (const [dc, dr] of [[1, 0], [0, 1]]) {
+                const nb = `${col + dc},${rw + dr}`;
+                if (!lab && throat.cells.some((x) => x.label === nb)) lab = [c.label, nb];
+              }
+            }
+            const r = lab && G.buildShellSTEP(throat, em, {
+              t: thickness, wall: shellWall, extend: shellExtend, jitter: wallJitter,
+              stations: shellStations, only: lab, name: `${stem}_twocell`,
+            });
+            if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
+            const integ = G.stepIntegrity(r.text);
+            const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+            setStepNote({
+              ok,
+              msg: `cells ${lab.join(" and ")}: ${r.cells} blanks + ${r.cells} cutters · ${integ.entities} entities · union the two blanks first — if that fails, the full kit cannot · ${
+                ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
+            });
+            if (ok) dl(`${stem}_twocell.step`, r.text, "application/step");
+          }}>STEP · two-cell test</button>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[[true, "extended + trims"], [false, "plain cells"]].map(([v, l]) => (
+              <button key={String(v)} onClick={() => setShellExtend(v)} style={btn(shellExtend === v, C.series2)}>{l}</button>
+            ))}
+          </div>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             shell wall (mm)
             <input type="number" value={shellWall} min={0.5} max={20} step={0.5} onChange={(e) => setShellWall(Math.max(0.5, Math.min(20, parseFloat(e.target.value) || 3)))}
+              style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
+          </label>
+          <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
+            wall jitter (mm)
+            <input type="number" value={wallJitter} min={0} max={2} step={0.1} onChange={(e) => setWallJitter(Math.max(0, Math.min(2, parseFloat(e.target.value) || 0)))}
+              style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
+          </label>
+          <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
+            shell stations
+            <input type="number" value={shellStations} min={4} max={64} step={4} onChange={(e) => setShellStations(Math.max(4, Math.min(64, parseInt(e.target.value) || 32)))}
               style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
           </label>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
@@ -1987,8 +2040,25 @@ export default function GinkgoHorn() {
           <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell — {throat.N} independent subtractions,
           no unions</strong>, and what comes back is {throat.N} cell shells of exactly {fmt(shellWall, 1)} mm wall.
           {" "}Adjacent blanks share material wherever their ducts run closer than {fmt(2 * shellWall, 0)} mm — most of the throat half of
-          the horn — which is what a multicell's shared walls are; the note above measures how much. Merging them into one horn is a
-          modelling decision to make in CAD, on solids whose faces are all exact.
+          the horn — which is what a multicell's shared walls are.
+          {shellExtend ? <>
+            {" "}<strong style={{ color: C.inkDim }}>Extended + trims</strong> is built to be UNIONED. The blanks run past both end faces
+            (staggered per cell, so no two adjacent ones end on the same plane) and two trim solids come with them, so the union never
+            touches an end plane — that is where 54 of the measured degeneracies lived, 27 pairs of coplanar throat caps and 27 of
+            co-surface mouth caps. <strong style={{ color: C.inkDim }}>Union the {throat.N} blanks, subtract both trims, then subtract
+            the {throat.N} cutters.</strong> The <em>wall jitter</em> gives cells of opposite grid parity different walls: without it two
+            adjacent blanks each offset the same shared grid line by the same amount, so millimetres of their surfaces are the same
+            surface computed twice, landing under a micron apart — invisible, and below what a kernel can resolve. The note measures how
+            much near-copy surface is left; raise the jitter if it is not zero.
+          </> : <>
+            {" "}<strong style={{ color: C.inkDim }}>Plain cells</strong> keeps the ends exact and asks for no union at all:{" "}
+            <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell</strong>, {throat.N} independent
+            subtractions giving {throat.N} separate cell shells. Merging them into one horn is then a modelling decision to make in CAD.
+          </>}
+          {" "}<em>Shell stations</em> trades knots for fidelity: halving them measured 0.105 mm of departure from the full-station loft,
+          and fewer knots is a better-conditioned boolean. Never offset one of our faces in CAD — that extrapolates the wall surfaces past
+          their range and the corner identity breaks (a +1 mm throat offset succeeded and +2 mm failed); ask for the extension here instead,
+          where it is built into the loft.
           {" "}The mouth end faces of every solid lie on the aperture surface the coverage arcs define, so the mouths are co-surface and
           that outer rim edge is the one to fillet against edge diffraction. The wall is exactly {fmt(shellWall, 1)} mm on every face at
           every station — the blank is an offset of the duct's own rings, not a shape fitted to them — with two stated exceptions: a mitred

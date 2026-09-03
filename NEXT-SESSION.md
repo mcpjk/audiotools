@@ -1,5 +1,71 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
+
+`mapThroatToMouth` samples each centreline at `samples = 64` internal points
+and then places each station by **`idx = Math.round(u * M)`, taking
+`C = pts[idx]`** (src/hgrid-model.js, in the swept-section branch). The
+station's centre is therefore quantised to the nearest of 64 samples instead
+of being interpolated along the centreline.
+
+Consequence, measured: whenever `stations` does not divide 64, the ring
+spacing goes irregular. At **48 stations, every third step is exactly 2.00x
+its neighbours** — on all 18 cells, at stations 1, 4, 7, ... 46 (origin steps
+6.44, 6.62, **13.83**, 7.22 mm). At 24 it is a milder 3,2,3 pattern. At 64
+and 32 it is exact. Because the loft interpolates with a UNIFORM
+parameterisation, unevenly spaced rings are told they are evenly spaced and
+the surface leaves them — this is the same mechanism that made a
+non-dividing shell station count run 4.6 mm off its own rings.
+
+**The tool's UI default is 64 stations, which divides exactly, so the
+shipped default export is clean.** That is why this has never shown up. It
+bites at 48, 40, 36 and any other non-dividing count, and it affects the
+DUCTS as well as the shell.
+
+The fix is to interpolate `C` (and the frame) between samples rather than
+snapping, which is a small change with a wide blast radius: every duct
+moves slightly, and every measurement recorded in CLAUDE.md was taken on the
+snapped geometry. It deserves its own session and its own re-verification.
+Until then, **use station counts that divide 64**.
+
+## Phase 1 shipped (2026-09-03) — making the union tractable
+
+Three switches, each justified by the number it moves; see the CLAUDE.md
+finding for the full audit. `jitter` 0.5 mm (near-copy surface 148 mm to 0),
+`extend` on with two trim solids (coplanar throat caps 27/27 to 0/27), and
+`stations` 32 (control points in v halved for 0.105 mm). Plus a **two-cell
+test export** — one adjacent pair, four solids — which is the repro to run
+before exporting a full kit.
+
+**Owner-side next:** union the two blanks in `ginkgo_twocell_sample.step`.
+If that succeeds, union the 18 blanks in the full kit, subtract both trims,
+subtract the 18 cutters. If the two-cell union FAILS, nothing about the
+other sixteen matters and the answer is in two solids — report which
+operation failed and we go to Phase 2.
+
+**Phase 2, planned and not built — the envelope solid.** One simple
+evaluated solid minus N cutters, zero unions. `envelopeSections(throat, map,
+{ wall, qEnd, monotone })`: a superellipse per station, `|x/a|^n + |y/b|^n =
+1`, axes and exponent SOLVED CONTINUOUSLY (a trial that sampled n from a
+discrete list jumped 5 times over 49 stations — exactly the discrete-decision
+smell that produced the texture), evaluated at fixed angles into four runs so
+`ductBrep` gets its shared corner columns. `qEnd` gives the throat block or
+the whole horn from one code path. Measured costs from the trial: **4.13 L of
+material against at most 1.85 L** for the per-cell shells, and the honest
+envelope **pinches at z ~ 63 mm** (area 78.3 to 63.0 cm2) because the Hypex
+profile pulls the ducts inward there — hence the `monotone` option, whose
+cost is not yet measured. Symmetry comes free from the superellipse; no need
+to build quadrants. Checks it must pass: 3-D clearance >= wall from every
+duct point, a and b smooth in station (second difference bounded), throat
+face the exact circle R + wall planar in z = 0, mouth face on the aperture,
+both mirrors.
+
+**Not built, and candidates if Phase 1 is not enough:** round the mitre
+corners instead of mitring them (kills the 7.28 mm spikes and the 4- and
+5-way crossing blades, and would likely have made the owner's +2 mm face
+offset work); emit analytic surfaces where the geometry is analytic, since
+Parasolid booleans on planes and cones are far more robust than on NURBS.
+
 ## THE SHELL: WHAT FAILED, AND THE RULE THAT COMES OUT OF IT
 
 Read this before proposing any shell construction. Three were built and
