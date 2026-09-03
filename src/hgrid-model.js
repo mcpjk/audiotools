@@ -5787,7 +5787,25 @@ function stepReal(x) {
 // null to skip that check. Returns { text, checks } — the checks are computed
 // on the same structures that were emitted, not re-derived. buildSTEP and
 // buildShellSTEP below are the two callers.
-function stepEmit({ name, desc, fileDesc, solidsSpec }) {
+// A STEP string literal is delimited by apostrophes, so an apostrophe INSIDE
+// one has to be doubled, and a backslash doubled too (it introduces the
+// control directives). Every shell kit shipped before 2026-09-03 wrote its
+// recipe with bare quotes — "union the 6 'shell blank' solids" — which makes
+// the FILE_DESCRIPTION a syntax error: the reader sees a string, then the bare
+// keywords `shell blank`, then another string. The DATA section was always
+// well-formed, so what a lenient importer did with it is unknown; a strict one
+// is entitled to reject the file. Every string that reaches the writer now
+// goes through here.
+// Non-ASCII is folded too: a STEP string is ISO 8859-1 with \X2\ escapes for
+// anything above it, and the recipes carry an em dash. Folding is simpler than
+// encoding and loses nothing a CAD reader cares about.
+const stepStr = (v) => String(v ?? "")
+  .replace(/[\u2010-\u2015]/g, "-")
+  .replace(/[^\x20-\x7e]/g, "?")
+  .replace(/\\/g, "\\\\")
+  .replace(/'/g, "''");
+
+function stepEmit({ name, desc, fileDesc, params, solidsSpec }) {
   const E = [];
   let nid = 0;
   const add = (txt) => { E.push(`#${++nid}=${txt};`); return nid; };
@@ -5797,7 +5815,7 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
   const appCtx = add(`APPLICATION_CONTEXT('automotive design')`);
   add(`APPLICATION_PROTOCOL_DEFINITION('draft international standard','automotive_design',1998,#${appCtx})`);
   const prodCtx = add(`PRODUCT_CONTEXT('',#${appCtx},'mechanical')`);
-  const prod = add(`PRODUCT('${name}','${desc}','',(#${prodCtx}))`);
+  const prod = add(`PRODUCT('${stepStr(name)}','${stepStr(desc)}','',(#${prodCtx}))`);
   add(`PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#${prod}))`);
   const pdf = add(`PRODUCT_DEFINITION_FORMATION('','',#${prod})`);
   const pdCtx = add(`PRODUCT_DEFINITION_CONTEXT('part definition',#${appCtx},'design')`);
@@ -5916,7 +5934,7 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
       if (e.uses.length !== 2 || e.uses[0] === e.uses[1]) checks.edgePairing = false;
 
     const shell = add(`CLOSED_SHELL('',(${faces.map((i) => "#" + i).join(",")}))`);
-    solids.push(add(`MANIFOLD_SOLID_BREP('${spec.label}',#${shell})`));
+    solids.push(add(`MANIFOLD_SOLID_BREP('${stepStr(spec.label)}',#${shell})`));
   }
 
   const rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${place},${solids.map((i) => "#" + i).join(",")}),#${geoCtx})`);
@@ -5926,8 +5944,8 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
   const text = [
     "ISO-10303-21;",
     "HEADER;",
-    `FILE_DESCRIPTION(('${fileDesc}'),'2;1');`,
-    `FILE_NAME('${name}.step','${stamp}',(''),(''),'audiotools ginkgo','','');`,
+    `FILE_DESCRIPTION((${[fileDesc, params].filter(Boolean).map((x) => `'${stepStr(x)}'`).join(",")}),'2;1');`,
+    `FILE_NAME('${stepStr(name)}.step','${stamp}',(''),(''),'audiotools ginkgo','','');`,
     "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));",
     "ENDSEC;",
     "DATA;",
@@ -5940,7 +5958,7 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
 }
 
 // The air: every duct as one solid. What this file has always emitted.
-export function buildSTEP(throat, map, { t = 0, only = null, name = "ginkgo_ducts" } = {}) {
+export function buildSTEP(throat, map, { t = 0, only = null, params = null, name = "ginkgo_ducts" } = {}) {
   if (!map) return null;
   const solidsSpec = [];
   for (const cellRec of throat.cells) {
@@ -5952,7 +5970,7 @@ export function buildSTEP(throat, map, { t = 0, only = null, name = "ginkgo_duct
     solidsSpec.push({ label: `duct ${cellRec.label}`, sections, capZ: 0 });
   }
   return stepEmit({
-    name, solidsSpec,
+    name, solidsSpec, params,
     desc: "ginkgo multicell horn ducts",
     fileDesc: "ginkgo multicell horn ducts, lofted B-spline solids",
   });
@@ -6110,7 +6128,7 @@ export function mirrorSymmetry(throat, map, { t = 0, every = 2 } = {}) {
 // extended union tractable; see their comments above.
 export function buildShellSTEP(throat, map, {
   t = 0, wall = 3, ext = 3, extend = true, jitter = 0.5, stations = 32,
-  only = null, xSide = 0, ySide = 0, name = "ginkgo_horn_shell",
+  only = null, xSide = 0, ySide = 0, params = null, name = "ginkgo_horn_shell",
 } = {}) {
   if (!map) return null;
   const surf = map.mouthSurf || null;
@@ -6154,6 +6172,7 @@ export function buildShellSTEP(throat, map, {
     : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
   const out = stepEmit({
     name, solidsSpec,
+    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} extend=${extend} jitter=${jitter} stations=${stations} xSide=${xSide} ySide=${ySide}`,
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
     fileDesc: `ginkgo multicell horn shell kit: ${recipe}`,
   });

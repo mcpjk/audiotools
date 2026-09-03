@@ -2847,7 +2847,10 @@ head("Aperture surface, per-cell shell, orientation");
     checkTrue("extended mode emits the blanks, the cutters and both trims",
       out.mode === "extended" && out.cells === th.cells.length && out.trims === 2
       && out.checks.ducts === 2 * th.cells.length + 2, `${out.checks.ducts} solids`);
-    checkTrue("and states the union-then-subtract recipe", /union the \d+ 'shell blank'/.test(out.text) && /subtract 'throat trim' and 'mouth trim'/.test(out.text), "");
+    // the recipe's own quotes are DOUBLED, because it lives in a STEP string
+    checkTrue("and states the union-then-subtract recipe",
+      /union the \d+ ''shell blank'' solids/.test(out.text)
+      && /subtract ''throat trim'' and ''mouth trim''/.test(out.text), "");
     check("every surface passes through its samples", out.checks.residual, 0, 1e-9, "mm");
     checkTrue("every solid's edges pair up", out.checks.edgePairing, "");
     checkTrue("the file is referentially intact", M.stepIntegrity(out.text).ok, "");
@@ -2859,6 +2862,49 @@ head("Aperture surface, per-cell shell, orientation");
     const plain = M.buildShellSTEP(th, map, { t, wall, ext, extend: false, jitter: 0, stations: null, name: "plain" });
     checkTrue("plain mode is unchanged: N blanks, N cutters, no trims, no unions",
       plain.mode === "cells" && plain.trims === 0 && /no unions/.test(plain.text), "");
+  }
+
+  // ── the header must be a legal STEP string, and carry the settings ──────
+  // A string literal is delimited by apostrophes, so one INSIDE it has to be
+  // doubled. Every shell kit written before 2026-09-03 put bare quotes in its
+  // recipe, which made FILE_DESCRIPTION a syntax error. The check is a real
+  // tokeniser over the header, not a substring search.
+  {
+    const kit = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, jitter: 0.5, stations: 32,
+      params: "depth=320 note=o'brien back\\slash em—dash", name: "hdr" });
+    const head = kit.text.slice(0, kit.text.indexOf("ENDSEC;"));
+    // walk the header and count string literals, treating '' as an escape
+    const strings = [];
+    let i = 0, cur = null;
+    while (i < head.length) {
+      const ch = head[i];
+      if (cur === null) { if (ch === "'") { cur = ""; i++; continue; } i++; continue; }
+      if (ch === "'") {
+        if (head[i + 1] === "'") { cur += "'"; i += 2; continue; }
+        strings.push(cur); cur = null; i++; continue;
+      }
+      cur += ch; i++;
+    }
+    checkTrue("the header closes every string literal it opens", cur === null,
+      `${strings.length} literals parsed`);
+    // outside the literals the header must contain no bare apostrophe-free words
+    // where a string was meant: rebuild FILE_DESCRIPTION's argument list
+    const fd = /FILE_DESCRIPTION\(\(([\s\S]*?)\),'2;1'\);/.exec(head);
+    checkTrue("FILE_DESCRIPTION parses as a list of quoted strings only",
+      !!fd && /^\s*'(?:[^']|'')*'(?:\s*,\s*'(?:[^']|'')*')*\s*$/.test(fd[1]),
+      fd ? `${fd[1].length} chars` : "not found");
+    checkTrue("and the recipe's own quotes survive as doubled apostrophes",
+      /union the \d+ ''shell blank'' solids/.test(head), "");
+    checkTrue("the settings are stamped and their quotes escaped",
+      /depth=320/.test(head) && /o''brien/.test(head), "");
+    checkTrue("no character outside printable ASCII reaches the file",
+      !/[^\x09\x0a\x0d\x20-\x7e]/.test(kit.text), "");
+    // and the file still passes its own integrity check
+    checkTrue("the escaped file is still referentially intact", M.stepIntegrity(kit.text).ok, "");
+    // a shell export with no params supplied still stamps the shell settings
+    const auto = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, jitter: 0.5, stations: 32, name: "auto" });
+    checkTrue("an export with no params still carries the shell settings",
+      /wall=3/.test(auto.text) && /jitter=0.5/.test(auto.text), "");
   }
 
   // ── the wall against the cell width, which is what stacks the blanks ─────

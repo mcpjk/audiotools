@@ -855,6 +855,56 @@ exists.
   the geometry class. Note also 1,1-3,2 — two columns apart, no shared edge —
   overlapping 4.62 mm over 40 mm of path, which is the reaching above, measured
   on the shipped file rather than in the model.
+- **EVERY SHELL STEP SHIPPED BEFORE 2026-09-03 HAD A MALFORMED HEADER, and it
+  was found while trying to recover an export's settings.** A STEP string
+  literal is delimited by apostrophes, so an apostrophe inside one must be
+  DOUBLED. The shell recipe read `union the 6 'shell blank' solids, then
+  subtract 'throat trim' ...` with bare quotes, so a reader tokenising
+  FILE_DESCRIPTION sees a string, then the bare keywords `shell blank`, then
+  another string — a syntax error in the parameter list. The DATA section was
+  always well-formed and every geometric check passed, so **this is a
+  conformance defect with no measured link to the boolean failures**; a lenient
+  importer skips it, a strict one is entitled to reject the file. Fixed with
+  `stepStr`, which doubles apostrophes and backslashes and folds non-ASCII (the
+  plain-mode recipe carried an em dash, also outside a STEP string's charset).
+  The test is a real TOKENISER over the header, not a substring search.
+  **AND EVERY EXPORT NOW CARRIES THE SETTINGS THAT MADE IT**, as a second
+  FILE_DESCRIPTION string: grid, R, t, seed, coverage, arcs, depth, T, section
+  mode, path knobs, bow/bulge/separate, wall, jitter, stations, region. A
+  session was spent inferring wall, ext and the extension phases back out of an
+  export's geometry, and depth and the arcs could not be recovered at all —
+  which is why a per-body failure the owner reported could not be reproduced
+  here. Read the header first on any file that comes back from CAD.
+- **IMPORT-TIME HEALING IS RULED OUT.** The owner re-imported the same kit with
+  Simplify Geometry, Advanced Healing, Healing (HOOPS) and Accurate Edge
+  Computation all OFF, and again with Shapr3D's standard "quality" defaults:
+  **identical results both ways**, on the throat-plane splits and on the
+  unions. The hypothesis in the finding below was wrong. Turning them off is
+  still right on the argument that there is nothing to repair, but it changes
+  nothing, so it is not the lever.
+- **THE FIRST THING THAT SORTS THE UNIONS IS ADJACENCY, and it took a second
+  export to show up.** On the owner's second quarter (6 cells, x- y-, wall 3,
+  deeper than the first), 13 pair unions:
+    NON-ADJACENT (no shared edge)   4 of 4 succeeded
+    ORTHOGONAL neighbours           2 of 6 succeeded (3 failed, 1 non-manifold)
+    DIAGONAL neighbours             1 of 3 succeeded
+  On the FIRST export nothing sorted them at all, so this is a change in the
+  geometry rather than a rule that was always there. 13 points, so treat the
+  split as suggestive rather than established.
+  **ONE UNION RETURNED "resulting body non-manifold" RATHER THAN FAILING, and
+  that is the kernel naming the tangency in its own words.** A union of two
+  solids is non-manifold when they meet along a curve or at a point without
+  volumetric overlap there — exactly the tangential-contact crossing every
+  adjacent pair in this kit has. It is the first direct confirmation of that
+  mechanism from the kernel rather than from our own measurements.
+- **THREE BLANKS FAILED A PLANE SPLIT AT THE THROAT (2,1 / 3,1 / 3,2 of six),
+  and that is a ONE-BODY operation.** No second solid, no shared surface, no
+  tangency: whatever it is, it is a property of the single blank, and it
+  survives every import setting. It does NOT predict the union failures — 2,1
+  and 3,1 both fail the split yet union with each other successfully, while 3,1
+  and 3,2 both fail the split and their union fails too. Not reproducible here
+  yet, because that export predates the settings stamp; the throat plane itself
+  is a clean cut in the file as shipped (below).
 - **THE EXPORTED BODIES ARE TOPOLOGICALLY EXACT, SO AN IMPORTER'S HEALING AND
   SIMPLIFY OPTIONS CAN ONLY SUBTRACT. Turn them OFF; there is nothing to
   repair.** Audited on the owner's shipped quarter, all 14 solids:

@@ -63,7 +63,25 @@ idea cannot come back by memory.
      cutters, so the region that stacks 6 deep is never unioned at all. This
      is the structural answer and the reason Phase 2 is still the plan.
 
-**THE IMPORT SETTINGS ARE THE NEXT THING TO RULE OUT (2026-09-03).** The
+**THE IMPORT SETTINGS ARE RULED OUT (2026-09-03, owner's test).** Same kit
+imported with the four healing options off and again with Shapr3D's standard
+"quality" defaults: identical results on both the throat-plane splits and the
+unions. The hypothesis below was wrong.
+
+**THE OPEN QUESTION IS NOW A ONE-BODY ONE.** Three of six blanks (2,1 / 3,1 /
+3,2) fail a plane split at the throat. No union, no second solid — a property
+of the single blank. It does not predict the union results. To reproduce it
+here the export's settings are needed, which is why every export now stamps
+them into the STEP header; the failing file predates that. **Next round: ask
+for a fresh export of the same geometry, read the settings out of the header,
+rebuild those six blanks in the model and look for a per-body property that
+separates {2,1 3,1 3,2} from {1,1 1,2 2,2}.** Candidates not yet tested:
+ring self-intersection at some station, the loft overshooting its own end cap
+through the short first gap of the extension (ext is 3.0 to 7.8 mm against a
+~11 mm station step, under a UNIFORM parameterisation), and a near-degenerate
+patch where a mitred corner runs short.
+
+**Superseded, kept for the record:** The
 shipped bodies audit topologically perfect — F-E+V = 2, every edge used once
 each way, every edge curve's control points ARE control points of both
 adjoining surfaces — so Shapr3D's default-ON Simplify Geometry, Advanced
