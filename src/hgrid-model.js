@@ -19,15 +19,14 @@
 // and that is what the solve equalises once the walls have thickness. The
 // GEOMETRIC areas still sum to pi R^2 exactly whatever the parameters are.
 //
-// Two topologies, both reduced to the same cell record so everything
-// downstream is family-agnostic:
-//
-//   ogrid      concentric rings              no singular vertices
-//   hgrid      one (i,j) index on the disc   4 singular vertices, on the rim
-//
-// A singular vertex is one where the number of cells meeting is not 4. Mapping
-// a rectangular index onto a disc cannot avoid them — this is a fact about the
-// disc, not a layout failure.
+// The partition is an H-GRID: one (i, j) index laid on the disc, with 4
+// singular vertices on the rim. A singular vertex is one where the number of
+// cells meeting is not 4, and mapping a rectangular index onto a disc cannot
+// avoid them — a fact about the disc, not a layout failure. That rectangular
+// index is the whole reason this family was chosen: it is what lets each
+// throat cell be matched to one mouth cell. (A concentric-ring O-grid has no
+// singular vertices and no rectangular index either; it was the comparison
+// baseline until 2026-09-03 and is recorded in CLAUDE.md.)
 //
 // ── GRID LINES ARE THE PRIMITIVE ───────────────────────────────────────────
 // A fixed square-to-disc map with adjustable u and v division values offers
@@ -162,279 +161,7 @@ const GL8_W = [
   0.1813418916891810, 0.1568533229389436, 0.1111905172266872, 0.0506142681451881,
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
-// BESSEL — for the closed-form disc and circular-sector modes
-// ═══════════════════════════════════════════════════════════════════════════
-// Needed because a pie-slice cell is one of the few shapes whose first mode is
-// known exactly, and the exact answer is the one the spec's test vectors quote
-// (any pure-sector layout with N >= 6 caps at the disc's radial mode, because
-// a radial cut lies along a nodal line of that mode and cannot remove it).
-
-function gammaLn(z) {
-  // Lanczos, g = 7, n = 9. Good to ~15 significant figures for z > 0.
-  const g = [
-    0.99999999999980993, 676.5203681218851, -1259.1392167224028,
-    771.32342877765313, -176.61502916214059, 12.507343278686905,
-    -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
-  ];
-  if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - gammaLn(1 - z);
-  z -= 1;
-  let x = g[0];
-  for (let i = 1; i < 9; i++) x += g[i] / (z + i);
-  const t = z + 7.5;
-  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
-}
-
-// J_nu(x) by the ascending series. Argument here never exceeds ~25 (the first
-// stationary point of J_nu sits near nu + 0.81 nu^(1/3)), where the series
-// still holds 10+ digits in double precision.
-export function besselJ(nu, x) {
-  if (x === 0) return nu === 0 ? 1 : 0;
-  let sum = 0;
-  const half = x / 2;
-  for (let k = 0; k < 200; k++) {
-    const lt = (2 * k + nu) * Math.log(half) - gammaLn(k + 1) - gammaLn(k + nu + 1);
-    const term = (k % 2 ? -1 : 1) * Math.exp(lt);
-    sum += term;
-    if (k > nu + 5 && Math.abs(term) < 1e-18 * Math.max(Math.abs(sum), 1e-30)) break;
-  }
-  return sum;
-}
-
-// dJ_nu/dx = (J_(nu-1) - J_(nu+1)) / 2
-export const besselJp = (nu, x) => 0.5 * (besselJ(nu - 1, x) - besselJ(nu + 1, x));
-
-// First positive root of J'_nu. McMahon-style start, then bisection — robust
-// beats fast here, this is called a handful of times per layout.
-export function besselJPrimeZero(nu) {
-  if (nu === 0) return 3.8317059702075123;
-  if (Math.abs(nu - 1) < 1e-12) return 1.8411837813406593;
-  const guess = nu + 0.8086165 * Math.cbrt(nu) + 0.072490 / Math.cbrt(nu);
-  let lo = Math.max(nu * 0.9, 1e-6), hi = guess * 1.6 + 2;
-  // walk out from just above nu, where J'_nu is positive, to the first sign change
-  let a = nu > 0 ? nu + 1e-6 : 1e-6;
-  let fa = besselJp(nu, a);
-  const step = Math.max(0.02, guess / 200);
-  for (let x = a + step; x < hi; x += step) {
-    const fx = besselJp(nu, x);
-    if (fa * fx <= 0) { lo = x - step; hi = x; break; }
-    fa = fx;
-  }
-  for (let i = 0; i < 100; i++) {
-    const m = 0.5 * (lo + hi);
-    if (besselJp(nu, lo) * besselJp(nu, m) <= 0) hi = m; else lo = m;
-  }
-  return 0.5 * (lo + hi);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MESH — nodes, edges, cells
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// node  { key, kind, x, y, th }
-//         kind "free"  → x,y are two DOF
-//         kind "rim"   → th is one DOF, position is R(cos th, sin th)
-//         kind "fixed" → no DOF (the analytic O-grid)
-//
-// edge  { a, b, arc, bulge }
-//         arc { r, sign } → a circular arc of radius r about the origin;
-//                           sign +1 means a→b runs counterclockwise.
-//         otherwise      → a quadratic Bezier whose control point is the
-//                          chord midpoint plus `bulge` (two DOF). bulge = 0
-//                          is exactly the straight segment, so a straight-edge
-//                          layout is the same code path with the knobs at zero.
-//
-// cell  { sides: [side0..side3], kind, ... }  where a side is a list of
-//         { e, rev } — a list, not a single edge, because an O-grid ring cell's
-//         outer boundary is cut into pieces by the next ring's radial dividers
-//         while remaining one arc geometrically. Opposing sides are 0/2 and
-//         1/3, which is what the first-mode model consumes.
-
 const modPos = (a, m) => ((a % m) + m) % m;
-
-export function makeMesh(R) {
-  return { R, nodes: [], edges: [], cells: [], nodeKey: new Map(), edgeKey: new Map() };
-}
-
-export function addNode(mesh, key, spec) {
-  if (mesh.nodeKey.has(key)) return mesh.nodeKey.get(key);
-  const i = mesh.nodes.length;
-  mesh.nodes.push({ key, ...spec });
-  mesh.nodeKey.set(key, i);
-  return i;
-}
-
-// Returns { e, rev } so a caller can walk a boundary without caring which
-// direction the edge was first created in.
-export function addEdge(mesh, ka, kb, spec = {}) {
-  const a = mesh.nodeKey.get(ka), b = mesh.nodeKey.get(kb);
-  // An arc's key carries its own midpoint. Two points on a circle bound TWO
-  // distinct arcs, and keying on the node pair alone silently merged them —
-  // the second came back reversed, so a cell bounded by both reported zero
-  // area while the layout still summed to the disc. The midpoint also keeps a
-  // genuinely shared arc shared, which is what dividerTotal counts on.
-  let k = a < b ? `${a}|${b}` : `${b}|${a}`;
-  if (spec.arc) {
-    const A = nodeXY(mesh, a), B = nodeXY(mesh, b);
-    const t0 = Math.atan2(A[1], A[0]), t1 = Math.atan2(B[1], B[0]);
-    const d = spec.arc.sign > 0 ? modPos(t1 - t0, TAU) : -modPos(t0 - t1, TAU);
-    k += `|arc@${modPos(t0 + d / 2, TAU).toFixed(6)}`;
-  }
-  if (mesh.edgeKey.has(k)) {
-    const ei = mesh.edgeKey.get(k);
-    return { e: ei, rev: mesh.edges[ei].a !== a };
-  }
-  const ei = mesh.edges.length;
-  mesh.edges.push({ a, b, arc: spec.arc || null, bulge: [0, 0], rim: !!spec.rim });
-  mesh.edgeKey.set(k, ei);
-  return { e: ei, rev: false };
-}
-
-export function nodeXY(mesh, i) {
-  const n = mesh.nodes[i];
-  if (n.kind === "rim") return [mesh.R * Math.cos(n.th), mesh.R * Math.sin(n.th)];
-  // A ring node carries no freedom of its own: every node on ring k shares one
-  // radius, so the O-grid keeps its ring structure while still being able to
-  // equalise OPEN area — which it cannot do with fixed radii, because rings at
-  // different radii lose different amounts to the same wall thickness.
-  if (n.kind === "ring") {
-    const r = mesh.ringR[n.ringIdx];
-    return [r * Math.cos(n.th), r * Math.sin(n.th)];
-  }
-  return [n.x, n.y];
-}
-
-// Signed sweep of an arc edge, a→b, honouring the stored direction.
-function arcSweep(mesh, ei) {
-  const e = mesh.edges[ei];
-  const A = nodeXY(mesh, e.a), B = nodeXY(mesh, e.b);
-  const t0 = Math.atan2(A[1], A[0]), t1 = Math.atan2(B[1], B[0]);
-  const d = e.arc.sign > 0 ? modPos(t1 - t0, TAU) : -modPos(t0 - t1, TAU);
-  const r = e.arc.ringIdx != null ? mesh.ringR[e.arc.ringIdx] : e.arc.r;
-  return { t0, dth: d, r };
-}
-
-// Quadratic Bezier control points of a non-arc edge.
-export function edgeBez(mesh, ei) {
-  const e = mesh.edges[ei];
-  const P0 = nodeXY(mesh, e.a), P2 = nodeXY(mesh, e.b);
-  const P1 = [(P0[0] + P2[0]) / 2 + e.bulge[0], (P0[1] + P2[1]) / 2 + e.bulge[1]];
-  return [P0, P1, P2];
-}
-
-const bezAt = (P, t) => {
-  const u = 1 - t;
-  return [
-    u * u * P[0][0] + 2 * u * t * P[1][0] + t * t * P[2][0],
-    u * u * P[0][1] + 2 * u * t * P[1][1] + t * t * P[2][1],
-  ];
-};
-const bezD = (P, t) => [
-  2 * ((1 - t) * (P[1][0] - P[0][0]) + t * (P[2][0] - P[1][0])),
-  2 * ((1 - t) * (P[1][1] - P[0][1]) + t * (P[2][1] - P[1][1])),
-];
-
-// Green's theorem contribution of one edge, traversed a→b:
-//   (1/2) integral (x dy - y dx)
-// Exact for both edge types: R^2 dth/2 for an arc, and a degree-3 polynomial
-// in t for a quadratic Bezier, which GL8 integrates exactly.
-// Edge integrals are cached and invalidated per DOF. The equal-area solve
-// perturbs one DOF at a time to build its Jacobian, and only the two-to-four
-// edges touching that DOF actually change; without the cache the solve
-// re-integrates the whole cell boundary for every column and the tool goes
-// from crisp to sluggish on a slider drag.
-export function edgeAreaInt(mesh, ei) {
-  if (mesh.eValid[ei] & 1) return mesh.eA[ei];
-  const v = edgeAreaIntRaw(mesh, ei);
-  mesh.eA[ei] = v; mesh.eValid[ei] |= 1;
-  return v;
-}
-
-export function edgeLength(mesh, ei) {
-  if (mesh.eValid[ei] & 2) return mesh.eL[ei];
-  const v = edgeLengthRaw(mesh, ei);
-  mesh.eL[ei] = v; mesh.eValid[ei] |= 2;
-  return v;
-}
-
-function edgeAreaIntRaw(mesh, ei) {
-  const e = mesh.edges[ei];
-  if (e.arc) { const { dth, r } = arcSweep(mesh, ei); return 0.5 * r * r * dth; }
-  const P = edgeBez(mesh, ei);
-  let s = 0;
-  for (let q = 0; q < 8; q++) {
-    const t = GL8_X[q], p = bezAt(P, t), d = bezD(P, t);
-    s += GL8_W[q] * (p[0] * d[1] - p[1] * d[0]);
-  }
-  return 0.5 * s;
-}
-
-function edgeLengthRaw(mesh, ei) {
-  const e = mesh.edges[ei];
-  if (e.arc) { const { dth, r } = arcSweep(mesh, ei); return r * Math.abs(dth); }
-  const P = edgeBez(mesh, ei);
-  let s = 0;
-  for (let q = 0; q < 8; q++) s += GL8_W[q] * len2(bezD(P, GL8_X[q]));
-  return s;
-}
-
-export function edgePoint(mesh, ei, s) {
-  const e = mesh.edges[ei];
-  if (e.arc) {
-    const { t0, dth, r } = arcSweep(mesh, ei);
-    const th = t0 + s * dth;
-    return [r * Math.cos(th), r * Math.sin(th)];
-  }
-  return bezAt(edgeBez(mesh, ei), s);
-}
-
-// Smallest radius of curvature along an edge. A straight edge returns
-// Infinity; an arc returns its own radius.
-export function edgeMinCurvR(mesh, ei) {
-  const e = mesh.edges[ei];
-  if (e.arc) return arcSweep(mesh, ei).r;
-  const P = edgeBez(mesh, ei);
-  const D2 = [2 * (P[0][0] - 2 * P[1][0] + P[2][0]), 2 * (P[0][1] - 2 * P[1][1] + P[2][1])];
-  let best = Infinity;
-  for (let q = 0; q <= 8; q++) {
-    const d = bezD(P, q / 8);
-    const k = Math.abs(cross2(d, D2)) / Math.pow(len2(d), 3);
-    if (k > 1e-12) best = Math.min(best, 1 / k);
-  }
-  return best;
-}
-
-// ── cells ──────────────────────────────────────────────────────────────────
-export function addCell(mesh, sides, spec) {
-  mesh.cells.push({ sides, ...spec });
-  return mesh.cells.length - 1;
-}
-
-export function cellArea(mesh, ci) {
-  const cell = mesh.cells[ci];
-  let A = 0;
-  for (const side of cell.sides)
-    for (const { e, rev } of side) A += (rev ? -1 : 1) * edgeAreaInt(mesh, e);
-  return A;
-}
-
-export function sideLength(mesh, side) {
-  let L = 0;
-  for (const { e } of side) L += edgeLength(mesh, e);
-  return L;
-}
-
-export function cellPolygon(mesh, ci, per = 10) {
-  const cell = mesh.cells[ci];
-  const pts = [];
-  for (const side of cell.sides)
-    for (const { e, rev } of side)
-      for (let q = 0; q < per; q++) {
-        const s = q / per;
-        pts.push(edgePoint(mesh, e, rev ? 1 - s : s));
-      }
-  return pts;
-}
 
 export function polyCentroid(poly) {
   let A2 = 0, cx = 0, cy = 0;
@@ -474,144 +201,6 @@ export function polyDiameter(poly) {
   return d;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DEGREES OF FREEDOM
-// ═══════════════════════════════════════════════════════════════════════════
-// Interior node → 2 (free in the plane). Rim node → 1 (arc parameter on the
-// circle; the rim outline itself is never a variable). Interior edge → 2 more
-// when curvature is enabled, being the control-point offset from the chord
-// midpoint.
-//
-// For a 6x3 H-grid with straight edges that is 10 interior nodes x 2 plus 18
-// rim nodes x 1 = 38 DOF, against 18 cells minus one dependent total = 17
-// independent area constraints. Residual 21. Turning on per-edge curvature
-// adds 27 interior edges x 2 = 54, for 92. This count is the honest answer to
-// "how much curvature freedom is there", so the tool prints it.
-
-// The two comparison families are solved on node positions and ring radii only.
-// Per-edge control points are gone with the stream-function flow they existed to
-// carry: the H-grid gets its curvature from the line coefficients now, and an
-// O-grid ring divider is a cone of revolution, not a free curve. Edges keep a
-// `bulge` field, always zero, so one quadratic-Bezier code path still serves
-// both straight segments and anything a future family needs.
-export function finalizeMesh(mesh) {
-  const dof = [];
-  const ringNodes = new Map();
-  mesh.nodes.forEach((n, i) => {
-    if (n.kind === "free") { dof.push({ t: "x", i }); dof.push({ t: "y", i }); }
-    else if (n.kind === "rim") dof.push({ t: "th", i });
-    else if (n.kind === "ring") {
-      if (!ringNodes.has(n.ringIdx)) ringNodes.set(n.ringIdx, []);
-      ringNodes.get(n.ringIdx).push(i);
-    }
-  });
-  [...ringNodes.keys()].sort((a, b) => a - b).forEach((k) => {
-    dof.push({ t: "ring", i: k, nodes: ringNodes.get(k) });
-  });
-  mesh.nInteriorEdges = 0;
-  mesh.edges.forEach((e) => { if (!e.arc) mesh.nInteriorEdges++; });
-  mesh.dof = dof;
-
-  // which cells each node / edge touches, so a finite-difference column only
-  // recomputes the cells that can actually move
-  const nodeCells = mesh.nodes.map(() => new Set());
-  const edgeCells = mesh.edges.map(() => new Set());
-  mesh.cells.forEach((cell, ci) => {
-    for (const side of cell.sides)
-      for (const { e } of side) {
-        edgeCells[e].add(ci);
-        nodeCells[mesh.edges[e].a].add(ci);
-        nodeCells[mesh.edges[e].b].add(ci);
-      }
-  });
-  mesh.dofCells = dof.map((d) => {
-    if (d.t === "bx" || d.t === "by") return [...edgeCells[d.i]];
-    if (d.t === "ring") {
-      const s2 = new Set();
-      d.nodes.forEach((ni) => nodeCells[ni].forEach((ci) => s2.add(ci)));
-      return [...s2];
-    }
-    return [...nodeCells[d.i]];
-  });
-
-  mesh.eA = new Float64Array(mesh.edges.length);
-  mesh.eL = new Float64Array(mesh.edges.length);
-  mesh.eValid = new Uint8Array(mesh.edges.length);
-  const nodeEdges = mesh.nodes.map(() => []);
-  mesh.edges.forEach((e, i) => { nodeEdges[e.a].push(i); nodeEdges[e.b].push(i); });
-  mesh.dofEdges = dof.map((d) => {
-    if (d.t === "bx" || d.t === "by") return [d.i];
-    if (d.t === "ring") {
-      const s2 = new Set();
-      d.nodes.forEach((ni) => nodeEdges[ni].forEach((e) => s2.add(e)));
-      return [...s2];
-    }
-    return nodeEdges[d.i];
-  });
-
-  // rim nodes in counterclockwise order, for the non-crossing test
-  mesh.rimOrder = mesh.nodes
-    .map((n, i) => (n.kind === "rim" ? i : -1))
-    .filter((i) => i >= 0)
-    .sort((a, b) => mesh.nodes[a].th - mesh.nodes[b].th);
-
-  // per-cell list of the edges that are dividers rather than the exit wall
-  mesh.cells.forEach((cell) => {
-    const ds = [];
-    for (const side of cell.sides)
-      for (const { e } of side) if (!mesh.edges[e].rim) ds.push(e);
-    cell.dividerEdges = ds;
-  });
-  return mesh;
-}
-
-export function getDOF(mesh) {
-  return mesh.dof.map((d) => {
-    if (d.t === "x") return mesh.nodes[d.i].x;
-    if (d.t === "y") return mesh.nodes[d.i].y;
-    if (d.t === "th") return mesh.nodes[d.i].th;
-    if (d.t === "ring") return mesh.ringR[d.i];
-    if (d.t === "bx") return mesh.edges[d.i].bulge[0];
-    return mesh.edges[d.i].bulge[1];
-  });
-}
-
-export const invalidateAll = (mesh) => mesh.eValid.fill(0);
-
-// Set one DOF and invalidate only what it can have changed.
-export function setDOF1(mesh, k, val) {
-  const d = mesh.dof[k];
-  if (d.t === "x") mesh.nodes[d.i].x = val;
-  else if (d.t === "y") mesh.nodes[d.i].y = val;
-  else if (d.t === "th") mesh.nodes[d.i].th = val;
-  else if (d.t === "ring") mesh.ringR[d.i] = val;
-  else if (d.t === "bx") mesh.edges[d.i].bulge[0] = val;
-  else mesh.edges[d.i].bulge[1] = val;
-  for (const e of mesh.dofEdges[k]) mesh.eValid[e] = 0;
-}
-
-export function setDOF(mesh, v) {
-  invalidateAll(mesh);
-  mesh.dof.forEach((d, k) => {
-    if (d.t === "x") mesh.nodes[d.i].x = v[k];
-    else if (d.t === "y") mesh.nodes[d.i].y = v[k];
-    else if (d.t === "th") mesh.nodes[d.i].th = v[k];
-    else if (d.t === "ring") mesh.ringR[d.i] = v[k];
-    else if (d.t === "bx") mesh.edges[d.i].bulge[0] = v[k];
-    else mesh.edges[d.i].bulge[1] = v[k];
-  });
-}
-
-export const dofCount = (mesh) => mesh.dof.length;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SQUARE-TO-DISC SEEDS
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Elliptical grid map. Closed form, cheap, sends the square boundary exactly
-// onto the circle — but its own corners land at 45 degrees whatever alpha is,
-// and its rim division is not equal-arc. The corner placement is imposed
-// afterwards by a transfinite (Coons) blend of the boundary displacement.
 export const ellipticalMap = (u, v) => [
   u * Math.sqrt(1 - (v * v) / 2),
   v * Math.sqrt(1 - (u * u) / 2),
@@ -718,408 +307,6 @@ export function scInvert(w, alpha, guess, sub = 10) {
 }
 
 export const equalArcAlphaDeg = (nc, nr) => (90 * nr) / (nr + nc);
-// ═══════════════════════════════════════════════════════════════════════════
-// FAMILY 2 — O-GRID
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Concentric rings, ring j carrying n_j equal angular cells. No singular
-// vertices, but no rectangular index either — it is here as the reference the
-// H-grid has to beat, computed analytically (equal geometric area by
-// construction), so it carries no DOF and takes no part in the solve.
-
-export function buildOGrid({ R, hubR = 0, rings, rotDeg = 0 }) {
-  const rot = rotDeg * D2R;
-  const N = rings.reduce((a, b) => a + b, 0);
-  const k = rings.length;
-  const radii = [hubR];
-  let cum = 0;
-  for (let j = 0; j < k; j++) {
-    cum += rings[j];
-    radii.push(Math.sqrt(hubR * hubR + (cum / N) * (R * R - hubR * hubR)));
-  }
-  radii[k] = R;
-
-  const mesh = makeMesh(R);
-  mesh.family = "ogrid";
-  mesh.rings = rings; mesh.hubR = hubR;
-  // ringR[j] is the radius of circle j. Interior circles get one DOF each; the
-  // hub and the wall are pinned.
-  mesh.ringR = radii.slice();
-  Object.defineProperty(mesh, "radii", { get() { return mesh.ringR; }, enumerable: true });
-
-  // Every circle carries the union of the divider angles of the ring inside it
-  // and the ring outside it, so an arc is split exactly where a divider lands.
-  const angsOn = [];
-  for (let j = 0; j <= k; j++) {
-    const s = new Set();
-    const push = (n) => { for (let i = 0; i < n; i++) s.add(modPos(rot + (TAU * i) / n, TAU)); };
-    if (j > 0 && rings[j - 1] > 1) push(rings[j - 1]);
-    if (j < k && rings[j] > 1) push(rings[j]);
-    // A circle with no divider landing on it still has to exist as geometry.
-    // Without this a full annulus (rings like 1+1+6) or a single undivided ring
-    // produced a circle carrying no nodes at all, so the cell it bounds lost a
-    // side and its area came out wrong while the total still closed.
-    if (s.size < 2 && j > 0) push(2);
-    angsOn.push([...s].sort((a, b) => a - b));
-  }
-
-  const nk = (j, a) => `c${j}_${a.toFixed(9)}`;
-  const movable = (j) => j > 0 && j < k;
-  const nodeAt = (j, a) => {
-    const th = modPos(a, TAU), r = radii[j];
-    return addNode(mesh, nk(j, th), movable(j)
-      ? { kind: "ring", ringIdx: j, th }
-      : { kind: "fixed", x: r * Math.cos(th), y: r * Math.sin(th) });
-  };
-  const originKey = "origin";
-
-  // arcs of circle j between two angles, split at every node on that circle
-  const arcSide = (j, a0, a1) => {
-    const list = angsOn[j];
-    const out = [];
-    if (!list.length) return out;
-    const start = modPos(a0, TAU);
-    let cur = start;
-    const total = modPos(a1 - a0, TAU) || TAU;
-    let acc = 0, guard = 0;
-    while (acc < total - 1e-9 && guard++ < 512) {
-      let next = null, best = Infinity;
-      for (const a of list) {
-        const d = modPos(a - cur, TAU);
-        if (d > 1e-9 && d < best) { best = d; next = a; }
-      }
-      if (next === null) break;
-      if (acc + best > total + 1e-9) best = total - acc, next = modPos(cur + best, TAU);
-      nodeAt(j, cur); nodeAt(j, next);
-      out.push(addEdge(mesh, nk(j, modPos(cur, TAU)), nk(j, modPos(next, TAU)),
-        { arc: { r: radii[j], ringIdx: movable(j) ? j : null, sign: 1 }, rim: j === k }));
-      acc += best; cur = modPos(next, TAU);
-    }
-    return out;
-  };
-
-  const rev = (h) => ({ e: h.e, rev: !h.rev });
-  let id = 0;
-  for (let j = 0; j < k; j++) {
-    const n = rings[j];
-    const dphi = TAU / n;
-    if (j === 0 && n === 1 && hubR === 0) {
-      // the central cell is a disc, not a quadrilateral
-      addCell(mesh, [arcSide(1, rot, rot)], { kind: "disc", ringIdx: 1, i: 0, j: 0, label: `${++id}` });
-      continue;
-    }
-    for (let i = 0; i < n; i++) {
-      const a0 = rot + dphi * i, a1 = a0 + dphi;
-      const outer = arcSide(j + 1, a0, a1);
-      const inner = radii[j] > 0 ? arcSide(j, a0, a1) : [];
-      let rad0, rad1;
-      if (n === 1 && j > 0) {
-        // a full annulus has no radial divider at all
-        addCell(mesh, [[], outer, [], inner.map(rev).reverse()], {
-          kind: "quad", ring: j, i, j: 0, label: `${++id}`,
-        });
-        continue;
-      }
-      if (radii[j] > 0) {
-        nodeAt(j, a0); nodeAt(j, a1); nodeAt(j + 1, a0); nodeAt(j + 1, a1);
-        rad0 = addEdge(mesh, nk(j, modPos(a0, TAU)), nk(j + 1, modPos(a0, TAU)), {});
-        rad1 = addEdge(mesh, nk(j, modPos(a1, TAU)), nk(j + 1, modPos(a1, TAU)), {});
-      } else {
-        addNode(mesh, originKey, { kind: "fixed", x: 0, y: 0 });
-        nodeAt(j + 1, a0); nodeAt(j + 1, a1);
-        rad0 = addEdge(mesh, originKey, nk(j + 1, modPos(a0, TAU)), {});
-        rad1 = addEdge(mesh, originKey, nk(j + 1, modPos(a1, TAU)), {});
-      }
-      // counterclockwise: out along a0, round the outer arc, back along a1,
-      // then back round the inner arc
-      addCell(mesh, [[rad0], outer, [rev(rad1)], inner.map(rev).reverse()], {
-        kind: radii[j] > 0 ? "quad" : "sector",
-        sectorRing: j + 1, sectorBeta: dphi,
-        ring: j, i, j: 0, label: `${++id}`,
-      });
-    }
-  }
-  mesh.singular = [];
-  return finalizeMesh(mesh, { bulge: false });
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// STAGE 2 — EQUALISE
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Damped Gauss-Newton (Levenberg-Marquardt) on the node DOF against the area
-// residuals, with a Tikhonov block pulling back toward the seed so the solver
-// cannot wander into a contorted-but-technically-valid layout.
-//
-// Moser's construction and semi-discrete optimal transport are the textbook
-// routes to the same place, and both are worth knowing about: Moser solves
-// Laplacian(phi) = rho - 1 with Neumann data and flows along grad(phi)/(1 +
-// t(rho-1)), giving exact equal areas at minimal L2 displacement from the
-// seed; Aurenhammer-Hoffmann-Aronov guarantees a unique power diagram for any
-// prescribed positive areas. Both need a background discretisation this tool
-// does not otherwise carry, and for a grid this regular the direct Newton
-// solve lands in the same place, so it is what the reported numbers come from.
-//
-// The achieved spread is always reported. Equality is a solver result here,
-// not a property of the construction, and saying otherwise would hide the
-// integrator's error.
-
-export function cellOpenArea(mesh, ci, t) {
-  const A = cellArea(mesh, ci);
-  if (!t) return A;
-  let P = 0;
-  for (const e of mesh.cells[ci].dividerEdges) P += edgeLength(mesh, e);
-  return A - (t / 2) * P;
-}
-
-const dofScale = (mesh, d) => (d.t === "th" ? 1 : mesh.R);
-
-
-function areasVec(mesh, t) {
-  return mesh.cells.map((_, ci) => cellOpenArea(mesh, ci, t));
-}
-
-function rimOrderOK(mesh, gapMin) {
-  const o = mesh.rimOrder;
-  if (o.length < 2) return true;
-  for (let k = 0; k < o.length; k++) {
-    const a = mesh.nodes[o[k]].th;
-    const b = mesh.nodes[o[(k + 1) % o.length]].th + (k === o.length - 1 ? TAU : 0);
-    if (b - a < gapMin) return false;
-  }
-  return true;
-}
-
-export function equaliseAreas(mesh, opts = {}) {
-  const { t = 0, iters = 40, tikhonov = 0.02, tol = 1e-11, polish = true, w = null } = opts;
-  const N = mesh.cells.length;
-  if (!mesh.dof.length || N < 2) return { spread: areaSpread(mesh, t), iters: 0 };
-  // Two phases. The first is anchored to the seed so the solver takes the
-  // nearest equal-area layout rather than any equal-area layout; the second
-  // drops the anchor and drives the residual the rest of the way down, which
-  // is what makes "unchanged to solver tolerance" mean 1e-9 and not 1e-4.
-  const a = lmEqualise(mesh, t, iters, tikhonov, tol, w);
-  if (!polish) return a;
-  const b = lmEqualise(mesh, t, 12, 0, tol, w);
-  return { spread: b.spread, iters: a.iters + b.iters, cost: b.cost };
-}
-
-function lmEqualise(mesh, t, iters, tikhonov, tol, w = null) {
-  const N = mesh.cells.length;
-  const nd = mesh.dof.length;
-  const x0 = getDOF(mesh);
-  const scale = mesh.dof.map((d) => dofScale(mesh, d));
-  // Only a non-crossing floor. It was once 15% of the mean rim gap, which
-  // silently PINNED the solve on layouts whose corner cells genuinely have to
-  // be slim (8x3 at the equal-arc 24.5 deg stalled at 37% spread against it).
-  // A layout that needs a sliver should produce a sliver and be judged on its
-  // f1, not be quietly refused an equal-area solution.
-  const gapMin = (0.004 * TAU) / Math.max(mesh.rimOrder.length, 1);
-  let x = x0.slice();
-
-  const wt = w || new Array(N).fill(1);
-  const cost = (A, xv) => {
-    const mean = A.reduce((a, b) => a + b, 0) / N;
-    if (!(mean > 0)) return Infinity;
-    let s = 0;
-    for (let i = 0; i < N; i++) { const r = A[i] / (mean * wt[i]) - 1; s += r * r; }
-    for (let k = 0; k < nd; k++) { const r = (tikhonov * (xv[k] - x0[k])) / scale[k]; s += r * r; }
-    return s;
-  };
-
-  let A = areasVec(mesh, t);
-  let f = cost(A, x);
-  let lam = 1e-3;
-  let it = 0;
-
-  for (; it < iters; it++) {
-    const mean = A.reduce((a, b) => a + b, 0) / N;
-    if (!(mean > 0)) break;
-    const r = new Array(N + nd);
-    for (let i = 0; i < N; i++) r[i] = A[i] / (mean * wt[i]) - 1;
-    for (let k = 0; k < nd; k++) r[N + k] = (tikhonov * (x[k] - x0[k])) / scale[k];
-    if (r.slice(0, N).every((v) => Math.abs(v) < tol)) break;
-
-    // Jacobian, column by column. Only the cells a DOF actually touches are
-    // recomputed; the mean is held at its current value for the column, which
-    // is exact whenever the divider thickness is zero and a good enough
-    // approximation for Gauss-Newton when it is not.
-    const J = [];
-    for (let i = 0; i < N + nd; i++) J.push(new Float64Array(nd));
-    for (let k = 0; k < nd; k++) {
-      const h = 1e-6 * scale[k];
-      const touched = mesh.dofCells[k];
-      const save = x[k];
-      setDOF1(mesh, k, save + h);
-      const up = touched.map((ci) => cellOpenArea(mesh, ci, t));
-      setDOF1(mesh, k, save - h);
-      const dn = touched.map((ci) => cellOpenArea(mesh, ci, t));
-      setDOF1(mesh, k, save);
-      touched.forEach((ci, q) => { J[ci][k] = (up[q] - dn[q]) / (2 * h * mean * wt[ci]); });
-      J[N + k][k] = tikhonov / scale[k];
-    }
-
-    // normal equations with the LM damping on the diagonal
-    let stepped = false;
-    for (let trial = 0; trial < 8 && !stepped; trial++) {
-      const H = [], g = new Array(nd).fill(0);
-      for (let a = 0; a < nd; a++) H.push(new Array(nd).fill(0));
-      for (let i = 0; i < N + nd; i++) {
-        const Ji = J[i], ri = r[i];
-        for (let a = 0; a < nd; a++) {
-          if (Ji[a] === 0) continue;
-          g[a] += Ji[a] * ri;
-          for (let b = a; b < nd; b++) if (Ji[b] !== 0) H[a][b] += Ji[a] * Ji[b];
-        }
-      }
-      for (let a = 0; a < nd; a++) for (let b = 0; b < a; b++) H[a][b] = H[b][a];
-      for (let a = 0; a < nd; a++) H[a][a] += lam * (1 + H[a][a]);
-      const d = solveDense(H, g.map((v) => -v));
-      if (!d) { lam *= 10; continue; }
-      const xn = x.map((v, k) => v + d[k]);
-      setDOF(mesh, xn);
-      const An = areasVec(mesh, t);
-      const ok = An.every((v) => v > 0) && rimOrderOK(mesh, gapMin);
-      const fn = ok ? cost(An, xn) : Infinity;
-      if (fn < f) { x = xn; A = An; f = fn; lam = Math.max(lam * 0.4, 1e-9); stepped = true; }
-      else { setDOF(mesh, x); lam *= 6; }
-    }
-    if (!stepped) break;
-  }
-  setDOF(mesh, x);
-  return { spread: areaSpread(mesh, t), iters: it, cost: f };
-}
-
-// Homotopy on the TARGET areas, used only when the direct solve stalls.
-//
-// The direct solve reaches 1e-12 on most layouts and is much cheaper, so it is
-// tried first. When it does not — a conformal seed on a wide grid starts with
-// locally square cells and therefore VERY unequal areas, and the first Newton
-// step has nowhere good to go — the seed is restored and the targets are
-// walked from the seed's own area distribution to uniform. Every step is then
-// a small move away from a state that is already solved.
-export function equaliseAreasStaged(mesh, opts = {}) {
-  const { t = 0, iters = 40, tikhonov = 0.02, stages = 8, tol = 1e-7 } = opts;
-  if (!mesh.dof.length || mesh.cells.length < 2) return { spread: areaSpread(mesh, t), iters: 0 };
-  const x0 = getDOF(mesh);
-  const direct = equaliseAreas(mesh, { t, iters, tikhonov });
-  if (direct.spread < tol) return direct;
-
-  setDOF(mesh, x0);
-  const N = mesh.cells.length;
-  const A0 = mesh.cells.map((_, i) => cellOpenArea(mesh, i, t));
-  const mean0 = A0.reduce((x, y) => x + y, 0) / N;
-  let res = direct, used = direct.iters;
-  for (let k = 1; k <= stages; k++) {
-    const u = k / stages;
-    const w = A0.map((A) => ((1 - u) * A + u * mean0) / mean0);
-    res = equaliseAreas(mesh, { t, iters, tikhonov: tikhonov * (1 - u), polish: false, w });
-    used += res.iters;
-  }
-  res = equaliseAreas(mesh, { t, iters, tikhonov: 0 });
-  used += res.iters;
-  // if the walk still did not land it, the direct attempt was no worse
-  if (res.spread > direct.spread) { setDOF(mesh, x0); return equaliseAreas(mesh, { t, iters, tikhonov }); }
-  return { spread: res.spread, iters: used, staged: true };
-}
-
-export function areaSpread(mesh, t = 0) {
-  const A = areasVec(mesh, t);
-  const mean = A.reduce((a, b) => a + b, 0) / A.length;
-  return ((Math.max(...A) - Math.min(...A)) / mean) * 100;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PER-CELL ACOUSTICS
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// PRIMARY — curved quadrilateral, generalising the unrolled-rectangle estimate:
-//     L_long  = mean arc length of the two "long-direction" opposing edges
-//     L_short = mean arc length of the two connecting edges
-//     f1     ~= c / (2 max(L_long, L_short))
-// This is an APPROXIMATION, not a result. Its error is O((L/r_curv)^2) and the
-// SIGN IS NOT ESTABLISHED, so cells whose edge curvature is strong relative to
-// their own size are flagged for verification in ABEC rather than corrected.
-//
-// Where a closed form exists it is used instead, and the cell says which model
-// ran:
-//   · full disc      f1 = j'(1,1) c / (pi D)
-//   · circular sector of angle beta and radius a
-//                    f1 = min( j'(pi/beta, 1), j'(0,1) ) c / (2 pi a)
-// The sector case is why a pure-sector layout saturates: for beta <= 60 deg
-// the azimuthal branch has already passed the radial one, so f1 is pinned at
-// the disc's own (0,1) mode — a radial cut lies along a nodal line of that
-// mode and cannot remove it. No number of extra radial cuts helps.
-//
-// SECONDARY — Payne-Weinberger's floor c/(2 d_max), reported only for convex
-// cells. A crescent with a concave inner edge is not convex and gets no bound.
-
-export function cellRecord(mesh, ci, opts = {}) {
-  const { c = 343, t = 0, samplesPerEdge = 14 } = opts;
-  const cell = mesh.cells[ci];
-  const poly = cellPolygon(mesh, ci, samplesPerEdge);
-  const area = cellArea(mesh, ci);
-  const sideLen = cell.sides.map((sd) => sideLength(mesh, sd));
-  let dividerLen = 0;
-  for (const e of cell.dividerEdges) dividerLen += edgeLength(mesh, e);
-  const open = t ? area - (t / 2) * dividerLen : area;
-
-  let minCurvR = Infinity;
-  for (const side of cell.sides)
-    for (const { e } of side) minCurvR = Math.min(minCurvR, edgeMinCurvR(mesh, e));
-
-  const La = sideLen.length >= 3 ? (sideLen[0] + sideLen[2]) / 2 : sideLen[0] || 0;
-  const Lb = sideLen.length >= 4 ? (sideLen[1] + sideLen[3]) / 2 : sideLen[1] || 0;
-  const Llong = Math.max(La, Lb), Lshort = Math.min(La, Lb);
-
-  let f1, f1model;
-  if (cell.kind === "disc") {
-    const discR = cell.ringIdx != null ? mesh.ringR[cell.ringIdx] : cell.discR;
-    f1 = (DISC_AZIMUTHAL * c) / (2 * discR * 1e-3);
-    f1model = "disc (1,0), exact";
-  } else if (cell.kind === "sector") {
-    const nu = Math.PI / cell.sectorBeta;
-    const jp = Math.min(besselJPrimeZero(nu), besselJPrimeZero(0));
-    const secR = cell.sectorRing != null ? mesh.ringR[cell.sectorRing] : cell.sectorR;
-    f1 = (jp * c) / (TAU * secR * 1e-3);
-    f1model = jp === besselJPrimeZero(0) ? "sector, radial cap (exact)" : "sector azimuthal (exact)";
-  } else {
-    f1 = c / (2 * Math.max(Llong, 1e-9) * 1e-3);
-    f1model = "curved quad, flat-rectangle estimate";
-  }
-
-  const convex = polyIsConvex(poly);
-  const dia = polyDiameter(poly);
-  const m1 = midOfSide(mesh, ci, 1), m3 = midOfSide(mesh, ci, 3);
-  const dl = Math.hypot(m1[0] - m3[0], m1[1] - m3[1]);
-  return {
-    id: ci, label: cell.label, kind: cell.kind, i: cell.i, j: cell.j,
-    iDir: dl > 1e-9 ? [(m1[0] - m3[0]) / dl, (m1[1] - m3[1]) / dl] : [1, 0],
-    block: cell.block, ring: cell.ring,
-    poly, area, open, dividerLen,
-    centroid: polyCentroid(poly),
-    sideLen, Llong, Lshort,
-    aspect: Lshort > 1e-9 ? Llong / Lshort : Infinity,
-    dia, convex,
-    pwFloor: convex ? c / (2 * dia * 1e-3) : null,
-    minCurvR,
-    curvatureSensitive: minCurvR < 2 * Lshort,
-    f1, f1model,
-  };
-}
-
-// Every cell record from every representation lands here, and nothing below
-// this point knows whether the layout came from grid lines or from a mesh.
-export function meshCells(mesh, opts = {}) {
-  return mesh.cells.map((_, ci) => cellRecord(mesh, ci, opts));
-}
-
-export function meshDividerLength(mesh) {
-  let L = 0;
-  mesh.edges.forEach((e, i) => { if (!e.rim) L += edgeLength(mesh, i); });
-  return L;
-}
-
 export function analyseThroat(cells, opts = {}) {
   const { c = 343, R, dividerTotal = 0 } = opts;
   const N = cells.length;
@@ -1151,7 +338,6 @@ export function analyseThroat(cells, opts = {}) {
     fUndividedAz: (DISC_AZIMUTHAL * c) / (2 * R * 1e-3),
     fUndividedRad: (DISC_RADIAL * c) / (2 * R * 1e-3),
     nonConvex: cells.filter((x) => !x.convex).length,
-    curvatureFlagged: cells.filter((x) => x.curvatureSensitive).length,
   };
 }
 
@@ -1166,10 +352,8 @@ export function analyseThroat(cells, opts = {}) {
 // and no EQ removes that. So the surface is an INPUT here and is never derived
 // from the paths.
 //
-// The cell-for-cell mapping needs a rectangular index at both ends, which only
-// the H-grid has. An O-grid throat has no cell-for-cell match to
-// a rectangular mouth grid — that is a property of their topology, not a gap
-// in the tool — so this section runs for the H-grid only.
+// The cell-for-cell mapping needs a rectangular index at BOTH ends, which is
+// what the H-grid supplies and why it is the only throat family here.
 
 const v3 = (x, y, z) => [x, y, z];
 const a3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -1208,13 +392,6 @@ const un3 = (a) => { const n = nrm3(a) || 1; return [a[0] / n, a[1] / n, a[2] / 
 // straight line pinned to a straight line has no dip.
 export const hypexR = (x, rt, m, T) => rt * (Math.cosh(m * x) + T * Math.sinh(m * x));
 
-export const hypexFlareRate = (x, m, T) => {
-  const den = Math.cosh(m * x) + T * Math.sinh(m * x);
-  return Math.abs(den) < 1e-15 ? 0 : (2 * m * (Math.sinh(m * x) + T * Math.cosh(m * x))) / den;
-};
-
-// Length needed to reach a radius ratio: cosh(mL) + T sinh(mL) = ratio, which
-// is a quadratic in v = e^(mL). Returns null where the family cannot reach it.
 export function hypexLengthForRatio(ratio, m, T) {
   if (!(ratio > 1) || !(m > 0)) return null;
   const a = (1 + T) / 2, bq = -ratio, cq = (1 - T) / 2;
@@ -1535,9 +712,9 @@ export function mapThroatToMouth(throat, opts) {
     separate = null,
   } = opts;
   const { nc, nr, R, rectangular = true } = opts;
-  // A cell-for-cell mapping needs a rectangular index at BOTH ends, which only
-  // the H-grid has. An O-grid throat has no such match — that is a
-  // property of its topology, not a gap in the tool.
+  // A cell-for-cell mapping needs a rectangular index at BOTH ends. Guarded
+  // rather than assumed, so a caller handing in a layout without one gets
+  // null instead of a half-built map.
   if (!rectangular || !nc || !nr) return null;
   // Arc mode needs the cap to be a true SPHERE about the apex, or the
   // equal-solid-angle subdivision stops being equal-area and the mouth points
@@ -2913,6 +2090,34 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
     while (q0 > 1 && gaps[pi][q0 - 1] <= contactTol) q0--;
     return q0;
   });
+  // ── HOW DEEP THE COPE RUNS, IN MILLIMETRES ──────────────────────────────
+  // `jointStart` counts STATIONS, and a station is a different physical
+  // distance at every resolution — measured on the shipped bulge, the same
+  // horn reported 0 of 27 pairs engaged at 24 stations and 27 of 27 at 48.
+  // Worse, the walk above can only move if the station BEFORE the mouth is
+  // already in contact, so it never reads the mouth's own gap at all. The
+  // cells tile the aperture, so ANY bulge makes the mouth rings overlap by
+  // construction — measured exactly 2x the amplitude, since both neighbours
+  // bulge into each other — and reporting that as "the pairs do not meet"
+  // was simply wrong.
+  //
+  // What is worth reporting is the DEPTH of the cope: how far back from the
+  // aperture the two cells still overlap, in mm of path. The crossing is
+  // interpolated between the two bracketing stations, so the answer does not
+  // jump with the station count.
+  const jointDepth = pairs.map((_, pi) => {
+    if (!jointAware) return 0;
+    const sAt = (q) => rows[0].sched[q].sLen;
+    const gMouth = gaps[pi][stations];
+    if (!(gMouth < -contactTol)) return 0;      // not overlapping at the mouth
+    let q = stations;
+    while (q > 0 && gaps[pi][q - 1] < -contactTol) q--;
+    if (q === 0) return sAt(stations) - sAt(0); // overlapping the whole way
+    // linear crossing between station q-1 (clear) and q (overlapping)
+    const gA = gaps[pi][q - 1], gB = gaps[pi][q];
+    const f = gA === gB ? 0 : gA / (gA - gB);
+    return sAt(stations) - (sAt(q - 1) + (sAt(q) - sAt(q - 1)) * f);
+  });
   // the throat run: walk FORWARD from the throat while the pair is still
   // below the floor AND still opening. Reaching the floor ends it (the pair
   // has separated); closing again ends it too, and the station that closed
@@ -2949,17 +2154,29 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
   const perStation = [];
   const perCell = new Map(rows.map((r) => [r.id, Infinity]));
   let worst = Infinity, worstAt = 0, worstMid = Infinity, worstMidAt = 1;
-  let engageMax = 0, knifeMin = Infinity, knifeMax = -Infinity, engaged = 0;
+  let engageMax = 0, knifeMin = Infinity, knifeMax = -Infinity, engaged = 0, runs = 0;
+  let jointDepthMax = 0, jointDepthMin = Infinity;
   let thinCount = 0, thinWorst = Infinity, thinAt = null;
   let throatWorst = 0, throatKnifeMin = Infinity, throatKnifeMax = -Infinity, throatRuns = 0;
   for (let pi = 0; pi < pairs.length; pi++) {
     const [A, B] = pairs[pi];
-    if (jointAware && jointStart[pi] < stations) {
+    // a pair MEETS when its mouth rings overlap — which the tiling makes true
+    // for any bulge at all. Counted from the mouth station's own gap, never
+    // from how far back the contact reaches.
+    if (jointAware && gaps[pi][stations] < -contactTol) {
       engaged++;
+      jointDepthMax = Math.max(jointDepthMax, jointDepth[pi]);
+      jointDepthMin = Math.min(jointDepthMin, jointDepth[pi]);
+      // the deepest overlap inside the cope, scanned back over the whole
+      // engaged run — NOT gated on the run spanning a station, or a shallow
+      // cope reports zero engagement while its rings visibly overlap
+      for (let q = stations; q >= 0 && gaps[pi][q] < -contactTol; q--)
+        engageMax = Math.max(engageMax, -gaps[pi][q]);
+    }
+    if (jointAware && jointStart[pi] < stations) {
+      runs++;
       knifeMin = Math.min(knifeMin, jointStart[pi]);
       knifeMax = Math.max(knifeMax, jointStart[pi]);
-      for (let q = jointStart[pi]; q <= stations; q++)
-        engageMax = Math.max(engageMax, -gaps[pi][q]);
     }
     if (throatEnd[pi] > 0) {
       throatRuns++;
@@ -3041,7 +2258,13 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
     } : null,
     joint: jointAware ? {
       engaged, pairs: pairs.length,
-      knifeMin: engaged ? knifeMin : null, knifeMax: engaged ? knifeMax : null,
+      // how deep the cope runs back from the aperture, in mm of path — the
+      // resolution-robust form of what `knifeMin` counted in stations
+      depthMax: jointDepthMax, depthMin: isFinite(jointDepthMin) ? jointDepthMin : 0,
+      // pairs whose overlap survives at least one whole station back; kept
+      // because the STEP loft can only represent a cope that spans stations
+      runs,
+      knifeMin: runs ? knifeMin : null, knifeMax: runs ? knifeMax : null,
       engageMax, stations,
     } : null,
     thin: thinBand > 0 ? {
@@ -3051,115 +2274,6 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
   };
 }
 
-// ── CHOOSING THE BOW, RATHER THAN DIALLING IT ───────────────────────────────
-// The bow has three discrete-ish knobs — direction, lobe count and region —
-// and they trade the same two quantities against each other:
-//
-//   wallSpread   how much longer the longest wall fibre runs than the
-//                shortest, measured on the built geometry. This is phase
-//                error straight across the passage, and it is the thing to
-//                minimise. NOT bendWiden, which integrates |w dtheta| and so
-//                counts a reversing bend twice when the two halves actually
-//                cancel: measured at 6x3, 90x40 depth 425, bendWiden ranks
-//                1 lobe (37.1) ahead of 2 (40.2) while the real wall spread
-//                says the opposite and by a wide margin, 23.2 against 8.7.
-//   overlap      how deep neighbouring ducts interpenetrate, which is what
-//                amplitude buys, and amplitude falls as 1/lobes.
-//
-// So the search is: minimise wallSpread subject to overlap staying under a
-// floor. It is a small enumeration rather than a continuous optimisation
-// because the options genuinely are few, and because every candidate must be
-// built and MEASURED — there is no cheap surrogate for either quantity.
-//
-// Clearance is the expensive half (~5x the rest of the mapping), so it is
-// measured only on the candidates that survive the wallSpread ranking.
-//
-// The choice is made once for the whole horn, not per cell. A per-cell
-// direction would have to keep mirror pairs mirrored or it breaks the
-// symmetry the directions exist to preserve, and that is a larger build.
-export function solveBow(throat, opts, cfg = {}) {
-  const {
-    dirs = ["radial", "short"],
-    lobeSet = [1, 2, 3],
-    regions = [[0, 1], [0, 0.7], [0.3, 0.95]],
-    overlapMax = 2.0,
-    measure = 4,
-  } = cfg;
-  const cands = [];
-  for (const dir of dirs)
-    for (const lobes of lobeSet)
-      for (const [uStart, uEnd] of regions) {
-        const lengthen = { dir, lobes, uStart, uEnd };
-        const m = mapThroatToMouth(throat, {
-          ...opts, lengthen, keepGeometry: true, computeClearance: false,
-        });
-        if (!m || !m.lengthen) continue;
-        cands.push({
-          dir, lobes, uStart, uEnd,
-          wallSpread: m.wallSpreadMax, amp: m.lengthen.ampMax,
-          dL: m.dL, shortfall: m.lengthen.shortfall, rows: m.rows,
-          overlap: null,
-        });
-      }
-  if (!cands.length) return { ok: false, reason: "no candidates" };
-  // rank on the objective, then pay for the clearance measurement only on
-  // the ones that could win
-  cands.sort((a, b) => a.wallSpread - b.wallSpread);
-  for (const cd of cands.slice(0, measure)) {
-    // joint-aware when a bulge is on, or every candidate would fail the
-    // overlap floor on engagement that is the point of the joints
-    const cl = ductClearance(cd.rows, { jointAware: !!opts.bulge, throatFloor: cfg.throatFloor || 0 });
-    cd.overlap = cl ? cl.overlap : null;
-    cd.minMid = cl ? cl.minMid : null;
-  }
-  const measured = cands.slice(0, measure);
-  // a candidate that cannot reach the target length is not a solution
-  const feasible = measured.filter((cd) => cd.overlap != null && cd.overlap <= overlapMax && cd.shortfall < 0.1);
-  const best = feasible[0] || null;
-  return {
-    ok: !!best, best,
-    // every candidate that was measured, so the trade is visible rather than
-    // hidden behind one answer
-    measured: measured.map(({ rows, ...rest }) => rest),
-    considered: cands.length,
-    reason: best ? null
-      : measured.every((cd) => cd.shortfall >= 0.1) ? "no candidate reached the target length"
-      : `every candidate measured overlaps more than the ${overlapMax} mm floor`,
-  };
-}
-
-// ── SOLVING THE DUCT SEPARATION ─────────────────────────────────────────────
-// Moves centrelines apart until the worst DEFECT gap — interpenetration and
-// thin slivers outside any coped-joint run — clears a floor. Two modes, cheap
-// to thorough, both built on the same separation field and both MEASURED
-// through the forward model and the signed clearance, never estimated:
-//
-//   "uniform"  every duct spreads outward along its own radial ray by ONE
-//              shared amplitude, bisected on the measured gap. The cheapest
-//              field that is mirror-symmetric by construction; on-axis ducts
-//              have no ray and stay put — their room is made by the
-//              neighbours moving away. ~12-20 map+clearance evaluations.
-//
-//   "nudge"    iterative per-pair contact resolution: each pair below the
-//              floor pushes its two ducts apart along the line between their
-//              section centroids at the worst station, half each, scaled by
-//              1/window so the displacement lands where the deficit is. The
-//              pushes accumulate as VECTORS per cell, which is what keeps the
-//              field mirror-covariant — mirrored pairs push mirrored amounts,
-//              and an on-axis duct's sideways components cancel, leaving only
-//              the in-plane push it is allowed. Targeted, so it moves less
-//              material than the uniform spread; several rounds of
-//              map+clearance, so a few times dearer.
-//
-// The window is placed where the trouble is: the defect stations below the
-// floor, padded, clamped clear of the pinned ends — displacement is zero at
-// the throat and the mouth whatever happens, so the mating face and the
-// mouth tiling survive by construction, not by luck.
-//
-// The floor doubles as the thin-wall criterion: a gap that is positive but
-// under the printable minimum is a sliver, and pushing to `floor` clears it.
-// The other legitimate resolution — letting the ducts MERGE — is the coped
-// joint, which is a mouth-region feature; this solver only pushes apart.
 export function solveSeparation(throat, opts, cfg = {}) {
   const {
     floor = 0.5, mode = "uniform", maxIter = 16, ampCap = 40, lobes = 1, tol = 0.05,
@@ -3455,15 +2569,6 @@ export function solveDepthForMinDL(throat, opts, cfg = {}) {
   };
 }
 
-function midOfSide(mesh, ci, k) {
-  // A disc cell has a single side and a sector cell has empty ones, so this has
-  // to cope with the side simply not being there.
-  const side = mesh.cells[ci].sides[k];
-  if (!side || !side.length) return polyCentroid(cellPolygon(mesh, ci, 6));
-  const { e } = side[Math.floor(side.length / 2)];
-  return edgePoint(mesh, e, 0.5); // the midpoint is its own reverse
-}
-
 function resamplePoly(poly, n) {
   const L = [0];
   for (let i = 0; i < poly.length; i++) {
@@ -3559,81 +2664,6 @@ export function hypexReference({ throatArea, fc, T = 0.7, c = 343, coverageDeg =
   };
 }
 
-// ── fc AS AN INPUT, BY SOLVING FOR DEPTH ────────────────────────────────────
-// m is solved from (area ratio, path length), so fc has only ever been a
-// READOUT: state the geometry and read the loading you got. The inversion runs
-// the other way once the axial distance is left FREE —
-//
-//     set fc and T  ->  m  ->  the path length each cell needs  ->  solve depth
-//
-// which is the whole reason for letting depth be derived rather than dialled.
-// Deeper is a longer path AND a bigger mouth, and those push m in opposite
-// directions, so monotonicity is not obvious — but the length term wins across
-// the whole usable range (measured: arc 90x60, T=1, fc falls 1203 -> 278 Hz as
-// depth goes 60 -> 650 mm, and rect mode behaves the same). Monotone means
-// bisection is enough, matching how scAlphaForAspect and solveHypexM already
-// solve scalar problems here.
-//
-// Converged on the BRACKET, not on the residual: each evaluation is a full
-// re-solve of the mapping, so the residual carries that construction's own
-// quadrature floor and can stall above any fixed tolerance while the bracket
-// is still closing honestly. Same reason the Schwarz-Christoffel inversion
-// converges on its step.
-export function solveDepthForFc(throat, opts, cfg = {}) {
-  const {
-    fcTarget, T = 1, lo = 10, hi = 3000, maxIter = 48, tol = 1e-6,
-    reduce = (fcs) => fcs.reduce((a, b) => a + b, 0) / fcs.length,
-  } = cfg;
-  if (!(fcTarget > 0)) return { ok: false, reason: "no target" };
-  let evals = 0;
-  const fcAt = (depth) => {
-    evals++;
-    const m = mapThroatToMouth(throat, { ...opts, depth, profileT: T, keepGeometry: false });
-    if (!m || !m.rows.length || m.rows[0].profFc == null) return null;
-    return { fc: reduce(m.rows.map((r) => r.profFc)), map: m };
-  };
-  const fLo = fcAt(lo), fHi = fcAt(hi);
-  if (!fLo || !fHi) return { ok: false, reason: "no mapping" };
-  // fc falls as depth grows, so the shallow end is the HIGH cutoff
-  if (fcTarget > fLo.fc) return { ok: false, reason: "too high", bound: fLo.fc, at: lo, evals };
-  if (fcTarget < fHi.fc) return { ok: false, reason: "too low", bound: fHi.fc, at: hi, evals };
-  let a = lo, b = hi, best = null;
-  for (let i = 0; i < maxIter; i++) {
-    const mid = (a + b) / 2;
-    const f = fcAt(mid);
-    if (!f) break;
-    best = { depth: mid, fc: f.fc, map: f.map };
-    if (f.fc > fcTarget) a = mid; else b = mid;
-    if (b - a < tol * Math.max(1, mid)) break;
-  }
-  if (!best) return { ok: false, reason: "no mapping", evals };
-  const fcs = best.map.rows.map((r) => r.profFc);
-  return {
-    ok: true, depth: best.depth, fcAchieved: best.fc,
-    fcLo: Math.min(...fcs), fcHi: Math.max(...fcs),
-    bracket: b - a, evals,
-    // the per-cell spread that remains: with an equal-area mouth this is
-    // path length alone, which is what the dL budget is for
-    fcDecomp: best.map.fcDecomp, Lmin: best.map.Lmin, Lmax: best.map.Lmax,
-    // ── THE HORN THIS ACTUALLY PRODUCED ──────────────────────────────────
-    // Worth reporting because the answer is often not a horn anyone would
-    // build, and the reason is structural rather than a solver fault. On the
-    // biradial mouth the aperture is fixed by the coverage arcs, so DEPTH
-    // CANNOT CHANGE THE MOUTH AREA OR THE EXPANSION RATIO — it changes only
-    // the path length. Asking for a cutoff therefore just asks "how long
-    // must this horn be", and a high cutoff answers with a very short horn
-    // carrying a full-size mouth: measured at 90x40 with a 600 mm arc,
-    // fc 900 Hz lands at 85 mm of depth with the same 1560 cm2 mouth, dL
-    // 177 mm, and a per-cell cutoff spread of 551-1534 Hz. That is the
-    // pick-two-of-three biting: fixing the mouth AND the cutoff leaves depth
-    // no freedom to serve dL. Reported so the caller can see it rather than
-    // discovering it in CAD.
-    mouthArea: best.map.mouthAreaTotal,
-    ratio: best.map.rows[0].profRatio,
-    dL: best.map.dL, dLfrac: best.map.dLfrac,
-  };
-}
-
 export function cellSides(poly) {
   const n = poly.length / 4;
   if (!Number.isInteger(n)) return null;
@@ -3686,32 +2716,26 @@ export function fabrication({ throat, t, R, c, f, process = "FDM" }) {
 // One call from the UI. The H-grid runs the line solve; the two comparison
 // families run the mesh solve. Both come back as the same throat record.
 
+// The H-grid is the only throat family. The O-grid — concentric rings, no
+// singular vertices — was the comparison baseline while the question was
+// still "which partition gives the best f1"; it was removed once the answer
+// stopped mattering. It never had a rectangular index, so it could never
+// reach the mouth mapping at all, and the recorded comparison (6x3 at
+// ~14.9 kHz against 1+6+12 at 22.4 kHz) stands in CLAUDE.md without needing
+// the code kept alive to reproduce it.
 export function buildLayout(o) {
   const {
-    family = "hgrid", R, nc = 6, nr = 3, m = 2, symmetric = true,
+    R, nc = 6, nr = 3, m = 2, symmetric = true,
     params = null, seed: seedKind = "elliptical", seedObj = null, pStart = null,
-    rings = [1, 6, 12], hubR = 0, rotDeg = 0,
     alphaDeg = null, t = 0, c = 343, solveOpts = {},
   } = o;
-
-  if (family === "hgrid") {
-    const cfg = lineGridConfig({ nc, nr, m, symmetric });
-    const pReq = params ? params.slice() : nominalParams(cfg);
-    if (alphaDeg != null) pReq[cfg.alphaAt] = alphaDeg * D2R;
-    const sol = solveEqualArea(cfg, pReq, { R, seedKind, seed: seedObj, pStart, t, ...solveOpts });
-    const cells = lineGridCells(sol.geometry, { c, t });
-    const throat = analyseThroat(cells, { c, R, dividerTotal: lineGridDividerLength(sol.geometry) });
-    return { family, cfg, solve: sol, geometry: sol.geometry, throat, seedObj: sol.seed, rectangular: true, nc, nr };
-  }
-
-  // O-grid is the one remaining comparison family: concentric rings, no
-  // singular vertices, and no rectangular index either, which is exactly
-  // what makes it the reference the H-grid has to beat at the throat.
-  const mesh = buildOGrid({ R, hubR, rings, rotDeg });
-  const eq = equaliseAreasStaged(mesh, { t, iters: 50 });
-  const cells = meshCells(mesh, { c, t });
-  const throat = analyseThroat(cells, { c, R, dividerTotal: meshDividerLength(mesh) });
-  return { family, mesh, solve: { converged: eq.spread < 1e-6, residual: eq.spread / 100, reason: null }, throat, rectangular: false };
+  const cfg = lineGridConfig({ nc, nr, m, symmetric });
+  const pReq = params ? params.slice() : nominalParams(cfg);
+  if (alphaDeg != null) pReq[cfg.alphaAt] = alphaDeg * D2R;
+  const sol = solveEqualArea(cfg, pReq, { R, seedKind, seed: seedObj, pStart, t, ...solveOpts });
+  const cells = lineGridCells(sol.geometry, { c, t });
+  const throat = analyseThroat(cells, { c, R, dividerTotal: lineGridDividerLength(sol.geometry) });
+  return { cfg, solve: sol, geometry: sol.geometry, throat, seedObj: sol.seed, rectangular: true, nc, nr };
 }
 
 // The objective is unchanged — maximise the minimum cell first mode — but the
@@ -4337,7 +3361,7 @@ export function lineGrid(cfg, p, seed, tWall = 0, gl = 32) {
       const A = latE[i][j].area + lonE[i + 1][j].area - latE[i][j + 1].area - lonE[i][j].area;
       // Open area is what the air sees: the cell loses t/2 along every edge it
       // shares with a divider. That is what the equal-area solve is asked to
-      // equalise once the walls have thickness, exactly as the O-grid does.
+      // equalise once the walls have thickness.
       let dl = 0;
       for (const e of [latE[i][j], lonE[i + 1][j], latE[i][j + 1], lonE[i][j]]) if (!e.rim) dl += e.len;
       areas.push(A);
@@ -4767,24 +3791,6 @@ function edgeSample(lg, e, n) {
   return out;
 }
 
-// Curvature from the circumradius of three consecutive samples: robust, and it
-// does not need the second derivative of a composed map.
-function edgeMinRadius(lg, e, n = 12) {
-  if (e.rim) return lg.R;
-  const P = edgeSample(lg, e, n);
-  let best = Infinity;
-  for (let q = 1; q < P.length - 1; q++) {
-    const A = P[q - 1], B = P[q], C = P[q + 1];
-    const a = Math.hypot(B[0] - C[0], B[1] - C[1]);
-    const b = Math.hypot(A[0] - C[0], A[1] - C[1]);
-    const cc = Math.hypot(A[0] - B[0], A[1] - B[1]);
-    const ar = Math.abs((B[0] - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (B[1] - A[1])) / 2;
-    if (ar < 1e-14) continue;
-    best = Math.min(best, (a * b * cc) / (4 * ar));
-  }
-  return best;
-}
-
 export function lineGridCells(lg, opts = {}) {
   const { c = 343, t = 0, per = 16 } = opts;
   const { cfg, latE, lonE } = lg;
@@ -4808,8 +3814,6 @@ export function lineGridCells(lg, opts = {}) {
       for (const { e } of sides) if (!e.rim) dividerLen += e.len;
       const area = lg.areas[i * cfg.nr + j];
       const open = t ? area - (t / 2) * dividerLen : area;
-      const minCurvR = Math.min(...sides.map(({ e }) => edgeMinRadius(lg, e)));
-
       // opposing pairs: 0/2 run along u (the cell's width), 1/3 along v (its height)
       const La = (sideLen[0] + sideLen[2]) / 2;
       const Lb = (sideLen[1] + sideLen[3]) / 2;
@@ -4836,8 +3840,16 @@ export function lineGridCells(lg, opts = {}) {
         aspect: Lshort > 1e-9 ? Llong / Lshort : Infinity,
         dia, convex,
         pwFloor: convex ? c / (2 * dia * 1e-3) : null,
-        minCurvR,
-        curvatureSensitive: minCurvR < 2 * Lshort,
+        // The first cross mode of the cell, as a flat rectangle of its long
+        // dimension. It IS an estimate — the sides are curved — and it was
+        // once paired with a `curvatureSensitive` flag testing minCurvR
+        // against the cell's SHORT dimension. That flag was removed because
+        // it was keyed to a length the model does not contain: f1 uses
+        // Llong, so the shape error goes as (Llong/r_curv)^2, and the flag
+        // ranked the cells backwards — it fired on the four corner cells at
+        // 0.31 while eight cells at 0.45-0.52 went unflagged. `f1model`
+        // already says this is an estimate; a mis-keyed flag on top of it
+        // only nagged.
         f1: c / (2 * Math.max(Llong, 1e-9) * 1e-3),
         f1model: "curved quad, flat-rectangle estimate",
       });
@@ -4980,25 +3992,6 @@ export function polyArea3(pts) {
   return Math.hypot(ax, ay, az) / 2;
 }
 
-export function polyArea2(poly) {
-  let A2 = 0;
-  for (let k = 0; k < poly.length; k++) {
-    const a = poly[k], b = poly[(k + 1) % poly.length];
-    A2 += a[0] * b[1] - b[0] * a[1];
-  }
-  return Math.abs(A2) / 2;
-}
-
-// The inset 3-D sections of one duct, throat to mouth.
-//
-// Station 0 needs no special case any more. Under the flowed construction the
-// section at s = 0 IS the throat outline, in the throat plane, because every
-// boundary point starts there — so the mating face against the driver is flat
-// by construction and neighbours meet along exactly one shared curve. Before
-// the flow, station 0 was cut perpendicular to each duct's own centreline,
-// which at the throat already points down the exit cone: the section came out
-// tilted by up to 6.85 deg, straddling z = +-0.5 mm, and eighteen ducts each
-// tilted their own way had no common face to seat on at all.
 export function ductSections(cellRec, row, { t = 0 } = {}) {
   const Q = row.sched.length - 1;
   const rim = cellRec.rimSide || [false, false, false, false];
@@ -5500,92 +4493,6 @@ export function ductSolids(throat, map, opts = {}) {
   return out;
 }
 
-// Every shell blank, meshed and checked — the outer form of the horn, for the
-// 3-D preview. Same structure as ductSolids so the two are interchangeable
-// downstream.
-export function shellSolids(throat, map, opts = {}) {
-  if (!map) return null;
-  const out = [];
-  for (const cellRec of throat.cells) {
-    const row = map.rows.find((r) => r.id === cellRec.id);
-    if (!row) continue;
-    const sections = shellSections(cellRec, row, opts);
-    if (!sections) return null;
-    const mesh = ductMesh(sections);
-    out.push({
-      id: cellRec.id, label: cellRec.label, sections, ...mesh,
-      volume: meshVolume(mesh.verts, mesh.tris),
-      manifold: meshManifold(mesh.tris),
-    });
-  }
-  return out;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// STEP EXPORT — LOFTED B-SPLINE SOLIDS (AP214)
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// The STL above is a faceted approximation, and its purpose stops at
-// visualisation and printing as-is. The owner's stated purpose for STEP is
-// DOWNSTREAM MANIPULATION — filleting, offsetting, cutting joints so the horn
-// prints in parts — and a CAD kernel cannot reliably do any of that to a shell
-// of thousands of planar facets. So this writer emits real surfaces: each duct
-// is a solid bounded by four lofted B-spline wall faces, a throat cap and a
-// mouth cap, with proper closed-shell topology a kernel can boolean.
-//
-// WHY THE TOPOLOGY IS A CURVED BOX. Every section ring is four equal runs of
-// n points with the cell's real corners at the run boundaries (that is the
-// structure insetPolygon mitres on). The corners are genuine tangent
-// discontinuities of the geometry — a cell is a curved quadrilateral — so the
-// natural B-rep is one face per wall, split exactly at the corners: 6 faces,
-// 12 edges, 8 vertices per duct. Splitting anywhere else would smooth over a
-// real crease or put a seam in the middle of a smooth wall.
-//
-// WHY INTERPOLATION, NOT CONTROL-POINTS-AS-DATA. Using the sampled points
-// directly as control points smooths the surface off the samples. The walls
-// between neighbouring ducts are t x taper apart — 0.2 mm at the throat at
-// t = 0.4 — so a few hundredths of a millimetre of smoothing bias is not
-// obviously negligible against the thing being modelled. Global cubic
-// interpolation (natural end conditions, tridiagonal-dense solve, LU factored
-// once per direction and reused) makes the surface pass through every sampled
-// ring point, so the B-rep is the same geometry the STL and the clearance
-// measurement describe, to interpolation error BETWEEN samples only.
-//
-// WATERTIGHTNESS IS BY SHARED ENTITIES, NOT BY TOLERANCE. Adjacent wall
-// patches share their corner control columns as the same CARTESIAN_POINT
-// entities; edge curves are the patches' own boundary iso-curves referencing
-// those same points; the caps are Coons patches whose boundary control rows
-// ARE the wall patches' end rows. Two faces meeting along an edge therefore
-// agree exactly — not to a tolerance — because they reference identical
-// geometry. The clamped interpolation pins end control points to end data
-// points (forced exactly after the solve, so LU pivoting cannot leave them a
-// few ulps off), which is what makes the shared columns identical across
-// independently solved patches.
-//
-// THE CAPS ARE COONS PATCHES, EMITTED AS B-SPLINE SURFACES. A bilinearly
-// blended Coons patch of four B-spline curves with a common knot vector is
-// itself a B-spline surface whose control net combines the boundary nets with
-// Greville-abscissa weights — and its boundary curves are EXACTLY the four
-// input curves, which is the whole point: the cap meets the walls with no
-// gap. The throat cap comes out planar automatically (every control point has
-// z = 0 because the ring does), and the mouth cap is a smooth fill of the
-// mouth ring. The fill is not exactly the biradial aperture surface in its
-// interior; it is a cap, not a routing surface, and nothing downstream reads
-// its interior.
-//
-// Orientation is decided by MEASUREMENT, exactly like ductMesh does: each
-// face's surface normal is sampled at the patch centre and compared with the
-// outward direction; the face flag and its loop direction follow. The edge
-// pairing check (every edge used exactly twice, opposite senses) then
-// verifies the shell is consistently oriented rather than assuming it.
-//
-// Self-checks live in scripts/test-hgrid.mjs: interpolation residual at every
-// sample, shared-boundary identity, edge pairing, referential integrity of
-// the emitted entity graph, and the divergence-theorem volume of the
-// tessellated B-rep against the mesh volume — with the CONVERGENCE RATE
-// tested, not a fixed tolerance, per the volume-identity finding.
-
-// ── B-spline basics (cubic, clamped) ───────────────────────────────────────
 function findSpan(knots, deg, nCtrl, t) {
   if (t >= knots[nCtrl]) return nCtrl - 1;
   let lo = deg, hi = nCtrl;
@@ -6655,21 +5562,6 @@ export function mouthTrimSections(throat, map, { t = 0, wall = 3, ext = 3, jitte
   return out;
 }
 
-// Emit an arbitrary list of solids — the kit's own parts, or any subset of
-// them — so a test file of two tubes and their web can be written without
-// the rest of the horn.
-export function buildSolidsSTEP(solids, { name = "ginkgo_solids", desc = "ginkgo solids", surf = null } = {}) {
-  const ap = surf ? apertureFrame(surf) : null;
-  const solidsSpec = solids.map((sd) => ({
-    label: sd.label, sections: sd.sections, capZ: sd.capZ == null ? null : sd.capZ,
-    capMouthPts: sd.mouth && ap ? apertureCapGrid(sd.sections[sd.sections.length - 1].pts, ap) : null,
-  }));
-  return stepEmit({ name, solidsSpec, desc, fileDesc: desc });
-}
-
-// Referential integrity of an emitted file: every #id referenced in the DATA
-// section is defined there. Run on the text itself so it checks what was
-// actually written, typos and all.
 export function stepIntegrity(text) {
   const defined = new Set();
   for (const m of text.matchAll(/^#(\d+)=/gm)) defined.add(m[1]);

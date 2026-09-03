@@ -63,8 +63,10 @@ Tools are usually iterated **one at a time in separate sessions**. Assume you
 are touching one tool and that the others must come out byte-identical.
 
 `NEXT-SESSION.md` carries the current task queue for the Ginkgo tool — what to
-build next and the measurement each task rests on. Keep it current; it is the
-handover between sessions.
+build next and the measurement each task rests on. Keep it current, and keep
+it SHORT: it is the handover, not a changelog. It reached 1338 lines of "done
+in the X session" before being cut back to the live queue on 2026-09-03;
+durable findings belong here in CLAUDE.md and history belongs in git.
 
 ## Layout
 
@@ -319,6 +321,38 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **THE 2026-09-03 HOUSEKEEPING PASS DELETED THE O-GRID AND THREE DEAD
+  SOLVERS. Read this before hunting for a function a note mentions.** Gone
+  from the model: the whole O-grid family (`buildOGrid` and the mesh
+  machinery it was the only user of — nodes, edges, cells, DOF accessors, the
+  LM equaliser, `cellRecord`/`meshCells`, the edge Bezier helpers, and the
+  Bessel chain behind the disc and sector f1 models), `solveBow`,
+  `solveDepthForFc`, `shellSolids`, `buildSolidsSTEP`, `polyArea2` and
+  `hypexFlareRate`. ~1130 lines, and five test sections with them.
+  Every measurement those produced is still recorded here; what is gone is
+  the code that would reproduce it. The findings that describe them now say
+  so explicitly rather than implying the function is a call away.
+- **THE EDGE-CURVATURE WARNING WAS KEYED TO A LENGTH THE MODEL DOES NOT
+  CONTAIN, and it ranked the cells BACKWARDS.** It flagged
+  `minCurvR < 2 * Lshort` and warned that the flat-rectangle f1 estimate errs
+  as O((L/r)^2) — but f1 is `c / (2 * Llong)`, so the error goes as
+  (Llong/r)^2, and Lshort appears nowhere in it. Measured at the defaults:
+    flagged     1,1 1,3 6,1 6,3   at (Llong/r)^2 = 0.31
+    NOT flagged 2,1 2,3 5,1 5,3   at             0.52
+    NOT flagged 3,1 3,3 4,1 4,3   at             0.45
+  — the eight cells with the LARGEST claimed error all went unflagged while
+  the four it fired on ranked ninth to twelfth. It also only fired at all at
+  shape order 3 (0 of 18 at m = 2), because what it was reading there is the
+  interior grid lines bending to R ~ 15.4 mm near the corners against the
+  disc's own 17.75 mm rim — not a pathology, just the extra freedom m = 3
+  spends near the corner. Removed entirely on 2026-09-03 (owner's call) along
+  with `minCurvR`, `curvatureSensitive`, `curvatureFlagged`, `edgeMinRadius`
+  and two CSV columns. `f1model` already labels the estimate an estimate.
+  **The general lesson is the one at the top of this file**: a metric has to
+  measure the quantity in the model it is judging, or it will fire
+  confidently on the wrong things — and a warning nobody can act on is worse
+  than no warning, because it trains the reader to ignore the warning strip.
+
 - **THE SECTION PLANE NOW FOLLOWS THE TANGENT, and the construction it
   replaced was satisfying the expansion law in a plane the wave was not
   crossing.** This is the worked example behind the standing priority at the
@@ -425,52 +459,6 @@ exists.
   spread that is the ring's own slow variation rather than a missed peak. It
   is still optimistic in the SAMPLE count — see the under-resolution finding
   below.
-- **"MORE LOBES IS BETTER ON EVERY COUNT" IS NO LONGER TRUE — the fold margin
-  is a count that gets worse.** The wallSpread ranking below still holds and
-  is not withdrawn; what is withdrawn is the "on every count". Re-measured on
-  that finding's own geometry (6x3, radial, 90x40, depth 425, region [0,1]):
-    lobes          1       2       3       4
-    wallSpread   33.2    21.2    17.4    16.6  mm   <- still better with more
-    amplitude   100.9    31.9    20.4    14.7  mm   <- still better
-    foldMargin   30.1    27.9     9.9    -0.6  mm   <- WORSE, monotonically
-  In the throat fifth it goes negative a lobe sooner: +8.5 / +2.5 / **-0.5** /
-  -1.3 mm at 1 / 2 / 3 / 4 lobes. More lobes buys phase coherence with bend
-  radius, and bend radius is what the duct's own width has to fit inside.
-  Two is still the knee on wallSpread; three now needs the fold margin read
-  first, and in a short window it is already folded there.
-- **THE SHIPPED THROAT-FIFTH BOW IS OVER-TIGHT AT THE DEFAULTS, and squaring
-  the sections is what made that visible rather than what caused it.** At
-  depth 300 the middle row is 25.5 mm short and the throat fifth is 65 mm of
-  path, so the solved bow is a **28.3 mm hairpin at R_min 8.0 mm** in a duct
-  4.5-7.3 mm wide — the centreline runs x = 2.5 -> 31.9 -> 6.2 mm inside the
-  first 60 mm of a 325 mm path. Under refinement (stations = samples) the
-  passage contraction converges to a real **8.6 -> 10.9 -> 11.7%** at 128,
-  192 and 256 stations, while every other window measures 0.00% at every
-  resolution (all at stations = samples):
-    window       [0,0.2]   [0,0.5]  [0.2,0.8]  [0.3,0.95]   none
-    contraction   11.72%    0.00%     0.00%      0.00%      0.00%
-    foldMargin     1.11     8.33      9.02       3.81      133.1  mm
-  The superseded blend, on the same geometries at 256 stations, read 34.06%
-  on [0,0.2] and **11.00% on [0,0.5] where the duct measures 0.00%** — i.e.
-  it INVENTED a constriction on sound geometry as well as exaggerating a real
-  one, and it DIVERGED under refinement (20.9% at 64 stations -> 33.1% at
-  192) where a real constriction converges. **Divergence under refinement is
-  the test that separates a plane error from a geometry error.**
-  **THIS IS THE SAME FACT AS THE DEPTH FINDING, NOT A SECOND ONE, and the
-  region is not what needs changing.** Solving the depth fixes the passage,
-  the fold margin and the interpenetration together and monotonically —
-  measured at 6x3, m 3, arcs 555x245, T 0.7, throat-fifth 1-lobe radial:
-    depth        300    320    340    357    370    400
-    dL (mm)    24.08  18.19  12.97  10.82  12.67  17.08
-    bow amp    28.3   24.6   20.8   20.1   21.9   26.3   mm
-    R_min       7.8    9.8   11.9   13.2   12.9   12.6   mm
-    foldMargin  3.28   5.37   7.04   8.35   8.03   7.68  mm
-    contract   10.86%  5.74%  2.78%  1.17%  0.94%  0.60%
-  `solveDepthForMinDL` puts this mouth at 357.2 mm, which is where the
-  separately-measured interpenetration also crosses from -4.78 mm to +0.29.
-  So the corrected throat-fifth finding — it is the DEPTH, not the region —
-  now has three independent metrics behind it, and the owner's habit needs no
-  revisiting. Solve the depth first; the bow becomes a small correction.
 - **BOTH PASSAGE METRICS ARE UNDER-RESOLVED BY THE 64-SAMPLE CENTRELINE
   DEFAULT, and this is the next thing to fix.** `samples` defaults to 64 over
   the whole path, so a 65 mm bow feature gets ~13 samples and its curvature
@@ -508,7 +496,23 @@ exists.
   the launch cone only.
 - **THE ARCS AND THE SHAPE ORDER MOVED AGAIN ON 2026-09-02 (owner's
   numbers), and the arcs moved FOR THE PRINT, not for the acoustics.**
-  arcH 560 -> 555 mm, arcV 250 -> 245 mm, shape order m 2 -> 3. Th_v is 0,
+  arcH 560 -> 555 mm, arcV 250 -> 245 mm, shape order m 2 -> 3.
+  **arcH MOVED AGAIN TO 500 mm ON 2026-09-03 (owner's number), AND UNLIKE THE
+  5 mm STEP THIS ONE IS NOT A COST — IT IS AN IMPROVEMENT ON EVERY METRIC BUT
+  MOUTH AREA.** Measured at 6x3, m 3, arcV 245, depth 300, T 0.7:
+                        555 mm          500 mm
+    mouth area          1355.9 cm2      1221.5 cm2   (-9.9%)
+    dL                  24.08 mm        14.60 mm     (-39%)
+    fc                  457-493 Hz      462-485 Hz   (spread 7.9% -> 5.0%)
+    half-chord          249.8 mm        225.1 mm     (P1S margin 6.2 -> 30.9)
+  The reason is that a smaller mouth moves the dL OPTIMUM toward the default
+  depth: `solveDepthForMinDL` goes 357.2 -> **319.5 mm**, so the shipped depth
+  of 300 is now nearly on it instead of 57 mm short. Everything downstream of
+  dL follows — the throat-fifth bow's amplitude falls 28.3 -> 21.0 mm, R_min
+  rises 7.8 -> 9.1 mm, the fold margin 3.28 -> 4.45 mm and the passage
+  contraction 10.86% -> 5.57%. Going the last step to depth 319.5 takes those
+  to 5.82 mm and 2.78%. So the print-bed argument and the acoustics point the
+  same way here, which is not what the 560 -> 555 step did. Th_v is 0,
   so arcV is literally the mouth height, and arcH at 90 deg gives a 499.68
   mm chord — 249.84 mm per half if the horn is split on the vertical
   centreline. Both clear a Bambu P1S bed (256 mm) by 6.2 and 11.0 mm, where
@@ -562,20 +566,21 @@ exists.
   every T while the geometry measures 0.3-2.5 mm of real overlap — the
   documented swept-mode trap, restated here because a T sweep is exactly
   where someone would reach for k.
-- **THE `f_c` DEPTH SOLVE WAS REMOVED FROM THE UI (owner's call), and the
-  reason is structural rather than a solver defect.** On the biradial mouth
-  the aperture is fixed by the coverage arcs, so depth moves NEITHER the
-  mouth area NOR the expansion ratio — verified: radius ratio 10.548288 at
-  depth 80, 333, 600 and 1100 alike, mouth 996.77 cm² throughout. Depth buys
-  path length and nothing else. So "solve depth for f_c" is only "how long
-  must the body be", and it answers with a horn away from the dL optimum by
-  construction: 275.8 mm for f_c 500 against 320.0 mm for minimum dL at the
-  defaults. The owner also reports the loading limit landing well below the
-  crossover points that matter at these sizes, so the target was never the
-  binding criterion in practice. `solveDepthForFc` SURVIVES IN THE MODEL with
-  its tests — it is the documented inverse of the profile and the thing to
-  reach for if the mouth ever becomes a free variable; it is the UI
-  affordance that was misleading.
+- **DEPTH CANNOT BE SOLVED FOR `f_c` ON THIS MOUTH, and that is structural
+  rather than a solver defect.** The aperture is fixed by the coverage arcs,
+  so depth moves NEITHER the mouth area NOR the expansion ratio — verified:
+  radius ratio 10.548288 at depth 80, 333, 600 and 1100 alike, mouth
+  996.77 cm2 throughout. Depth buys path length and nothing else. So "solve
+  depth for f_c" only ever answered "how long must the body be", and it
+  answered with a horn away from the dL optimum by construction: 275.8 mm for
+  f_c 500 against 320.0 mm for minimum dL at the defaults. The owner also
+  reports the loading limit landing well below the crossover points that
+  matter at these sizes, so the target was never the binding criterion.
+  `solveDepthForFc` was removed from the UI on that argument and DELETED from
+  the model on 2026-09-03; if the mouth ever becomes a free variable, the
+  inverse is a bisection on the forward model and is a morning's work.
+  **Solve depth for the dL MINIMUM instead** — `solveDepthForMinDL` — which is
+  the lever that actually moves this geometry.
 - **THE 1-D REFERENCE AND THE COVERAGE-SPECIFIED APERTURE ARE TWO DIFFERENT
   HORNS, and every metric that compared the built geometry against the
   reference misled in the same direction.** `hypexReference` sizes its mouth
@@ -801,72 +806,53 @@ exists.
   informational figure and `wallSpreadMax` is a standing metric in the UI,
   judged against lambda/8. Between the two bow metrics, read `wallSpread` —
   see the lobe finding below for why `bendWiden` misleads.
-- **MORE LOBES IS BETTER ON EVERY COUNT, and the integrated metric said the
-  opposite.** This bullet previously claimed the reverse on the strength of
-  `bendWiden`; that was wrong and the correction is the point. `bendWiden`
-  integrates |w dtheta|, so it charges for every turn — but a REVERSING bend
-  does not cost that: a wall fibre running short through the first half runs
-  long through the second and the error cancels. `wallSpread` measures the
-  fibres themselves (each boundary index is the same material line down the
-  duct in swept mode, so max minus min over the index IS the inner-vs-outer
-  difference) and it ranks the lobe count the other way round. Measured at
-  6x3, radial, 90x40 depth 425:
-    lobes        1      2      3      4
-    wallSpread  23.2    8.7    7.0    6.4  mm   <- the truth
-    bendWiden   37.1   40.2   48.3   ...  mm   <- misleading, do not optimise on it
-    amplitude   82.5   16.3    9.6    6.6  mm
-  So more lobes is less phase error AND less amplitude AND better clearance,
-  all at once. Two is the knee; three buys little. The window is sin^2, which
-  never goes negative, so n lobes is n humps on the SAME side of the path
-  touching the centreline between them — NOT a sine wave and not an S-bend.
-  The cancellation comes from each hump reversing its own curvature.
-  **Read `wallSpread`, never `bendWiden`, when judging a bow.** bendWiden is
-  kept only as the gross-turning figure and is tested as such.
-- **`solveBow` IS GONE FROM THE UI (owner's call, 2026-09-02), and the
-  reason is the RANKING METRIC rather than the search.** The solve ranks
+- **MORE LOBES IS BETTER ON MOST COUNTS BUT NOT ALL, and BOTH halves of that
+  have been got wrong here before.** An earlier note claimed the opposite
+  outright on the strength of `bendWiden`, which integrates |w dtheta| and so
+  charges for every turn — but a REVERSING bend does not cost that: a wall
+  fibre running short through the first half runs long through the second and
+  the error cancels. `wallSpread` measures the fibres themselves (in swept
+  mode each boundary index is the same material line down the duct, so max
+  minus min over the index IS the inner-vs-outer difference) and it ranks the
+  lobe count the other way round. A later note then over-corrected to "better
+  on EVERY count", which the fold margin disproves. Measured at 6x3, radial,
+  90x40 depth 425, region [0,1]:
+    lobes          1       2       3       4
+    wallSpread   33.2    21.2    17.4    16.6  mm   <- better with more
+    amplitude   100.9    31.9    20.4    14.7  mm   <- better with more
+    bendWiden    37.1    40.2    48.3     ...  mm   <- misleading, do not use
+    foldMargin   30.1    27.9     9.9    -0.6  mm   <- WORSE, monotonically
+  In the throat fifth the fold margin goes negative a lobe sooner: +8.5 /
+  +2.5 / **-0.5** / -1.3 mm at 1 / 2 / 3 / 4 lobes. So more lobes buys phase
+  coherence with bend radius, and bend radius is what the duct's own width
+  has to fit inside. Two is the knee on wallSpread; three needs the fold
+  margin read first, and in a short window it is already folded there.
+  The window is sin^2, which never goes negative, so n lobes is n humps on
+  the SAME side of the path touching the centreline between them — NOT a sine
+  wave and not an S-bend. The cancellation comes from each hump reversing its
+  own curvature. **Read `wallSpread` and `bendFold`, never `bendWiden`.**
+
+- **THE BOW SOLVER IS DELETED, and the reason is the RANKING METRIC rather
+  than the search — which is why nothing was lost by removing it.** It ranked
   candidates on wallSpread, and wallSpread is the length each wall fibre has
-  run BY THE MOUTH — so a bow that distorts the wavefront mid-path and
-  unwinds it before the aperture scores as though nothing happened. The
-  consequence is systematic, not occasional: the solver reads the wide,
-  expanded end of the passage as free real estate and puts the bow there
-  (the recorded winner is region [0.3, 0.95]), which is exactly where a
-  displacement moves the most air, and the wallSpread it buys back does not
-  price that. The owner reports going with `throat fifth` almost every time.
-  The `lobes locked` toggle existed ONLY to fence the same blind spot on the
-  lobe count, so it went with the solve; the lobe buttons themselves stay.
-  **`solveBow` SURVIVES IN THE MODEL with its two tests**, like
-  `solveDepthForFc` and the world-axis bow directions before it — it is the
-  documented enumeration of the trade, and the thing to reach for if a metric
-  ever exists that can see mid-path coherence rather than its integral. The
-  two bullets below record what it measured and stay accurate.
-- **THE BOW IS SOLVED BY ENUMERATION (`solveBow`), because the options are
-  few and neither quantity has a cheap surrogate.** direction x lobes x
-  region, each candidate BUILT and measured, ranked on wallSpread, with the
-  clearance (the expensive half) measured only on the survivors and an
-  overlap floor as the constraint. Measured at 6x3, 90x40 depth 425, floor
-  2 mm: the winner is short-axis / 3 lobes / region [0.3, 0.95] at
-  wallSpread 4.75 mm and overlap 1.98 mm, and the candidate with the very
-  lowest wallSpread (short / 2 / [0, 0.7], 4.50 mm) is REJECTED at 4.54 mm
-  of overlap. Note the winning region is "where the room is" — the gap
-  profile predicted exactly that.
-  **THE LOBE COUNT WAS HELD OUT OF THE SOLVE (`lobes locked`, now removed
-  with the solve), and that was a deliberate refusal to optimise on
-  wallSpread alone.** Left free
-  the solver returns 2 lobes on essentially every geometry, because
-  wallSpread prefers more lobes — but wallSpread is the length each wall
-  fibre has run BY THE MOUTH, so a reversal cancels in that total whether or
-  not the wavefront recovered in between, and the extra hump sits further
-  down the passage where the section is wider. The count is therefore the
-  owner's, and the solver searches direction x region around it. The lock
-  costs about a fifth of the wallSpread and buys back HALF the amplitude:
-  measured at 6x3, 90x40, arc 480, depth 320 (the dL optimum there), same
-  winning direction and region both ways — short axis / [0.3, 0.95] — at
-  wallSpread 5.37 mm / amplitude 13.8 mm locked to 1 lobe against 4.42 mm /
-  7.0 mm free at 2, with overlap 1.92 mm either way. Verified identical in
-  node and in the browser. Note that at depth 150 — far from the dL optimum,
-  and the tool's default until 2026-09-01 — NO candidate qualifies, locked or
-  free: every one overlaps 10-22 mm against the 2 mm floor. Solve the depth
-  first; the bow is a correction to apply after depth has done what it can.
+  run BY THE MOUTH, so a bow that distorts the wavefront mid-path and unwinds
+  it before the aperture scored as though nothing happened. The consequence
+  was systematic: the solver read the wide, expanded end of the passage as
+  free real estate and put the bow there (its recorded winner is region
+  [0.3, 0.95]), which is exactly where a displacement moves the most air.
+  Removed from the UI 2026-09-02, deleted from the model 2026-09-03.
+  **What it measured, which is the part worth keeping**: at 6x3, 90x40 depth
+  425, floor 2 mm, the winner was short-axis / 3 lobes / [0.3, 0.95] at
+  wallSpread 4.75 mm and overlap 1.98 mm, and the candidate with the LOWEST
+  wallSpread (short / 2 / [0, 0.7], 4.50 mm) was rejected at 4.54 mm of
+  overlap — so the two quantities genuinely trade and neither has a cheap
+  surrogate. Holding the lobe count out of the search cost about a fifth of
+  the wallSpread and bought back HALF the amplitude (5.37 mm / 13.8 mm locked
+  to 1 lobe against 4.42 mm / 7.0 mm free at 2, same direction and region
+  either way). And at depth 150 — far from the dL optimum — NO candidate
+  qualified at all, every one overlapping 10-22 mm against the 2 mm floor.
+  That last one is the lesson that outlived the code: **solve the depth
+  first; the bow is a correction to apply after depth has done what it can.**
 - **COLUMN PARITY decides where the dividers sit, not how well the horn
   works.** Even n_cols forces a longitude line to u = 0, so a divider runs
   down the vertical centreline of the throat — through the exit's
@@ -1377,37 +1363,39 @@ exists.
   ignores the bulge entirely: a shared boundary point cannot take two
   targets. STL stays manifold and STEP valid, because the corners survive.
 - **OVERLAP INSIDE A JOINT RUN IS ENGAGEMENT, NOT A DEFECT, and the split
-  is computed, not assumed.** `ductClearance(rows, { jointAware })` walks
-  each pair back from the mouth: the maximal contiguous contact run ending
-  at the mouth is that pair's JOINT; its first station is the knife edge;
-  everything else stays defect. Without a bulge the run degenerates to the
-  mouth station alone and every statistic reduces EXACTLY to the old form
-  (verified to 1e-12). Measured at amp 5: all 27 pairs engaged, knife at
-  stations 30-31 of 32, 10 mm of engagement — while the defect overlap
-  reads 2.06 mm against 2.03 unbulged, i.e. the pre-existing swept-mode
-  interpenetration is still reported and the joint is not. The RAW overlap
-  would have read 4.75 mm and pointed at the wrong station. `thinBand`
-  rides in the same pass: a defect gap in (0, band) is a wall sliver too
-  thin to print — 17 pair-stations under 1 mm at the 320-depth defaults.
-- **THE DEFECT METRIC HAS A MEASURED MOUTH BOUNDARY AND NO THROAT ONE, and
-  at the 2026-09-01 defaults that is what the separation solve is actually
-  chasing.** `ductClearance` excludes only station 0 and the last station
-  outright; on the mouth side `jointAware` additionally walks back the
-  contiguous contact run and calls it engagement, so the mouth knife edge is
-  COMPUTED per pair. There is no mirror of that at the throat, where the
-  cells also tile by construction. Measured at 6x3, 90x0, 560x250, depth
-  300, T 0.7, no bow, no separation — defect gap by station:
-    u      0.000  0.042  0.083  0.167  0.250  0.500  0.750  0.958  1.000
-    gap    (end)  -0.002 +0.046 +1.768 +3.828 13.647 21.518 +9.249 (end)
-  End rings measure -4.4e-12 and -3.2e-14 mm, i.e. exact tiling. So
-  `minMid` is -0.002 mm AT STATION 1 — the throat knife edge bleeding one
-  station in at 24 stations, not a defect — and a 0.5 mm floor therefore
-  fires on it. Both modes then move material to "fix" it: uniform reaches
-  +0.556 mm but costs dL 25.52 -> 22.49, nudge reaches +0.455 for dL 25.52
-  -> 25.47. **Excluding station 1 would not by itself settle it** — station
-  2 reads +0.046 mm, still under any usable floor, because the ducts have
-  not had path length to open yet. The boundary wanted is "where the ducts
-  have separated", not a fixed station count.
+  is computed, not assumed.** `ductClearance(rows, { jointAware })` separates
+  the deliberate mouth-side overlap from the defect: everything outside the
+  joint stays defect. Without a bulge the run degenerates and every statistic
+  reduces EXACTLY to the boundary-less form (verified to 1e-12). Measured at
+  amp 5: the defect overlap reads 1.27 mm against 1.09 unbulged, i.e. the
+  pre-existing swept-mode interpenetration is still reported and the joint is
+  not, where the RAW overlap would have read 4.75 mm and pointed at the wrong
+  station. `thinBand` rides in the same pass: a defect gap in (0, band) is a
+  wall sliver too thin to print.
+- **"DO THE NEIGHBOURS MEET" IS NOT A QUESTION — THE CELLS TILE, SO ANY BULGE
+  AT ALL MAKES THEM OVERLAP. The metric that asked it was measuring depth and
+  reporting it as contact.** `joint.engaged` used to be counted by walking
+  BACK from the mouth and asking whether the station BEFORE it was already in
+  contact, so it never read the mouth's own gap. Measured at 0.25 mm of
+  bulge: all 27 mouth-ring pairs overlap by **0.500 mm** — exactly twice the
+  amplitude, since both neighbours bow into each other — while the tool
+  reported "only 0 of 27 neighbour pairs actually meet" and told the owner to
+  raise the amplitude. It was resolution-dependent on top of that, because
+  "one station back" is a different distance at every count: the same horn at
+  4 mm of bulge read 0/27 at 24 stations and 27/27 at 48.
+  **Fixed 2026-09-03.** `engaged` now counts pairs whose mouth rings actually
+  overlap, and the number worth reading is `joint.depthMin/depthMax` — how
+  far back from the aperture the cope runs, in MM OF PATH, interpolated
+  across the crossing station. Measured 12.97 / 12.32 / 12.50 mm at 24 / 32 /
+  48 stations for one geometry, where the old form flipped 0 to 27.
+  `engageMax` is no longer gated on the run spanning a station, or a shallow
+  cope reported zero engagement while its rings visibly overlapped.
+  **The warning is judged against the EXPORT station spacing, not the
+  preview's** — the clearance is measured on the 24-station preview where a
+  station is ~13 mm, while the file ships at 64 where it is ~5 mm, and keying
+  it to the preview made a perfectly exportable 4 mm cope look untenable. It
+  now fires below about 2 mm of bulge, which is where the cope really is
+  thinner than the loft can carry.
 - **THE THROAT BOUNDARY IS THE GAP HAVING TO BE OPENING (`throatFloor`).**
   A pair's THROAT RUN is the contiguous run from station 0 over which the
   gap is still BELOW the floor AND has not decreased from the station
@@ -1571,6 +1559,24 @@ exists.
   THE DEPTH FIRST and the bow becomes a small correction rather than a
   fight. Stage 5's own hint says exactly that, and this is the measurement
   behind it.
+  **THREE INDEPENDENT METRICS AGREE ON THIS, which is why the region is not
+  what needs changing.** Squaring the sections (2026-09-03) added two more
+  readings of the same fact, and all three improve monotonically toward the
+  dL-solved depth — measured at 6x3, m 3, arcs 555x245, T 0.7, throat-fifth
+  1-lobe radial:
+    depth        300    320    340    357    370    400
+    dL (mm)    24.08  18.19  12.97  10.82  12.67  17.08
+    bow amp    28.3   24.6   20.8   20.1   21.9   26.3   mm
+    R_min       7.8    9.8   11.9   13.2   12.9   12.6   mm
+    foldMargin  3.28   5.37   7.04   8.35   8.03   7.68  mm
+    contract   10.86%  5.74%  2.78%  1.17%  0.94%  0.60%
+  At depth 300 the solved bow is a **28.3 mm hairpin at R_min 7.8 mm** in a
+  duct 4.5-7.3 mm wide — the centreline runs x = 2.5 -> 31.9 -> 6.2 mm inside
+  the first 60 mm of a 325 mm path. Under refinement its passage contraction
+  converges to a real 11.7%, while EVERY other bow window ([0,0.5], [0.2,0.8],
+  [0.3,0.95]) measures 0.00% at every resolution. Same conclusion, three
+  ways: solve the depth and the bow becomes a small correction.
+
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now
@@ -1584,9 +1590,13 @@ exists.
   flagged themselves as order-of-magnitude only; they are wrong in direction.
 - **The equal-arc corner angle is rarely the best one.** For 8×3 it is 24.5°
   and the optimum is near 37.5°. Treat it as the seed it is.
-- **An equal-area H-grid does not beat a comparable O-grid on f₁_min.** 6×3 at
-  ~14.9 kHz against 1+6+12 at 22.4 kHz. The H-grid earns its place through the
-  mouth mapping, not through the throat number.
+- **An equal-area H-grid does not beat a comparable O-grid on f₁_min** — 6×3
+  at ~14.9 kHz against 1+6+12 at 22.4 kHz. The H-grid earns its place through
+  the MOUTH MAPPING, not through the throat number: an O-grid has no
+  rectangular index, so it can never be mapped cell-for-cell onto a
+  rectangular mouth grid at all. That is what made it a dead end, and the
+  O-grid family was deleted on 2026-09-03 once the direction was settled.
+  The number above is the whole of what it was kept for.
 - **The line-parameter solve needs the request walked up to it.** A cold
   Gauss-Newton step from an ambitious slider setting drives straight into the
   non-crossing boundary and jams, so `solveEqualArea` falls back to approaching
@@ -1771,28 +1781,16 @@ exists.
   solve the depth first and the correction problem gets structurally
   simpler, not merely smaller.
 - **Path length on the APEX-SPHERE mouth: the centre cell is always shortest.**
-  SUPERSEDED for the biradial mouth by the note above — on that surface the
-  ordering does flip with depth. Kept because it is still true of the legacy
-  apex-based modes. It was worth checking whether depth could flip the ordering
-  so rim cells became the ones needing correction — it cannot. On a cap centred
-  at the apex every mouth point is at radius r from it, so the distance from
-  the throat to a point at angle th, sqrt(apex^2 + r^2 - 2 apex r cos th), is
-  minimised at th = 0 for any r. Measured: centre minus corner stays negative
-  at every depth 40-700 mm and every apex 60-300 mm (-66, -55, -51, -55, -67 at
-  apex 120). So path-length correction is ALWAYS centre-cell lengthening, never
-  rim, which is a narrower problem than a general equaliser — and it needs room
-  exactly where there is least, since the interior cells are boxed in on four
-  sides. Measured at arc 90x60: cells 3,2 and 4,2 need 52.1 mm and have 0.350
-  mm of gap; the corner cells need 0.0 mm and have 0.614 mm, monotonically
-  inverse across all 18.
-  dL IS convex in depth with an interior minimum near 1.7-1.9x apex, so the
-  optimisation intuition is real, but it is weak: 16% at apex 120, 3% at apex
-  60 and 200. The dominant term is horn SIZE, and at 90 deg coverage the trade
-  is unforgiving — a 500 Hz horn needs a ~650 mm mouth and lands at dL = 53.5
-  mm against a lambda/8 budget of 2.14 mm at 20 kHz, i.e. 25x over. Narrowing
-  the vertical coverage barely helps (18.1 -> 16.2 mm going 60 to 25 deg). So
-  dL cannot be brought into budget by depth, apex or coverage at 90 deg, and
-  some centre-cell lengthening mechanism is required rather than optional.
+  SUPERSEDED for the biradial mouth by the dL-optimum note above, where the
+  ordering DOES flip with depth. Kept only because it explains why the
+  correction problem looked harder than it is: on a cap centred at the apex
+  every mouth point is at radius r from it, so the distance to a point at
+  angle th is minimised at th = 0 for any r, and no depth or apex can flip it
+  (measured centre-minus-corner negative at every depth 40-700 mm and every
+  apex 60-300 mm). Correction was therefore always centre-cell lengthening,
+  needing room exactly where there is least. The biradial mouth removed that
+  constraint entirely.
+
 - **`sched[].origin` is the CENTRELINE point, not the section's centre, in
   BOTH construction modes.** They drift 0.775 mm in rect and 4.466 mm in arc,
   because the mean of the flowed boundary points is not the flow of the mean,
@@ -1987,12 +1985,12 @@ exists.
   radius is infinite (equal d(arc length)).
   `mouthMode` "rect" and "arc" survive in the model as the comparison baselines
   the tests measure against; the tool offers only biradial.
-- **Decoupling vertical from horizontal curvature is a CONTINUUM,- **Decoupling vertical from horizontal curvature is a CONTINUUM, and the one
-  thing it trades is equal solid angle.** The aperture is an ellipsoid of
-  REVOLUTION today — `(x^2+y^2)/A^2 + (z+apex)^2/Cz^2 = 1` with a single A — so
-  horizontal and vertical radii are locked identical and `flatten` scales both
-  together. A vertically-flat mouth (cylinder: horizontal arc, vertical
-  straight) is a legitimate CD-horn geometry and is NOT currently reachable.
+- **Decoupling vertical from horizontal curvature is a CONTINUUM, and the one
+  thing it trades is equal solid angle.** (Written when the aperture was still
+  an ellipsoid of REVOLUTION with a single radius; the biradial mouth above
+  superseded that and made the vertically-flat case reachable. The measured
+  trade below is what survives and is why equal solid angle was dropped as a
+  criterion.)
   Measured at 6x3, Th_h 90 deg, vertical arc 213 mm, with equal-AREA vertical
   subdivision enforced at every curvature — one rule covers the family, since
   equal cumulative area reduces to Lambert's equal d(sin elev) at the sphere
@@ -2029,17 +2027,6 @@ exists.
   sections. Do NOT reach for a general 3-D spline: higher order buys shape
   freedom and curvature oscillation in the same purchase, and curvature is the
   thing being controlled.
-- **`fc` is an input now, by solving for DEPTH.** `solveDepthForFc` inverts the
-  profile: fc and T give m, m gives the length each cell needs, and the axial
-  depth is bisected to deliver it. Monotonicity is not obvious — deeper is a
-  longer path AND a bigger mouth, which push m opposite ways — but the length
-  term wins across the whole usable range (arc 90x60, T=1: fc falls 1203 -> 278
-  Hz as depth goes 60 -> 650 mm), so bisection suffices. Round-tripped through
-  the FORWARD model, not the solver's own bookkeeping: 4e-7 relative. Cosh
-  needs more length than exponential for the same cutoff (380.7 / 323.0 / 280.4
-  mm at T = 0 / 0.5 / 1 for 500 Hz). Unreachable targets are REPORTED with the
-  bound they hit — 20 Hz floors at 86 Hz, 8000 Hz ceilings at 1819 Hz — never
-  clamped and presented as a solution.
 - **The expansion law is written on the OPEN passage, and that is a physics
   decision, not bookkeeping.** The wave travels through the open area — the
   cell outline less the half-divider on each shared side — while the gross
