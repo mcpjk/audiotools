@@ -37,11 +37,42 @@ finding for the full audit. `jitter` 0.5 mm (near-copy surface 148 mm to 0),
 test export** — one adjacent pair, four solids — which is the repro to run
 before exporting a full kit.
 
-**Owner-side next:** union the two blanks in `ginkgo_twocell_sample.step`.
-If that succeeds, union the 18 blanks in the full kit, subtract both trims,
-subtract the 18 cutters. If the two-cell union FAILS, nothing about the
-other sixteen matters and the answer is in two solids — report which
-operation failed and we go to Phase 2.
+**Owner-side result (2026-09-03): pairs union, row-runs of three union,
+merging two merged bodies FAILS, and unioning one cell at a time WORKS.**
+The discriminator is how many blanks cover the same volume at the throat —
+2 or 3 succeeds, 6 fails — and six happens because the corner mitres reach up
+to 8.49 mm where the throat cells are 4.47-7.25 mm wide, so a corner crosses
+a whole neighbouring cell. See the CLAUDE.md finding for the measurements.
+**The standing CAD recipe is therefore: union the blanks ONE CELL AT A TIME,
+never tree-merge merged bodies, and cut only after the union is complete.**
+
+**The mitre cap is now the highest-value unbuilt item**, because it attacks
+the cause rather than the symptom. Two shapes, and the choice is the owner's
+because the costs differ in kind:
+  · ROUND at radius = wall — wall stays exactly `wall` everywhere, but a
+    corner stops being one vertex, so the shared corner-column identity that
+    makes `ductBrep`'s seams measure exactly 0 has to be redesigned (each
+    wall face would carry half of each adjacent arc).
+  · CLAMP the mitre vertex to c x wall — topology untouched, one-line change,
+    but the perpendicular wall at the corner falls to c x wall x sin(half
+    angle): about 1.5 mm at the sharpest 48.7 deg corner for c = 1.2.
+Measure first what a cap does to the throat stack depth; if it drops the
+6-deep region to 4 or less, it is the whole fix.
+
+## Region exports shipped (2026-09-03)
+
+`xSide` / `ySide` on `buildShellSTEP`, `only` on `buildSTEP` and
+`ductSolids`, driven by a `region` row in the export panel. Applies to the
+STL, the duct STEP and the shell kit; the filename carries the side. The
+trims are still sized from the whole horn, so a half's two trims are the
+full kit's two trims.
+Two properties are measured rather than assumed, both surfaced in the note:
+`mirrorSymmetry` reports the residual of the mirror the region rests on
+(2.2e-9 mm at the defaults, 15-54 mm if a world-axis bow is on), and
+`symmetryRegion` reports the cells sitting ON a plane, which are their own
+mirror image and must not be duplicated. **A mirrored shell half cannot be
+unioned to itself** — the jitter is keyed to grid parity, so the seam gets
+equal walls; export the opposite side instead.
 
 **Phase 2, planned and not built — the envelope solid.** One simple
 evaluated solid minus N cutters, zero unions. `envelopeSections(throat, map,

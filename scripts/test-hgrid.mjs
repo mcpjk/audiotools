@@ -2861,6 +2861,70 @@ head("Aperture surface, per-cell shell, orientation");
       plain.mode === "cells" && plain.trims === 0 && /no unions/.test(plain.text), "");
   }
 
+  // ── symmetry regions: a half is a half, and the mirror is MEASURED ───────
+  // A region export rests on the horn being mirror-symmetric. That is a
+  // property of the built geometry, not of the intent — a world-axis bow
+  // breaks one mirror outright — so the check that matters is that the
+  // measurement can DETECT a broken mirror, not merely that it reads small on
+  // a good one.
+  {
+    const ext = 3;
+    const xp = M.symmetryRegion(th, { xSide: 1 }), xm = M.symmetryRegion(th, { xSide: -1 });
+    checkTrue("x+ and x- partition a 6x3 grid with nothing on the plane",
+      xp.labels.length === 9 && xm.labels.length === 9 && xp.onPlane.length === 0 &&
+      xp.labels.every((l) => !xm.labels.includes(l)),
+      `${xp.labels.length} + ${xm.labels.length} of ${th.cells.length}, even column count splits clean`);
+    const yp = M.symmetryRegion(th, { ySide: 1 }), ym = M.symmetryRegion(th, { ySide: -1 });
+    const shared = yp.labels.filter((l) => ym.labels.includes(l));
+    checkTrue("an ODD row count straddles, and the straddling row is reported",
+      yp.labels.length === 12 && yp.onPlane.length === 6 &&
+      shared.length === 6 && shared.every((l) => yp.onPlane.includes(l)),
+      `${yp.labels.length} cells, ${yp.onPlane.length} of them on y = 0 and in BOTH halves`);
+    const q = M.symmetryRegion(th, { xSide: 1, ySide: 1 });
+    checkTrue("a quarter is the intersection of the two halves",
+      q.labels.length === 6 && q.labels.every((l) => xp.labels.includes(l) && yp.labels.includes(l)),
+      `${q.labels.length} cells, ${q.onPlane.length} on a plane`);
+    // every cell appears in exactly one of the four quadrants, or on a plane
+    const quads = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([x, y]) => M.symmetryRegion(th, { xSide: x, ySide: y }));
+    const covered = th.cells.every((c) => quads.some((r) => r.labels.includes(c.label)));
+    checkTrue("the four quadrants cover every cell", covered, `${quads.map((r) => r.labels.length).join(" + ")}`);
+
+    const mir = M.mirrorSymmetry(th, map, { t });
+    checkTrue("both mirrors hold on the built ducts",
+      mir.x.worst < 1e-6 && mir.y.worst < 1e-6 && mir.x.paired === th.cells.length,
+      `x ${mir.x.worst.toExponential(2)} mm, y ${mir.y.worst.toExponential(2)} mm, ${mir.x.paired} pairs`);
+    // the detector has to fire, or it is measuring nothing
+    const broken = M.mapThroatToMouth(th, { ...opts, lengthen: { lobes: 1, dir: "y", uStart: 0, uEnd: 0.2 } });
+    const mb = M.mirrorSymmetry(th, broken, { t });
+    checkTrue("and a world-axis bow is CAUGHT breaking the y mirror only",
+      mb.y.worst > 1 && mb.x.worst < 1e-6,
+      `y ${mb.y.worst.toFixed(1)} mm broken, x ${mb.x.worst.toExponential(2)} mm intact`);
+
+    // the kit itself: a region ships the same trims and the same blanks
+    const full = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, name: "full" });
+    const half = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, xSide: 1, name: "half" });
+    checkTrue("a half kit is half the cells and still both trims",
+      half.cells === 9 && half.trims === 2 && half.checks.ducts === 2 * 9 + 2 && full.cells === 18,
+      `${half.checks.ducts} solids against the full kit's ${full.checks.ducts}`);
+    checkTrue("and it names exactly the region's cells",
+      half.region.labels.every((l) => half.text.includes(`shell blank ${l}`)) &&
+      M.symmetryRegion(th, { xSide: -1 }).labels.every((l) => !half.text.includes(`shell blank ${l}`)),
+      `${half.region.labels.join(" ")}`);
+    const hi = M.stepIntegrity(half.text);
+    checkTrue("a half kit passes the same self-checks as the whole",
+      hi.ok && half.checks.edgePairing && half.checks.residual < 1e-6,
+      `${hi.entities} entities, residual ${half.checks.residual.toExponential(1)} mm`);
+    // `only` is the two-cell test and must keep its no-trims behaviour
+    const both = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32,
+      only: [th.cells[0].label], xSide: 1, name: "both" });
+    checkTrue("`only` still wins over a region and ships no trims",
+      both.cells === 1 && both.trims === 0 && both.region === null, `${both.checks.ducts} solids`);
+    // the duct exports honour the same selection
+    const dsteps = M.buildSTEP(th, map, { t, only: half.region.labels, name: "ducts_half" });
+    checkTrue("the duct STEP honours the region too",
+      dsteps.checks.ducts === 9, `${dsteps.checks.ducts} duct solids`);
+  }
+
   // ── orientation: ONE decision, and it must come out outward ──────────────
   // A shell whose faces are oriented by a per-face radial proxy can disagree
   // with itself; a hard-flaring solid is where that happened (two of four

@@ -506,6 +506,15 @@ export default function GinkgoHorn() {
   const [shellExtend, setShellExtend] = useState(true);
   const [wallJitter, setWallJitter] = useState(0.5);
   const [shellStations, setShellStations] = useState(32);
+  // WHICH SIDE OF EACH MIRROR TO EXPORT. 0 keeps both. The horn is symmetric
+  // about x = 0 and y = 0, so a half or a quarter carries the whole design
+  // and quarters the boolean work — but the two halves are NOT mirror copies
+  // of each other in the SHELL, because the wall jitter is keyed to grid
+  // parity; mirroring a half puts equal walls on both sides of the seam,
+  // which is the near-copy case the jitter exists to break. Export the other
+  // side here instead of mirroring this one.
+  const [regX, setRegX] = useState(0);
+  const [regY, setRegY] = useState(0);
   // HOW THE SHELL IS DELIVERED. "solid" is one horn body plus one cutter per
   // duct, so the CAD work is subtractions only — no unions at all. "bundle"
   // is a blank per cell, the literal multicell form, and it needs the union
@@ -1394,6 +1403,11 @@ export default function GinkgoHorn() {
   const hoverRow = hover != null && map ? map.rows.find((x) => x.id === hover) : null;
   const presets = [["1″", 25.4], ["1.4″", 35.5], ["1.5″", 38.1], ["2″", 50.8]];
   const expBtn = { ...btn(false, C.series2), color: C.series2, borderColor: C.border, fontSize: 11, padding: "4px 10px" };
+  // The exported region, and the tag that keeps a half's filename apart from
+  // the whole horn's. A cell whose centroid sits ON a plane is its own mirror
+  // image and is kept whole — `onPlane` is what says so.
+  const regSel = throat && (regX || regY) ? G.symmetryRegion(throat, { xSide: regX, ySide: regY }) : null;
+  const regTag = `${regX ? (regX > 0 ? "_x+" : "_x-") : ""}${regY ? (regY > 0 ? "_y+" : "_y-") : ""}`;
 
   // ── layout chrome ──────────────────────────────────────────────────────────
   const vGroup = { fontSize: 10, fontWeight: 600, color: C.inkDim, textTransform: "uppercase", letterSpacing: "0.08em", margin: "10px 2px 6px" };
@@ -1928,11 +1942,11 @@ export default function GinkgoHorn() {
           <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(exportMap()), "text/csv")}>CSV · per cell</button>
           <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(exportMap()), "text/csv")}>ΣA(x) CSV</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            const solids = G.ductSolids(throat, exportMap(), { t: thickness });
-            if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
+            const solids = G.ductSolids(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null });
+            if (solids) dlBin(`${stem}_ducts${regTag}.stl`, G.buildSTL(solids, stem), "model/stl");
           }}>STL · cell ducts</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            const r = G.buildSTEP(throat, exportMap(), { t: thickness, name: stem });
+            const r = G.buildSTEP(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null, name: stem });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
@@ -1941,7 +1955,7 @@ export default function GinkgoHorn() {
               msg: `${r.checks.ducts} solids · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
-            if (ok) dl(`${stem}.step`, r.text, "application/step");
+            if (ok) dl(`${stem}${regTag}.step`, r.text, "application/step");
           }}>STEP · B-spline solids</button>
           <button style={expBtn} disabled={!map} onClick={() => {
             // the blanks are an offset of the ducts' own rings, so this is
@@ -1950,12 +1964,17 @@ export default function GinkgoHorn() {
             setTimeout(() => {
             const em = exportMap();
             const cfg = { t: thickness, wall: shellWall, extend: shellExtend, jitter: wallJitter, stations: shellStations };
-            const r = G.buildShellSTEP(throat, em, { ...cfg, name: `${stem}_shell` });
+            const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, name: `${stem}_shell` });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
             const co = G.shellCoincidence(throat, em, cfg);
             const ov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
+            // A region export rests on a mirror, so the mirror is MEASURED
+            // rather than assumed — a world-axis bow breaks one of them.
+            const mir = r.region ? G.mirrorSymmetry(throat, em, { t: thickness }) : null;
+            const axes = r.region ? [regX && "x", regY && "y"].filter(Boolean) : [];
+            const mirWorst = mir ? Math.max(...axes.map((k) => mir[k].worst)) : 0;
             const recipe = shellExtend
               ? `${r.cells} blanks + ${r.cells} cutters + 2 trims — union the blanks, subtract both trims, subtract the cutters`
               : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`;
@@ -1963,10 +1982,13 @@ export default function GinkgoHorn() {
               ok,
               msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
                 co ? ` · near-copy surface ${fmt(co.arc, 1)} mm${co.arc > 1 ? " — RAISE THE JITTER" : ""}` : ""}${
-                ov ? ` · blanks share material over ${fmt(ov.fracTouching * 100, 0)}% of the path` : ""} · ${
+                ov ? ` · blanks share material over ${fmt(ov.fracTouching * 100, 0)}% of the path` : ""}${
+                r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
+                  mirWorst > 1e-3 ? " — MIRROR BROKEN, this region is not the whole horn" : ""}${
+                  r.region.onPlane.length ? `, ${r.region.onPlane.length} cell(s) on the plane (${r.region.onPlane.join(" ")}) — do not duplicate them` : ""}` : ""} · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
-            if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
+            if (ok) dl(`${stem}_shell${regTag}.step`, r.text, "application/step");
             }, 30);
           }}>STEP · horn shell</button>
           <button style={expBtn} disabled={!map} onClick={() => {
@@ -2003,6 +2025,20 @@ export default function GinkgoHorn() {
             {[[true, "extended + trims"], [false, "plain cells"]].map(([v, l]) => (
               <button key={String(v)} onClick={() => setShellExtend(v)} style={btn(shellExtend === v, C.series2)}>{l}</button>
             ))}
+          </div>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>region</span>
+            {[[0, "both"], [1, "+x"], [-1, "\u2212x"]].map(([v, l]) => (
+              <button key={`x${v}`} onClick={() => setRegX(v)} style={btn(regX === v, C.series3)}>{l}</button>
+            ))}
+            {[[0, "both"], [1, "+y"], [-1, "\u2212y"]].map(([v, l]) => (
+              <button key={`y${v}`} onClick={() => setRegY(v)} style={btn(regY === v, C.series3)}>{l}</button>
+            ))}
+            {regSel && (
+              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>
+                {regSel.labels.length} of {throat.N} cells{regSel.onPlane.length ? ` · ${regSel.onPlane.length} on the plane` : ""}
+              </span>
+            )}
           </div>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             shell wall (mm)
@@ -2055,6 +2091,17 @@ export default function GinkgoHorn() {
             <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell</strong>, {throat.N} independent
             subtractions giving {throat.N} separate cell shells. Merging them into one horn is then a modelling decision to make in CAD.
           </>}
+          {" "}<strong style={{ color: C.inkDim }}>Region</strong> exports one side of each mirror \u2014 a half, or a quarter \u2014 so the CAD
+          work is a quarter of the booleans. It applies to all three solid exports and the filename carries the side.
+          {regSel && regSel.onPlane.length ? <> On this grid the {regX && regY ? "quarter" : "half"} straddles a plane:{" "}
+            <strong style={{ color: C.inkDim }}>{regSel.onPlane.length} cell(s) sit ON it</strong> ({regSel.onPlane.join(", ")}) and are
+            their own mirror image, so they are exported whole and must not be duplicated when the region is mirrored back.</> : null}
+          {" "}The note measures the mirror it rests on rather than assuming it \u2014 a bow whose direction is a world axis breaks one of
+          them outright, and the region would then be a different horn from the side it is meant to stand for.
+          {" "}<strong style={{ color: C.inkDim }}>Do not mirror a shell half and union it to itself</strong>: the wall jitter is keyed to
+          grid parity, so a mirrored copy carries the SAME wall as the cell it now sits beside, which is exactly the near-copy surface the
+          jitter exists to break. Export the opposite side here instead \u2014 the passages are mirror images either way, it is only the
+          blanks' walls that differ.
           {" "}<em>Shell stations</em> trades knots for fidelity: halving them measured 0.105 mm of departure from the full-station loft,
           and fewer knots is a better-conditioned boolean. Never offset one of our faces in CAD — that extrapolates the wall surfaces past
           their range and the corner identity breaks (a +1 mm throat offset succeeded and +2 mm failed); ask for the extension here instead,

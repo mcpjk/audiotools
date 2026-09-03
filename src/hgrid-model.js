@@ -5254,7 +5254,9 @@ export function buildSTL(meshes, note = "") {
 export function ductSolids(throat, map, opts = {}) {
   if (!map) return null;
   const out = [];
+  const sel = opts.only || null;
   for (const cellRec of throat.cells) {
+    if (sel && !sel.includes(cellRec.label)) continue;
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
     const sections = ductSections(cellRec, row, opts);
@@ -5938,10 +5940,11 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
 }
 
 // The air: every duct as one solid. What this file has always emitted.
-export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
+export function buildSTEP(throat, map, { t = 0, only = null, name = "ginkgo_ducts" } = {}) {
   if (!map) return null;
   const solidsSpec = [];
   for (const cellRec of throat.cells) {
+    if (only && !only.includes(cellRec.label)) continue;
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
     const sections = ductSections(cellRec, row, { t });
@@ -5953,6 +5956,97 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
     desc: "ginkgo multicell horn ducts",
     fileDesc: "ginkgo multicell horn ducts, lofted B-spline solids",
   });
+}
+
+// ---------------------------------------------------------------------------
+// SYMMETRY REGIONS
+//
+// The horn is mirror-symmetric about x = 0 and about y = 0, so a half or a
+// quarter carries the whole design and the CAD work on it is a quarter of the
+// booleans. Both mirrors are properties of the BUILT geometry rather than of
+// the intent, though — a bow whose direction is a world axis breaks one of
+// them by construction (measured 20.5 mm on the y mirror for dir "y", against
+// 5.6e-11 mm for "radial") — so `mirrorSymmetry` measures the residual and the
+// caller is expected to show it beside the region rather than assume it.
+//
+// A cell is assigned by its THROAT centroid. A cell whose centroid sits ON a
+// plane is its OWN mirror image: it is INCLUDED in the region and reported
+// separately as `onPlane`, because mirroring the region in CAD would otherwise
+// drop a second copy of it exactly on the first. An odd row or column count is
+// exactly when that happens — 6x3 splits cleanly left/right and straddles
+// top/bottom, with the middle row on the plane.
+export function symmetryRegion(throat, { xSide = 0, ySide = 0, tol = 1e-6 } = {}) {
+  const keep = [], onPlane = [];
+  for (const c of throat.cells) {
+    const g = c.centroid || [0, 0];
+    const onX = Math.abs(g[0]) <= tol, onY = Math.abs(g[1]) <= tol;
+    if (xSide && !onX && Math.sign(g[0]) !== Math.sign(xSide)) continue;
+    if (ySide && !onY && Math.sign(g[1]) !== Math.sign(ySide)) continue;
+    keep.push(c.label);
+    if ((xSide && onX) || (ySide && onY)) onPlane.push(c.label);
+  }
+  return { labels: keep, onPlane, xSide, ySide, tol, dropped: throat.cells.length - keep.length };
+}
+
+// How well the built ducts actually mirror, per axis, in millimetres.
+//
+// Point CORRESPONDENCE is not assumed: a mirror reverses a ring's orientation,
+// so index k of one cell is not index k of its partner. Each mirrored point is
+// measured against the partner's ring as a POLYLINE, which is a one-sided
+// Hausdorff distance and needs no index map. A cell that is its own partner
+// (centroid on the plane) is measured against itself mirrored, which is the
+// check that matters for the cells a region export cannot split.
+export function mirrorSymmetry(throat, map, { t = 0, every = 2 } = {}) {
+  if (!map) return null;
+  const secs = new Map(), ctr = new Map();
+  for (const c of throat.cells) {
+    const row = map.rows.find((r) => r.id === c.id);
+    if (!row) return null;
+    const d = ductSections(c, row, { t });
+    if (!d) return null;
+    secs.set(c.label, d);
+    ctr.set(c.label, c.centroid || [0, 0]);
+  }
+  const seg = (p, A, B) => {
+    const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+    let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+    u = Math.max(0, Math.min(1, u));
+    return Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u);
+  };
+  const toRing = (p, P) => {
+    let m = Infinity;
+    for (let k = 0; k < P.length; k++) m = Math.min(m, seg(p, P[k], P[(k + 1) % P.length]));
+    return m;
+  };
+  const out = {};
+  for (const [axis, ax] of [["x", 0], ["y", 1]]) {
+    let worst = 0, at = null, paired = 0, unpaired = 0;
+    for (const c of throat.cells) {
+      const g = ctr.get(c.label);
+      // the partner is the cell whose centroid is this one's mirror image
+      let best = null, bd = Infinity;
+      for (const o of throat.cells) {
+        const h = ctr.get(o.label);
+        const dx = (ax === 0 ? -g[0] : g[0]) - h[0], dy = (ax === 1 ? -g[1] : g[1]) - h[1];
+        const d = Math.hypot(dx, dy);
+        if (d < bd) { bd = d; best = o.label; }
+      }
+      if (!best || bd > 1e-3) { unpaired++; continue; }
+      paired++;
+      const A = secs.get(c.label), B = secs.get(best);
+      for (let q = 0; q < A.length; q += every) {
+        for (const p of A[q].pts) {
+          const m = [p[0], p[1], p[2]];
+          m[ax] = -m[ax];
+          const d = toRing(m, B[q].pts);
+          if (d > worst) { worst = d; at = { cell: c.label, partner: best, q }; }
+        }
+      }
+    }
+    out[axis] = { worst, at, paired, unpaired };
+  }
+  return out;
 }
 
 // The material, in two forms.
@@ -5978,13 +6072,18 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
 // extended union tractable; see their comments above.
 export function buildShellSTEP(throat, map, {
   t = 0, wall = 3, ext = 3, extend = true, jitter = 0.5, stations = 32,
-  only = null, name = "ginkgo_horn_shell",
+  only = null, xSide = 0, ySide = 0, name = "ginkgo_horn_shell",
 } = {}) {
   if (!map) return null;
   const surf = map.mouthSurf || null;
   const ap = surf ? apertureFrame(surf) : null;
   const capOf = (sections) => (ap ? apertureCapGrid(sections[sections.length - 1].pts, ap) : null);
-  const cells = only ? throat.cells.filter((c) => only.includes(c.label)) : throat.cells;
+  // `only` is the two-cell test and ships no trims; a symmetry REGION is a
+  // real export and keeps them, sized from the whole horn so the trims of a
+  // half and of the full kit are the same two solids.
+  const region = (xSide || ySide) && !only ? symmetryRegion(throat, { xSide, ySide }) : null;
+  const sel = only || (region ? region.labels : null);
+  const cells = sel ? throat.cells.filter((c) => sel.includes(c.label)) : throat.cells;
   if (!cells.length) return null;
   const solidsSpec = [];
   for (const cellRec of cells) {
@@ -6020,7 +6119,12 @@ export function buildShellSTEP(throat, map, {
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
     fileDesc: `ginkgo multicell horn shell kit: ${recipe}`,
   });
-  if (out) { out.mode = extend ? "extended" : "cells"; out.cells = n; out.trims = extend && !only ? 2 : 0; }
+  if (out) {
+    out.mode = extend ? "extended" : "cells";
+    out.cells = n;
+    out.trims = extend && !only ? 2 : 0;
+    out.region = region;
+  }
   return out;
 }
 
