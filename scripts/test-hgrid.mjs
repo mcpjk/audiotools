@@ -1651,6 +1651,275 @@ head("Swept sections (Phase D)");
     `${facets} facets, ${(stl.byteLength / 1048576).toFixed(2)} MB`);
 }
 
+// ── 10a8. the section plane, and the area the wave actually crosses ────────
+// A horn's expansion law is a statement about the cross-section the wave goes
+// THROUGH, so the plane the sections are built in is an ACOUSTIC decision and
+// not a modelling convenience. A section tilted th from the direction of
+// travel carries |A| of surface but only |A| cos th of passage, so a law
+// satisfied on the tilted section is not the law the horn delivers.
+//
+// The construction this replaced spread z-hat, the tangent and the aperture
+// normal over the whole path on a quadratic Bernstein basis, giving the
+// tangent a weight of 2u(1-u) — under 0.06 at u = 0.03, where the shipped
+// throat bow puts all of its curvature. The sections stayed in the throat
+// plane while the ducts hairpinned away from it and the passage CONTRACTED
+// while the ring areas grew along the law.
+head("Section planes (acoustic alignment)");
+{
+  // THE TOOL'S OWN SHIPPED DEFAULTS, because that is the geometry the
+  // constriction was found on and the one the owner exports. The flat mouth
+  // (Th_v 0) at depth 300 leaves 25.5 mm of dL in the middle row, so the
+  // throat-fifth bow has to buy that back out of 65 mm of path and becomes a
+  // hairpin — which is exactly the case the section plane has to survive.
+  // ST is the EXPORT station count (and the `samples` default), because the
+  // obliquity a hairpin shows depends on how well the sampling resolves it —
+  // measured 11.2 / 9.6 / 4.3 / 0.6 deg at 24 / 32 / 48 / 64 stations on the
+  // shipped bow. Judging the construction at the resolution it ships at is
+  // the honest comparison; the refinement study below is where the question
+  // of what survives finer sampling is asked properly.
+  const t = 0.4, ST = 64;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c });
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 555, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, stations: ST, profileT: 0.7,
+    // the UI's own bend tightness, so the numbers this block prints are the
+    // numbers CLAUDE.md records rather than a near-miss at the 0.55 default
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", keepGeometry: true, computeClearance: false,
+  };
+  const BOW = { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2 };
+
+  // ── 1. THE RING'S OWN NON-PLANARITY IS THE FLOOR, AND IT IS THE BOUND ────
+  // A section cannot be exactly square to travel, because it is not planar:
+  // the mouth outline lies on a CURVED aperture and the loft carries that
+  // curvature inward. So the honest assertion is not "obliquity is zero", it
+  // is "obliquity is inside the ring's own non-planarity" — a geometric
+  // property of the ring, measured here, never a number this tool produced
+  // before.
+  const vecA = (r) => {
+    let x = 0, y = 0, z = 0;
+    for (let i = 0; i < r.length; i++) {
+      const p = r[i], q = r[(i + 1) % r.length];
+      x += p[1] * q[2] - p[2] * q[1];
+      y += p[2] * q[0] - p[0] * q[2];
+      z += p[0] * q[1] - p[1] * q[0];
+    }
+    return [x / 2, y / 2, z / 2];
+  };
+  const unit = (a) => { const n = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / n, a[1] / n, a[2] / n]; };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const nonPlanar = (ring) => {
+    const n = ring.length, ctr = [0, 0, 0];
+    for (const p of ring) { ctr[0] += p[0] / n; ctr[1] += p[1] / n; ctr[2] += p[2] / n; }
+    const N = unit(vecA(ring));
+    let worst = 0;
+    for (let i = 0; i < n; i++) {
+      const a = ring[i], b = ring[(i + 1) % n];
+      const u = [a[0] - ctr[0], a[1] - ctr[1], a[2] - ctr[2]];
+      const v = [b[0] - ctr[0], b[1] - ctr[1], b[2] - ctr[2]];
+      const tn = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      if (Math.hypot(tn[0], tn[1], tn[2]) < 1e-12) continue;
+      worst = Math.max(worst, (Math.acos(Math.min(1, Math.max(-1, dot(unit(tn), N)))) * 180) / Math.PI);
+    }
+    return worst;
+  };
+  const interior = (map) => {
+    let ob = 0, np = 0;
+    for (const row of map.rows) for (const s of row.sched) {
+      if (s.s <= 0.15 || s.s >= 0.9) continue;
+      ob = Math.max(ob, s.obliqDeg);
+      np = Math.max(np, nonPlanar(s.pts));
+    }
+    return { ob, np };
+  };
+
+  for (const [nm, lengthen] of [["no bow", null], ["throat bow", BOW],
+                                ["mid-path bow", { ...BOW, uStart: 0.3, uEnd: 0.95 }]]) {
+    const now = M.mapThroatToMouth(Lay.throat, { ...common, lengthen });
+    const was = M.mapThroatToMouth(Lay.throat, { ...common, lengthen, sectionAlign: "bernstein" });
+    const a = interior(now), b = interior(was);
+    checkTrue(`${nm}: the section stays square to travel, inside the ring's own non-planarity`,
+      a.ob <= a.np, `${a.ob.toFixed(2)} deg of tilt against ${a.np.toFixed(2)} deg of ring curvature`);
+    // and the superseded blend does NOT satisfy that bound, so the check above
+    // is a discriminator and not a property every construction happens to have
+    checkTrue(`${nm}: ...where the superseded Bernstein blend does not`,
+      b.ob > b.np, `${b.ob.toFixed(2)} deg of tilt against the same ${b.np.toFixed(2)} deg`);
+  }
+
+  // ── 2. THE PASSAGE IS MONOTONE WHERE THE GEOMETRY IS SOUND ─────────────
+  // The flux-carrying area — the section projected on the direction its own
+  // centroid travels — must never contract. Two different things could make
+  // it contract, and the point of the change is to separate them: a section
+  // plane that does not follow the path (a MODELLING error, which is now
+  // gone) and a bow too tight for the duct (a GEOMETRY error, which is real
+  // and must still be reported).
+  //
+  // The discriminator is refinement. A plane error does not converge — look
+  // closer and it grows, because the tilt is largest exactly where the
+  // sampling was hiding it. A real constriction converges to its own value.
+  const contractAt = (n, lengthen, align) => M.mapThroatToMouth(Lay.throat, {
+    ...common, stations: n, samples: n, lengthen, sectionAlign: align }).fluxContractMax;
+  const WIDE = { ...BOW, uStart: 0, uEnd: 0.5 };
+  checkTrue("a bow with room stays monotone at every resolution",
+    [64, 128, 192].every((n) => contractAt(n, WIDE, "tangent") < 1e-9)
+    && [64, 128, 192].every((n) => contractAt(n, null, "tangent") < 1e-9),
+    "0.00% with no bow and with a [0, 0.5] bow, at 64, 128 and 192 stations");
+  checkTrue("...where the superseded blend invents a constriction on the same geometry",
+    contractAt(192, WIDE, "bernstein") > 0.05,
+    `${(contractAt(192, WIDE, "bernstein") * 100).toFixed(1)}% from the section plane alone, on a duct that measures 0.00%`);
+  // and the plane error DIVERGES under refinement, which is what says it was
+  // never a property of the duct
+  const b1 = contractAt(64, BOW, "bernstein"), b2 = contractAt(192, BOW, "bernstein");
+  checkTrue("the plane error grows under refinement instead of converging",
+    b2 > 1.5 * b1 && b1 > 0.1,
+    `${(b1 * 100).toFixed(1)}% at 64 stations -> ${(b2 * 100).toFixed(1)}% at 192`);
+
+  // ── 2b. THE ONE THAT SURVIVES IS A REAL CONSTRICTION, AND IT IS THE ─────
+  //       SHIPPED BOW WINDOW.
+  // At the tool's defaults the middle row is 25.5 mm short and the throat
+  // fifth is 65 mm of path, so the bow becomes a 28 mm hairpin at R ~ 8 mm in
+  // a duct 5-8 mm wide. That constricts the passage whatever plane it is cut
+  // in — and the fold margin agrees, sitting under a millimetre.
+  const tight = M.mapThroatToMouth(Lay.throat, {
+    ...common, stations: 192, samples: 192, lengthen: BOW });
+  const roomy = M.mapThroatToMouth(Lay.throat, {
+    ...common, stations: 192, samples: 192, lengthen: WIDE });
+  checkTrue("the shipped throat-fifth bow constricts for a GEOMETRIC reason, and is still reported",
+    tight.fluxContractMax > 0.1 && tight.bendFoldMin < 0.3 * roomy.bendFoldMin,
+    `${(tight.fluxContractMax * 100).toFixed(1)}% contraction, fold margin ${tight.bendFoldMin.toFixed(2)} mm against ${roomy.bendFoldMin.toFixed(2)} mm for the same bow given room — an over-tight window, not a section plane`);
+  // the ring AREAS were on the law the whole time, in every one of these
+  // cases — which is exactly why no area-based check could have caught any
+  // of it
+  let ringMono = true;
+  for (const row of tight.rows)
+    for (let q = 1; q < row.sched.length; q++)
+      if (row.sched[q].area < row.sched[q - 1].area - 1e-9) ringMono = false;
+  checkTrue("the ring areas grew monotonically through every constriction above",
+    ringMono, "the law was satisfied in a plane the wave was not crossing");
+
+  // ── 3. THE RAMPS, AND WHY THEY ARE 1.5 DUCT WIDTHS ──────────────────────
+  // The two end claims are physical — a flat driver face, and an aperture that
+  // IS the wavefront — so each is honoured over a ramp rather than smeared
+  // over the path. The length is measured, not chosen: past about 1.5 widths
+  // the tilt the ramp leaves behind starts closing the passage again, on a
+  // duct whose geometry is otherwise sound.
+  checkTrue("ramps up to 1.5 duct widths leave a sound duct monotone",
+    [0.5, 1.0, 1.5].every((w) => M.mapThroatToMouth(Lay.throat, {
+      ...common, stations: 192, samples: 192, lengthen: WIDE, alignWidths: w,
+    }).fluxContractMax < 1e-9),
+    "0.5, 1.0 and 1.5 widths all contract 0.00% at 192 stations");
+  const wide2 = (w) => M.mapThroatToMouth(Lay.throat, {
+    ...common, stations: 192, samples: 192, lengthen: WIDE, alignWidths: w }).fluxContractMax;
+  checkTrue("...and past it the leftover tilt starts closing it again",
+    wide2(3) > 1e-3 && wide2(5) > wide2(3),
+    `3 widths ${(wide2(3) * 100).toFixed(2)}%, 5 widths ${(wide2(5) * 100).toFixed(2)}%`);
+
+  // ── 4. THE ENDS ARE UNTOUCHED ───────────────────────────────────────────
+  // Every claim above is worthless if the driver face or the mouth tiling
+  // moved. They cannot: the end rings are rebuilt from their own local
+  // coordinates. Asserted anyway, because that is the thing this change was
+  // most likely to break.
+  let z0 = 0, apOff = 0;
+  const bowNow = M.mapThroatToMouth(Lay.throat, { ...common, lengthen: BOW });
+  const fr = M.apertureFrame(bowNow.mouthSurf);
+  for (const row of bowNow.rows) {
+    for (const p of row.sched[0].pts) z0 = Math.max(z0, Math.abs(p[2]));
+    for (const p of row.sched[ST].pts) apOff = Math.max(apOff, Math.abs(fr.deviation(p)));
+  }
+  check("the driver face is still exactly flat under the new section planes", z0, 0, 1e-12, "mm");
+  check("...and the mouth rings still lie on the aperture", apOff, 0, 1e-9, "mm");
+
+  // ── 5. THE FOLD THE CHANGE EXPOSES, AGAINST A CLOSED FORM ───────────────
+  // Squaring the sections to the path is what makes a too-tight bow visible:
+  // a section swept around a bend of radius Rc sweeps its inner edge around a
+  // smaller radius, and once that edge reaches the centre of curvature the
+  // solid turns inside out. The old blend hid this by leaving the section
+  // oblique, which was never a fix.
+  //
+  // The curvature has an exact value on a straight base path. The window is
+  // A sin^2(n pi s / L) = A(1 - cos(2 n pi s / L))/2, so y'' = 2 A n^2 pi^2 /
+  // L^2 * cos(2 n pi s / L), and where y' = 0 the curvature IS |y''|. So
+  // kappa_max = 2 pi^2 n^2 A / L^2 exactly, and the fold margin is that
+  // radius less the section's inner half-extent.
+  const one = M.buildLayout({ family: "hgrid", R, nc: 1, nr: 1, m: 2, t: 0, c });
+  const oneOpts = {
+    c, nc: 1, nr: 1, R, rectangular: true, exitHalfAngle: 8, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    t: 0, fTarget: 20000, stations: 64, profileT: null,
+    sectionMode: "swept", keepGeometry: true, computeClearance: false,
+  };
+  const L0 = M.mapThroatToMouth(one.throat, oneOpts).rows[0].Lpath;
+  let worstK = 0;
+  for (const lobes of [1, 2, 3]) for (const dfc of [2, 5, 20]) {
+    const on = M.mapThroatToMouth(one.throat, {
+      ...oneOpts, lengthen: { lobes, dir: "y", targetLen: L0 + dfc } });
+    const A = on.rows[0].snakeAmp;
+    const kCf = (2 * Math.PI ** 2 * lobes * lobes * A) / (L0 * L0);
+    worstK = Math.max(worstK, Math.abs(on.rows[0].kappaMax - kCf) / kCf);
+  }
+  check("straight path: kappa_max matches the closed form 2 pi^2 n^2 A / L^2",
+    worstK, 0, 0.005);
+  // and the margin flips sign where the torus condition says it must
+  const foldAt = (lobes, dfc) => M.mapThroatToMouth(one.throat, {
+    ...oneOpts, lengthen: { lobes, dir: "y", targetLen: L0 + dfc } }).rows[0];
+  const gentle = foldAt(1, 2), hard = foldAt(3, 20);
+  checkTrue("bendFold is the torus condition: positive when the bend clears the section",
+    gentle.bendFold > 0 && 1 / gentle.kappaMax > gentle.bendFold,
+    `${gentle.bendFold.toFixed(1)} mm of clearance at R = ${(1 / gentle.kappaMax).toFixed(0)} mm`);
+  checkTrue("...and negative when the inner edge reaches the centre of curvature",
+    hard.bendFold < 0,
+    `${hard.bendFold.toFixed(1)} mm at R = ${(1 / hard.kappaMax).toFixed(0)} mm — a self-intersecting solid`);
+  // THE MARGIN MUST NOT GET SAFER THE LESS YOU LOOK. Curvature is a property
+  // of the path, so the fold check reads the worst kappa over the samples each
+  // station stands for, never the value at the station point — which used to
+  // report 7.3 mm of margin at 24 stations against 1.4 mm at 64 on the same
+  // horn. It still converges downward in the CENTRELINE sample count, and
+  // that direction is recorded rather than hidden: a 65 mm bow feature on a
+  // 325 mm path is under-resolved by the 64-sample default.
+  const foldAtRes = (stations, samples) => M.mapThroatToMouth(Lay.throat, {
+    ...common, stations, samples, lengthen: BOW }).bendFoldMin;
+  // What is left is the RING's own variation between stations, which is small
+  // because a duct's section changes slowly; the station-point form varied by
+  // more than a FACTOR of two over the same range.
+  checkTrue("the fold margin barely depends on the STATION count any more",
+    foldAtRes(24, 64) / foldAtRes(64, 64) < 1.15
+    && foldAtRes(24, 192) / foldAtRes(64, 192) < 1.6,
+    `${foldAtRes(24, 64).toFixed(2)} vs ${foldAtRes(64, 64).toFixed(2)} mm at 64 samples, ${foldAtRes(24, 192).toFixed(2)} vs ${foldAtRes(64, 192).toFixed(2)} mm at 192`);
+  checkTrue("...and is optimistic in the CENTRELINE sample count, in the recorded direction",
+    foldAtRes(64, 64) > foldAtRes(64, 192) && foldAtRes(64, 192) > foldAtRes(64, 256),
+    `${foldAtRes(64, 64).toFixed(2)} -> ${foldAtRes(64, 192).toFixed(2)} -> ${foldAtRes(64, 256).toFixed(2)} mm at 64 / 192 / 256 samples — read it as an upper bound`);
+
+  // NOTHING ELSE IN THE FILE SEES IT, which is the reason the metric exists:
+  // a folded duct still meshes closed and still passes every cap check.
+  const foldedMap = M.mapThroatToMouth(one.throat, {
+    ...oneOpts, lengthen: { lobes: 3, dir: "y", targetLen: L0 + 20 } });
+  const foldedSolids = M.ductSolids(one.throat, foldedMap, { t: 0 });
+  checkTrue("a folded duct still passes manifold and cap checks, so bendFold is the only witness",
+    foldedSolids[0].manifold.ok && M.fanIsValid(foldedSolids[0].sections[0].pts).ok
+    && foldedMap.bendFoldMin < 0,
+    `manifold, caps valid, and bendFoldMin ${foldedMap.bendFoldMin.toFixed(1)} mm`);
+
+  // ── 6. WHAT IT COSTS, MEASURED IN BOTH DIRECTIONS ───────────────────────
+  // The tilt was holding neighbouring ducts apart on badly-posed geometries.
+  // Square sections lean into each other instead, so the interpenetration a
+  // shallow horn always had is now REPORTED at its true size rather than
+  // flattered. Near the dL optimum it goes the other way and improves.
+  // measured on the RECORDED 90x40 geometry, whose dL optimum is near depth
+  // 425 and whose shallow end is 25x over the lambda/8 budget
+  const curved = { ...common, exitHalfAngle: 8, thetaH: 90, thetaV: 40,
+    arcH: 480, arcV: 213, stations: 24, lengthen: null };
+  const clr = (depth, align) =>
+    M.ductClearance(M.mapThroatToMouth(Lay.throat,
+      { ...curved, depth, sectionAlign: align }).rows).overlap;
+  checkTrue("square sections cut the overlap near the dL optimum",
+    clr(320, "tangent") < 0.7 * clr(320, "bernstein"),
+    `depth 320: ${clr(320, "bernstein").toFixed(2)} -> ${clr(320, "tangent").toFixed(2)} mm`);
+  checkTrue("...and expose the overlap a badly-posed shallow horn always had",
+    clr(150, "tangent") > 2 * clr(150, "bernstein"),
+    `depth 150 (25x over the dL budget): ${clr(150, "bernstein").toFixed(2)} -> ${clr(150, "tangent").toFixed(2)} mm`);
+}
+
 // ── 10b. loft parameterisation ─────────────────────────────────────────────
 head("Loft parameterisation");
 {
@@ -2211,9 +2480,21 @@ head("Throat knife edge (the defect metric's other boundary)");
     divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
     fTarget: 20000, t, profileArea: "open",
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 560, arcV: 250,
-    sectionMode: "swept", stations: 24, depth: 300, profileT: 0.7,
+    sectionMode: "swept", stations: 48, depth: 300, profileT: 0.7,
     keepGeometry: true, computeClearance: false, ...o,
   });
+
+  // WHY 48 STATIONS AND NOT THE PREVIEW'S 24. The near-throat dive is a sharp
+  // minimum near u = 0.021, and 24 stations puts its first interior station at
+  // u = 0.042 — past it. The reading there is a coin-flip on a few-micron
+  // number rather than a measurement of the 0.24 mm feature: it came out
+  // -0.0015 mm under the superseded Bernstein section planes and +0.010 mm
+  // under the tangent-aligned ones, so the same geometry flips from "defect"
+  // to "knife edge" on a change that moved the gap profile by 12 um. At 48
+  // stations a station lands on the minimum and both constructions read it
+  // unambiguously (-0.241 and -0.230 mm). The 24-station behaviour is NOT
+  // swept under the rug — it is asserted as a known limit below, because it
+  // is what the live UI shows.
 
   // 1. INERT BY DEFAULT. The rule may not move a single existing number
   //    unless it is asked for — every other clearance test in this file is
@@ -2245,7 +2526,13 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    ...while the rule still does its ORIGINAL job wherever the pair really
   //    is just opening from the tiling: there it lifts the boundary past the
   //    sub-floor stations and reports no dip at all.
-  const mOpen = M.mapThroatToMouth(th, dflt({ profileT: 0.3 }));
+  //    The example this used to use — T 0.3 at the default depth — turns out
+  //    NOT to be monotonically opening once resolved: no dip at 24 stations,
+  //    but a 0.133 mm dive at station 1 at 48, like everything else at this
+  //    depth. A genuinely opening pair needs a well-posed horn, so it is
+  //    measured at the dL-solved depth with T = 0, where the profile holds the
+  //    passage narrow and then opens hard from the tiling.
+  const mOpen = M.mapThroatToMouth(th, dflt({ profileT: 0, depth: 357 }));
   const oOff = M.ductClearance(mOpen.rows), oOn = M.ductClearance(mOpen.rows, { throatFloor: 0.5 });
   checkTrue("a monotonically opening throat IS excluded, and reports no dip",
     oOff.minMid > 0 && oOn.minMid > oOff.minMid && oOn.minMid >= 0.5
@@ -2283,16 +2570,24 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    and an independent point-in-solid test on the same outlines finds
   //    -0.258 at 48. What must NOT depend on resolution is the answer to
   //    "is this a defect": the rule has to say yes at every station count.
-  const post = [24, 32, 48, 64].map((stations) => {
+  const post = [32, 48, 64].map((stations) => {
     const m = M.mapThroatToMouth(th, dflt({ stations }));
     return { stations, off: M.ductClearance(m.rows), on: M.ductClearance(m.rows, { throatFloor: 0.5 }) };
   });
-  checkTrue("the closing pair is called a defect at every station count",
+  checkTrue("the closing pair is called a defect at every RESOLVING station count",
     post.every((r) => r.off.minMid < 0 && r.on.minMid === r.off.minMid && r.on.throat.dipAt === 1),
     post.map((r) => `${r.stations}: ${r.on.minMid.toFixed(3)}`).join(", "));
-  checkTrue("...and the magnitude is a LOWER BOUND, which the coarse pass under-reads 100x",
-    Math.abs(post[0].on.minMid) < 0.01 && Math.abs(post[2].on.minMid) > 0.2,
-    `24 stations reads ${post[0].on.minMid.toFixed(4)} mm where 48 reads ${post[2].on.minMid.toFixed(4)}`);
+  //    THE PREVIEW COUNT IS BELOW THAT, AND NOW MISSES THE DIVE ENTIRELY.
+  //    A KNOWN LIMIT of the live UI, not a property of the horn: the dive is
+  //    0.23-0.24 mm deep at every count that resolves it and 24 stations does
+  //    not sample it at all. Asserted so it cannot regress silently, and so
+  //    that raising the clearance resolution (NEXT-SESSION.md) flips a test
+  //    when it lands.
+  const preview = M.ductClearance(
+    M.mapThroatToMouth(th, dflt({ stations: 24 })).rows, { throatFloor: 0.5 });
+  checkTrue("KNOWN LIMIT: the preview's 24 stations do not sample the dive at all",
+    preview.throat.dip === null && preview.minMid > 0 && post[1].on.minMid < -0.2,
+    `24 stations reports no dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
 
   // 5. A FLOOR THE HORN NEVER REACHES MUST NOT PASS VACUOUSLY. If the run
   //    were allowed to eat every interior station the defect set would be
@@ -2347,8 +2642,12 @@ head("Duct separation (field and solver)");
   };
   const m0 = M.mapThroatToMouth(th, opts);
   const cl0 = M.ductClearance(m0.rows, { thinBand: 1.0 });
+  // 1.09 mm, down from the 1.92 mm recorded before the sections were squared
+  // to the path: the tilt was holding neighbours apart here, and removing it
+  // near the dL optimum CUTS the overlap. It goes the other way on a shallow
+  // horn — see the section-plane block.
   checkTrue("the test case genuinely interpenetrates without help",
-    cl0.overlap > 1.5, `${cl0.overlap.toFixed(2)} mm at station ${cl0.overlapAt}`);
+    cl0.overlap > 1.0, `${cl0.overlap.toFixed(2)} mm at station ${cl0.overlapAt}`);
   checkTrue("the thin-wall band sees slivers on the baseline",
     cl0.thin.count > 0 && cl0.thin.worst > 0 && cl0.thin.worst < 1.0,
     `${cl0.thin.count} pair-stations under 1 mm, worst ${cl0.thin.worst.toFixed(2)} mm`);
@@ -2375,7 +2674,7 @@ head("Duct separation (field and solver)");
   // the chain-resolved solver on the recorded 2 mm interpenetration
   const n = M.solveSeparation(th, opts, { floor: 0.2, mode: "nudge", maxIter: 20 });
   checkTrue("nudge clears the recorded interpenetration to the floor",
-    n.ok && n.gapBefore < -1.5 && n.gapAfter >= 0.15,
+    n.ok && n.gapBefore < -1.0 && n.gapAfter >= 0.15,
     `${n.gapBefore.toFixed(2)} -> ${n.gapAfter.toFixed(2)} mm in ${n.iters} rounds, amp ${n.ampMax.toFixed(1)} mm`);
   const byIJ = {};
   for (const r of m0.rows) byIJ[`${r.i},${r.j}`] = r.id;

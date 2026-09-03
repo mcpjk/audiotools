@@ -1,5 +1,14 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## THE STANDING PRIORITY (read the top of CLAUDE.md before anything here)
+
+A coherent horn built on acoustic principles is the point. Geometric
+decisions in this tool are acoustic decisions and have to be argued and
+measured that way. The section-plane finding is the worked example of what
+happens otherwise: a construction chosen for construction reasons satisfied
+every number the tool reported while the passage the wave crosses contracted
+27% below its own throat.
+
 ## Done in the 2026-09-03 clearance session
 
 - **DUCT SEPARATION IS NOW STAGE 8, AFTER COPED JOINTS** (owner's request).
@@ -58,6 +67,66 @@ of DEPTH 300, the tool's default, not of the throat fifth: at the dL-solved
 depth of 357 mm the same bow produces NO interpenetration at all in the
 exported solids, independently verified. See the corrected CLAUDE.md finding
 for the depth sweep and for why the crossing is not a clean threshold.
+
+## Shipped 2026-09-03 — the section plane follows the tangent
+
+`sectionAlign: "tangent"` is the default: two smoothstep ramps of 1.5 duct
+widths (`alignWidths`) onto z-hat at the throat and the aperture normal at
+the mouth, tangent everywhere between. Interior obliquity 23.14 -> 0.34 deg,
+passage contraction under the shipped bow 20.94% on 14 of 18 ducts -> 0.00%
+on 0 of 18. Two new metrics, both in the UI: **Passage** (`fluxContractMax`,
+`sectionObliqMax`, `fluxVsThroatMin`) and **Bend clearance** (`bendFoldMin`,
+the torus condition — the only witness to a folded duct, since a folded one
+still meshes closed and passes every cap check). `sectionAlign: "bernstein"`
+keeps the superseded blend as the tests' comparison baseline.
+
+### The three things that came out of it, in priority order
+
+1. **RAISE `samples` FROM 64 — both new metrics are under-resolved by it.**
+   A 65 mm bow feature gets ~13 centreline samples, so its curvature peak is
+   missed: `bendFoldMin` reads 3.28 / 2.09 / 1.29 / 1.11 mm at 64 / 128 /
+   192 / 256 samples (monotone down, so the shipped number is an UPPER
+   bound), and `fluxContractMax` reads 0.00% at both the preview (24) and
+   export (64) station counts against 10.9% at 192. Measured cost of raising
+   it: essentially nil — the map is dominated by `stations`, since the
+   profile solve runs per station (~90 ms at samples 64 against ~80 ms at
+   samples 256, stations 64 both). It was not done in that session because
+   it re-baselines recorded numbers across CLAUDE.md and deserves its own
+   verification pass. Do it next.
+   **DO IT TOGETHER WITH RAISING THE CLEARANCE RESOLUTION** — item (1) of the
+   open question above, which was offered and declined. They are the same
+   problem seen twice, and squaring the sections made the clearance one
+   sharper rather than milder: the preview's 24 stations now miss the
+   near-throat dive ENTIRELY (+0.520 mm where 48 stations read -0.230), where
+   before they caught it by 2 um. Both metrics and the clearance would be
+   fixed by one change to how finely the centreline and the stations are
+   sampled, and one re-baselining pass instead of three.
+
+2. **NOTHING NEW TO DECIDE ABOUT THE BOW REGION — the two new metrics
+   INDEPENDENTLY CONFIRM the depth finding already recorded above.** The
+   throat-fifth bow at depth 300 is a 28.3 mm hairpin at R_min 7.8 mm in a
+   duct 4.5-7.3 mm wide, and it reads badly on every metric there. Solving
+   the depth fixes all three at once, monotonically (6x3, arcs 555x245,
+   T 0.7, throat-fifth 1-lobe radial):
+     depth        300    320    340    357    370    400
+     dL (mm)    24.08  18.19  12.97  10.82  12.67  17.08
+     bow amp    28.3   24.6   20.8   20.1   21.9   26.3   mm
+     R_min       7.8    9.8   11.9   13.2   12.9   12.6   mm
+     foldMargin  3.28   5.37   7.04   8.35   8.03   7.68  mm
+     contract   10.86%  5.74%  2.78%  1.17%  0.94%  0.60%
+   `solveDepthForMinDL` puts this mouth at 357.2 mm. That is the same depth
+   at which the interpenetration measurement above goes from -4.78 mm to
+   +0.29 mm, so the clearance, the fold margin and the passage schedule are
+   three views of one fact: **the region was never the problem, the depth
+   was.** The owner's call to leave the throat-fifth region alone stands,
+   and the corrected finding stands with two more metrics behind it. No
+   default needs changing; the stage 5 hint already says solve the depth
+   first.
+
+3. **INTERPOLATE `C` AND THE FRAME BETWEEN SAMPLES** rather than snapping —
+   the map defect below. It pairs naturally with (1), since both are about
+   the centreline sampling, and doing them in one pass costs one
+   re-baselining instead of two.
 
 ## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
 

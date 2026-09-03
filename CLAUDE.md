@@ -2,6 +2,44 @@
 
 Working notes for this repo. Read before changing anything.
 
+## The standing priority: the horn has to be acoustically coherent
+
+**A COHERENT HORN BUILT ON ACOUSTIC PRINCIPLES IS THE POINT. Every geometric
+decision in the Ginkgo tool is therefore an acoustic decision first, and has
+to be argued and measured that way — not settled on whichever construction is
+tidier, smoother, faster or easier to make watertight.**
+
+The trap is specific and it has already been fallen into. A geometric choice
+made for geometric reasons can satisfy every number the tool reports while
+quietly breaking the physics those numbers stand for. The section plane is
+the recorded case: the sections were oriented on a construction convenience
+(a quadratic blend that made both end faces exact), every ring area followed
+the expansion law to the last digit, and the passage the wave actually
+crosses CONTRACTED 27% below its own throat. The law was being satisfied in a
+plane the wave was not crossing. No metric in the tool could see it, because
+every metric was about the sections rather than about the passage.
+
+So, before adding or changing any construction here:
+
+- **Name the acoustic quantity it is supposed to serve** — the area the wave
+  crosses, the wavefront shape, the path length, the phase across the
+  passage. If a choice cannot be stated that way, it is a convenience, and
+  convenience does not get to decide geometry.
+- **Check that the metric you will judge it by measures that quantity**, and
+  not a proxy that happens to correlate. `wallSpread` measures fibre lengths
+  by the mouth and cannot see a mid-path constriction; `area` is the section's
+  own surface and is not the cross-section; `k <= 1` is an area ratio and is
+  not a clearance. Each of those has misled at least once and each has a
+  finding below.
+- **Where two physical claims genuinely conflict, honour each one LOCALLY
+  and let the dominant one have everywhere else.** The flat driver face and
+  the aperture-as-wavefront are real claims, but both are local — so each
+  gets a short ramp, and the tangent gets the whole interior, because that is
+  where the wave decides what it crosses. A construction convenience gets no
+  such share at all.
+- **Prefer the reading that is less flattering.** A number that gets safer
+  the less closely you look is a bug in the number.
+
 ## What this is
 
 Five loudspeaker design calculators served as a static multi-page site at
@@ -247,6 +285,15 @@ plane-wave argument, and above f1 the throat wave is not planar, so the law
 stops describing what happens. The partition is what keeps propagation planar
 high enough in frequency for the chosen expansion to mean anything.
 
+**The sections are built SQUARE TO THE DIRECTION OF TRAVEL** — the plane the
+expansion law is written on, and therefore the plane the geometry has to be
+built in. z-hat at the throat and the aperture normal at the mouth are real
+physical claims but LOCAL ones, so each gets a short ramp and the tangent has
+the whole interior. `sectionObliqMax`, `fluxContractMax` and `bendFoldMin`
+report what that buys and what it costs. This replaced a quadratic blend that
+had the tangent at under half weight everywhere and near zero at the throat;
+see the first finding below for what it was doing to the passage.
+
 Where the tool stands now. The Hypex profile is imposed (`profileT`), the
 mouth can be stated as coverage angles instead of millimetres (`mouthMode:
 "arc"`), the path has independent tangents and a straight run at each end, and
@@ -271,6 +318,175 @@ poorly-loaded case. That is the thing to move off, and the reason the profile
 exists.
 
 ## Known findings worth not re-deriving
+
+- **THE SECTION PLANE NOW FOLLOWS THE TANGENT, and the construction it
+  replaced was satisfying the expansion law in a plane the wave was not
+  crossing.** This is the worked example behind the standing priority at the
+  top of the file. `normalAt` used to blend z-hat, the tangent and the
+  aperture normal over the WHOLE path on a quadratic Bernstein basis, so the
+  tangent's weight was 2u(1-u) — never above 0.5, and 0.06 at u = 0.03, which
+  is exactly where the shipped throat-fifth bow puts all of its curvature.
+  Measured at the 2026-09-01 defaults with that bow, cell 4,2: the direction
+  of travel was 56.5 deg off z-hat while the section plane had moved 3.0 deg,
+  so the section ran **53.6 deg oblique**, and the TRUE perpendicular passage
+  went 56.2 -> 45.8 -> **41.0** mm2 over the first three stations — a 27%
+  constriction below the cell's own throat, at 0.58 of what the law asked
+  for. The ring areas and the ring calipers were monotone the whole time; the
+  whole deficit was cos(obliquity).
+  **THE REPLACEMENT IS TWO RAMPS AND THE TANGENT IN BETWEEN**
+  (`sectionAlign: "tangent"`, the default). z-hat at the throat and the
+  aperture normal at the mouth are honoured over a smoothstep ramp each —
+  1.5 duct widths of the cell's own long transverse dimension, `alignWidths`,
+  stated in mm because the reorientation happens over a few duct widths and
+  that scale has to follow the horn — and the tangent has everything else.
+  Measured over all 18 cells at the defaults, 64 stations: interior obliquity
+  (u in 0.25-0.9) 23.14 -> **0.34 deg**, with a bow and without — the interior
+  is square to travel either way, which is the whole claim. The WORST
+  obliquity anywhere goes 56.7 -> 36.2 deg with the bow on, and what is left
+  sits in the throat ramp and at station 0, where it belongs. Contraction with
+  the bow on goes 20.94% on 14 of 18 ducts -> **0.00% on 0 of 18**.
+  **THE RAMP LENGTH IS MEASURED, NOT CHOSEN.** At the defaults with the
+  throat-fifth bow, 64 stations, contraction is 0.00% at 0.5, 1.0, 1.25 and
+  1.5 widths and comes back at 1.75 (0.78% on 6 of 18) and 2.0 (2.86% on 8),
+  so 1.5 is the last clean value. Below about 1.0 nothing further is bought.
+  **`sectionAlign: "bernstein"` REPRODUCES THE PRE-CHANGE GEOMETRY BIT FOR
+  BIT** — worst vertex difference 0.00e+0 mm against the previous commit over
+  all 18 cells, 65 stations and 64 boundary points, `wallSpreadMax` 20.0189
+  both ways — so every "before" number in these findings is a live
+  measurement and not a memory. The change itself moves vertices up to
+  6.9 mm.
+  The residual obliquity at station 0 is NOT a defect and must not be
+  "fixed": it is the flat driver face measured against the launch ray, and it
+  equals atan(r_centroid * tan(exitHalfAngle) / R) per cell — the closed form
+  spans 2.36 to 14.24 deg at the defaults and the measured station-0
+  obliquity (2.47 to 14.89 deg) tracks it to 0.65 deg, the gap being the
+  section-centroid step read against the centreline tangent, which is the
+  `origin`-vs-`centroid` drift recorded further down.
+  `sectionAlign: "bernstein"` survives as the comparison baseline the tests
+  measure against, and it is what makes the obliquity bound a DISCRIMINATOR
+  rather than a property every construction happens to have: on the same
+  rings the blend measures 23.7 deg of tilt against 9.5 deg of ring
+  curvature, outside the bound the tangent construction sits inside.
+- **WHAT SQUARING THE SECTIONS COSTS, MEASURED IN BOTH DIRECTIONS. Read this
+  before treating any of it as a regression.**
+  (1) **Duct interpenetration improves near the dL optimum and gets WORSE on
+  a badly-posed shallow horn**, because the tilt was holding neighbours apart
+  there. Measured at 6x3, 90x40, 480x213, T 0.7, bernstein -> tangent:
+    depth   150     200     250     300     320     360     425     500
+    was    2.955   1.246   1.170   1.599   1.917   2.685   3.645   4.139
+    now    9.046   6.631   1.956   1.091   1.092   1.257   2.376   3.464  mm
+  The crossover is near depth 250-300, which is where the OLD obliquity
+  passed ~20 deg. The new obliquity is 7-10 deg at every depth. Nothing was
+  hidden and nothing was created: a shallow horn's ducts always ran through
+  each other, and the tilt was flattering the measurement. Solve the depth
+  first, as everything else in this file already says.
+  (2) **THE PREVIEW NOW MISSES THE NEAR-THROAT DIVE ENTIRELY, and this is
+  the one place the change makes the tool warn LESS.** The near-throat gap
+  profile opens slightly faster with square sections — a few tens of microns
+  — and that is enough to move the 24-station sample to the wrong side of a
+  minimum that sits at u = 0.021. Measured at the defaults, worst gap with
+  the throat rule on:
+    stations        16       24       32       48       64
+    bernstein   -0.002   -0.002   -0.122   -0.241   -0.122
+    tangent     +0.550   +0.520   -0.140   -0.230   -0.241
+  **The dive itself is unchanged in kind and depth** — 0.14 to 0.24 mm at
+  every count that resolves it, under both constructions. What changed is
+  that the coarse pass used to catch it by 2 um and now misses it by 520.
+  The geometry is not better; the sampling is lucky the other way.
+  This is exactly the resolution limit already recorded above and declined
+  for now, and it is why raising the clearance resolution has moved to the
+  top of NEXT-SESSION.md. It is asserted as a test ("KNOWN LIMIT: the
+  preview's 24 stations do not sample the dive at all") so it cannot regress
+  silently and so the test flips when the resolution lands. **Until then, do
+  not read a clean near-throat clearance off the preview — re-run it at 48.**
+  (3) **A too-tight bow can now FOLD the solid**, where before it merely sat
+  oblique. That is the next finding.
+- **`bendFold` IS THE TORUS CONDITION, AND IT IS THE ONLY WITNESS TO A FOLDED
+  DUCT.** A section swept around a bend of radius R sweeps its inner edge
+  around a smaller one; once that edge reaches the centre of curvature the
+  swept solid turns inside out. Exact, resolution-independent in principle,
+  and reported in mm of clearance with negative meaning folded. Nothing else
+  in the file can see it: **a folded duct still meshes closed, still passes
+  `meshManifold`, and still passes `fanIsValid` on both caps** — asserted in
+  the tests, because that is the whole reason the metric exists.
+  Measured at the defaults, 64 stations: no bow +132.8 mm, the shipped
+  throat-fifth 1-lobe bow **+3.3 mm**, 2 lobes **-1.9 mm (folded)**, 3 lobes
+  -3.8 mm. Moving the window out instead: [0.2,0.8] +11.0, [0.3,0.95] +6.0,
+  [0,1] +37.8 mm.
+  The closed form behind it is exact on a straight base path: the sin^2
+  window A(1-cos(2 n pi s/L))/2 has y'' = 2 A n^2 pi^2/L^2 * cos(2 n pi s/L)
+  and y' = 0 where |y''| peaks, so kappa_max = **2 pi^2 n^2 A / L^2**,
+  verified against the solved amplitude to 0.33% on the 1x1 straight cell.
+  **The curvature is read as the WORST over the samples each station stands
+  for, never at the station point.** The station-point form reported more than
+  TWICE the margin at 24 stations that it did at 64 on the same horn — it got
+  safer the less you looked, which is a bug in the number. Read over the span,
+  it measures 3.52 mm at 24 stations against 3.28 at 64 (64 samples), a 7%
+  spread that is the ring's own slow variation rather than a missed peak. It
+  is still optimistic in the SAMPLE count — see the under-resolution finding
+  below.
+- **"MORE LOBES IS BETTER ON EVERY COUNT" IS NO LONGER TRUE — the fold margin
+  is a count that gets worse.** The wallSpread ranking below still holds and
+  is not withdrawn; what is withdrawn is the "on every count". Re-measured on
+  that finding's own geometry (6x3, radial, 90x40, depth 425, region [0,1]):
+    lobes          1       2       3       4
+    wallSpread   33.2    21.2    17.4    16.6  mm   <- still better with more
+    amplitude   100.9    31.9    20.4    14.7  mm   <- still better
+    foldMargin   30.1    27.9     9.9    -0.6  mm   <- WORSE, monotonically
+  In the throat fifth it goes negative a lobe sooner: +8.5 / +2.5 / **-0.5** /
+  -1.3 mm at 1 / 2 / 3 / 4 lobes. More lobes buys phase coherence with bend
+  radius, and bend radius is what the duct's own width has to fit inside.
+  Two is still the knee on wallSpread; three now needs the fold margin read
+  first, and in a short window it is already folded there.
+- **THE SHIPPED THROAT-FIFTH BOW IS OVER-TIGHT AT THE DEFAULTS, and squaring
+  the sections is what made that visible rather than what caused it.** At
+  depth 300 the middle row is 25.5 mm short and the throat fifth is 65 mm of
+  path, so the solved bow is a **28.3 mm hairpin at R_min 8.0 mm** in a duct
+  4.5-7.3 mm wide — the centreline runs x = 2.5 -> 31.9 -> 6.2 mm inside the
+  first 60 mm of a 325 mm path. Under refinement (stations = samples) the
+  passage contraction converges to a real **8.6 -> 10.9 -> 11.7%** at 128,
+  192 and 256 stations, while every other window measures 0.00% at every
+  resolution (all at stations = samples):
+    window       [0,0.2]   [0,0.5]  [0.2,0.8]  [0.3,0.95]   none
+    contraction   11.72%    0.00%     0.00%      0.00%      0.00%
+    foldMargin     1.11     8.33      9.02       3.81      133.1  mm
+  The superseded blend, on the same geometries at 256 stations, read 34.06%
+  on [0,0.2] and **11.00% on [0,0.5] where the duct measures 0.00%** — i.e.
+  it INVENTED a constriction on sound geometry as well as exaggerating a real
+  one, and it DIVERGED under refinement (20.9% at 64 stations -> 33.1% at
+  192) where a real constriction converges. **Divergence under refinement is
+  the test that separates a plane error from a geometry error.**
+  **THIS IS THE SAME FACT AS THE DEPTH FINDING, NOT A SECOND ONE, and the
+  region is not what needs changing.** Solving the depth fixes the passage,
+  the fold margin and the interpenetration together and monotonically —
+  measured at 6x3, m 3, arcs 555x245, T 0.7, throat-fifth 1-lobe radial:
+    depth        300    320    340    357    370    400
+    dL (mm)    24.08  18.19  12.97  10.82  12.67  17.08
+    bow amp    28.3   24.6   20.8   20.1   21.9   26.3   mm
+    R_min       7.8    9.8   11.9   13.2   12.9   12.6   mm
+    foldMargin  3.28   5.37   7.04   8.35   8.03   7.68  mm
+    contract   10.86%  5.74%  2.78%  1.17%  0.94%  0.60%
+  `solveDepthForMinDL` puts this mouth at 357.2 mm, which is where the
+  separately-measured interpenetration also crosses from -4.78 mm to +0.29.
+  So the corrected throat-fifth finding — it is the DEPTH, not the region —
+  now has three independent metrics behind it, and the owner's habit needs no
+  revisiting. Solve the depth first; the bow becomes a small correction.
+- **BOTH PASSAGE METRICS ARE UNDER-RESOLVED BY THE 64-SAMPLE CENTRELINE
+  DEFAULT, and this is the next thing to fix.** `samples` defaults to 64 over
+  the whole path, so a 65 mm bow feature gets ~13 samples and its curvature
+  peak is missed. Measured on the shipped bow: `bendFoldMin` reads 3.28 /
+  2.09 / 1.29 / 1.11 mm at 64 / 128 / 192 / 256 samples — monotone downward,
+  so **the reported margin is an upper bound** — and `fluxContractMax` reads
+  0.00% at both the preview (24) and export (64) station counts against 10.9%
+  at 192. Raising `samples` is nearly FREE (measured: the map cost is
+  dominated by `stations`, since the profile solve runs per station — ~90 ms
+  at stations 64/samples 64 against ~80 ms at stations 64/samples 256), so this
+  is worth doing properly. It was not done here because it re-baselines
+  recorded numbers across the whole file and deserves its own pass.
+  Note also that `stations` ABOVE `samples` aliases outright: `idx =
+  Math.round(u * M)` makes consecutive rings share a centreline point and
+  frame. The UI ships stations 24 (preview) and 64 (export) against
+  samples 64, so it is safe today, but do not raise `stations` alone.
 
 - **THE TOOL'S DEFAULT GEOMETRY CHANGED ON 2026-09-01 (owner's numbers), and
   every measurement in this file predating it was taken on the old one.**

@@ -2401,6 +2401,19 @@ export default function GinkgoHorn() {
               sub={`longest vs shortest wall fibre · λ/8 = ${fmt(map.lambda / 8, 2)} mm`}
               color={map.wallSpreadMax > map.lambda / 8 ? C.series1 : C.series4} />
           )}
+          {/* THE PASSAGE, NOT THE SECTION. The expansion law is solved on each
+              ring's own area; what the wave crosses is that ring projected on
+              the direction it travels. The two are the same thing only while
+              the section stays square to the path, so this is the readout that
+              says the horn is delivering the schedule it was solved for. */}
+          {map && map.sectionMode === "swept" && (
+            <Metric label="Passage" value={map.fluxContractCells === 0 ? "opens throughout"
+              : `−${fmt(map.fluxContractMax * 100, 1)}%`}
+              sub={map.fluxContractCells === 0
+                ? `cross-section square to travel never narrows here · tilt ≤ ${fmt(map.sectionObliqMax, 1)}° — a tight bow can still hide under this sampling, read bend clearance too`
+                : `${map.fluxContractCells} of ${throat.N} ducts constrict · narrowest ${fmt(map.fluxVsThroatMin * 100, 0)}% of its own throat, at ${map.sectionObliqCell}`}
+              color={map.fluxContractCells === 0 ? C.series4 : C.series5} />
+          )}
           {map && map.fcDecomp && (
             <Metric label="f_c spread, decomposed" value={`${fmt(map.fcDecomp.full, 2)}%`}
               sub={`length alone ${fmt(map.fcDecomp.fromLength, 2)}% · ratio alone ${fmt(map.fcDecomp.fromRatio, 2)}% — they partially cancel`}
@@ -2457,6 +2470,18 @@ export default function GinkgoHorn() {
             <div style={vGroup}>Routing</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 7 }}>
               <Metric label="Max turning" value={`${fmt(map.turnMax, 1)}°`} sub="gross centreline turning — wall spread is the phase metric" />
+              {/* The torus condition. A section swept around a bend sweeps its
+                  inner edge around a smaller radius; once that edge reaches the
+                  centre of curvature the solid turns inside out, and nothing
+                  else in the export can see it — a folded duct still meshes
+                  closed and still passes every cap check. */}
+              {map.sectionMode === "swept" && isFinite(map.bendFoldMin) && (
+                <Metric label="Bend clearance" value={`${fmt(map.bendFoldMin, 1)} mm`}
+                  sub={map.bendFoldMin <= 0
+                    ? `${map.bendFoldCell} folds — the bend is tighter than the duct is wide`
+                    : `tightest bend clears its own section by this much (${map.bendFoldCell}) — an upper bound, it falls with sampling`}
+                  color={map.bendFoldMin <= 0 ? C.series5 : map.bendFoldMin < 2 ? C.series1 : C.series4} />
+              )}
               <Metric label="Max twist" value={`${fmt(map.twistMax, 1)}°`} sub="cross-section rotation, throat to mouth" />
               <Metric label="Max aim error" value={`${fmt(map.aimMax, 2)}°`} sub={`tolerance ≈ λ/(4d) = ${fmt(map.aimLimitDeg, 1)}°`}
                 color={map.aimMax > map.aimLimitDeg ? C.series5 : C.ink} />
