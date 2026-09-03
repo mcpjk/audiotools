@@ -855,6 +855,43 @@ exists.
   the geometry class. Note also 1,1-3,2 — two columns apart, no shared edge —
   overlapping 4.62 mm over 40 mm of path, which is the reaching above, measured
   on the shipped file rather than in the model.
+- **THE EXPORTED BODIES ARE TOPOLOGICALLY EXACT, SO AN IMPORTER'S HEALING AND
+  SIMPLIFY OPTIONS CAN ONLY SUBTRACT. Turn them OFF; there is nothing to
+  repair.** Audited on the owner's shipped quarter, all 14 solids:
+  F - E + V = 6 - 12 + 8 = **2** on every one, **every edge used exactly once
+  in each direction**, 12 distinct curves for 12 edges, 6 loops for 6 faces —
+  and every one of the 24 edge uses on a blank is a `B_SPLINE_CURVE_WITH_KNOTS`
+  **whose control points ARE control points of the adjoining face's own
+  surface**. So each edge lies on both surfaces by SHARED ENTITY, not by
+  tolerance, and there are no tolerant edges to replace.
+  Shapr3D's import dialog defaults five of these ON. Against this file:
+    · **Simplify Geometry** — says outright it "might change the model's
+      shape". The blanks are already the minimal 6-face topology, so it has no
+      redundancy to remove and can only alter the surfaces.
+    · **Advanced Healing (Parasolid Bodyshop Repair)** — "recalculate all
+      edges based on face intersections". This DISCARDS our exact shared-
+      control-point edges and re-derives each from a surface-surface
+      intersection, and the mitred corners are exactly where two nearly
+      parallel NURBS meet at a shallow angle. The most fragile operation
+      available, applied to all 12 edges of every blank.
+    · **Healing (HOOPS)** — adjusts topological tolerances and "eliminates
+      sliver faces"; near a sharp cell corner the wall face is genuinely
+      narrow and is not a sliver to remove.
+    · **Accurate Edge Computation** — same family: rectifies problems that the
+      audit says are not there.
+    · **Sewing** — a closed shell with paired edges needs no sewing, but the
+      importer may rely on it to form solids at all; leave it ON.
+  **This is also the best explanation on offer for the per-body
+  unpredictability**: whether healing damaged a given body is decided at
+  IMPORT, per solid, so it is invisible in the geometry we ship and it would
+  make one blank fail every operation it takes part in. The owner reports some
+  blanks failing a plane SPLIT at the throat — a one-body operation with no
+  union involved — which cannot be a pair-interaction effect at all.
+  **The throat plane itself is a clean cut in the file as shipped**: the z = 0
+  crossing sits at the SAME v to 5e-14 across every u on every wall (it is an
+  exact iso-curve, since the throat ring is planar in z = 0), with |dz/dv| >=
+  294 mm per unit v, and no v-line crosses z = 0 more than once. So a failing
+  split is not a wiggling wall.
 - **A HALF OR A QUARTER CAN BE EXPORTED (`xSide` / `ySide`), and the one thing
   that does NOT survive mirroring is the wall jitter.** `symmetryRegion`
   selects cells by THROAT CENTROID, and a cell whose centroid sits ON a plane
