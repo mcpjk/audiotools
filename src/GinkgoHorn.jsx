@@ -377,10 +377,8 @@ export default function GinkgoHorn() {
   const [process, setProcess] = useState("FDM");
 
   // ── topology ──
-  const [family, setFamily] = useState("hgrid");
   const [nc, setNc] = useState(6);
   const [nr, setNr] = useState(3);
-  const [ringSpec, setRingSpec] = useState("1,6,12");
   const [seed, setSeed] = useState("elliptical");
 
   // ── line shapes ──
@@ -432,7 +430,7 @@ export default function GinkgoHorn() {
   // the split still has to be planned. Acoustically the 5 mm costs almost
   // nothing: mouth 1396.0 -> 1355.9 cm2, dL 25.52 -> 24.08 mm, fc 457-496 ->
   // 457-494 Hz.
-  const [arcH, setArcH] = useState(555);
+  const [arcH, setArcH] = useState(500);
   const [arcV, setArcV] = useState(245);
   const [dlSolve, setDlSolve] = useState(null);
   // ── per-cell path lengthening ──
@@ -573,10 +571,6 @@ export default function GinkgoHorn() {
   // the apex's last consumer are gone — per-cell solid angle at a reference
   // point stops predicting the pattern once the mouth radiates as one
   // coupled surface, so it was removed rather than surfaced.
-  const rings = useMemo(
-    () => ringSpec.split(/[^0-9]+/).filter(Boolean).map(Number).filter((n) => n > 0),
-    [ringSpec]
-  );
   // ── line-shape configuration and the requested parameter vector ──
   const cfg = useMemo(
     () => G.lineGridConfig({ nc, nr, m: shapeOrder, symmetric }),
@@ -603,11 +597,10 @@ export default function GinkgoHorn() {
   // alphaAt rides along because everything downstream reads the built layout,
   // never the live inputs — see `shown` below.
   const layoutInput = useMemo(() => ({
-    family, R, nc, nr, m: shapeOrder, symmetric,
+    R, nc, nr, m: shapeOrder, symmetric,
     params: pReq, seed, seedObj,
-    rings: rings.length ? rings : [1, 6, 12],
     t: thickness, c, nParams: cfg.nParams, alphaAt: cfg.alphaAt,
-  }), [family, R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, ringSpec, thickness, c, cfg]);
+  }), [R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, thickness, c, cfg]);
 
   const buildFrom = (inp) => {
     const L = G.buildLayout({
@@ -646,12 +639,11 @@ export default function GinkgoHorn() {
   // Where the number of cells meeting is not four. For the H-grid these are the
   // four corners of the reference square, wherever the seed map puts them.
   const singular = useMemo(() => {
-    if (layout.family === "hgrid" && layout.seedObj)
+    if (layout.seedObj)
       return [[1, -1], [1, 1], [-1, 1], [-1, -1]].map(([u, v]) => layout.seedObj.map(u, v));
-    if (layout.mesh) return layout.mesh.singular.map((ni) => G.nodeXY(layout.mesh, ni));
     return [];
   }, [layout]);
-  const alphaEff = shown.family === "hgrid" && solve.p ? solve.p[shown.alphaAt] * R2D : 45;
+  const alphaEff = solve.p ? solve.p[shown.alphaAt] * R2D : 45;
 
   // The mouth's own chord extents, derived from the two arcs. Everything that
   // used to read the mouthW/mouthH inputs now reads these, so the plan view and
@@ -667,7 +659,7 @@ export default function GinkgoHorn() {
   // a separation field was solved against ONE geometry — any input that moves
   // the ducts it was clearing invalidates it
   useEffect(() => { setSepSolve(null); },
-    [thetaH, thetaV, arcH, arcV, profileT, depth, nc, nr, family, exitDia, thickness, bulgeOn, bulgeAmp]);
+    [thetaH, thetaV, arcH, arcV, profileT, depth, nc, nr, exitDia, thickness, bulgeOn, bulgeAmp]);
   // EVERY depth solve runs from the same reference state for the two straight
   // runs — divergence 0, arrival 0 — and resets the sliders to it. A solve is
   // then a repeatable reference point rather than a function of wherever the
@@ -872,7 +864,7 @@ export default function GinkgoHorn() {
   // Nelder-Mead on the whole vector is enough — no outer scan is needed, and
   // every candidate goes through the equal-area solve before f1 is looked at.
   const runOptimiser = () => {
-    if (busy.current || family !== "hgrid") return;
+    if (busy.current) return;
     busy.current = true;
     setRunning(true);
     setTimeout(() => {
@@ -942,8 +934,21 @@ export default function GinkgoHorn() {
       w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${clearance && clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(clearance.overlap, 4)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s).` : ""}`);
     if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6) && !dipOwns)
       w.push(`The narrowest duct-to-duct gap is ${fmt(clearance.minMid, 4)} mm at station ${clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
-    if (map && map.bulge && clearance && clearance.joint && clearance.joint.engaged < clearance.joint.pairs)
-      w.push(`The coped joints are on but only ${clearance.joint.engaged} of ${clearance.joint.pairs} neighbour pairs actually meet — the bulge is too small to reach across the gap on the rest, so those edges end blunt, not coped. Raise the bulge amplitude, or lower T to shrink the gap the profile opens.`);
+    // The cells TILE the aperture, so any bulge at all makes every mouth ring
+    // overlap its neighbour — measured at exactly 2x the amplitude, since both
+    // sides bulge into each other. What can be too small is the DEPTH the cope
+    // runs back from the aperture: a shallow one is a lip, not a joint, and
+    // the loft cannot represent one that does not span a station.
+    // ...and it is judged against the EXPORT station spacing, not the preview's.
+    // The clearance is measured on the 24-station preview map, where one
+    // station is ~13 mm of path; the file ships at `stations`, where it is
+    // ~5 mm. Keying the warning to the preview made a perfectly exportable
+    // cope look untenable.
+    if (map && map.bulge && clearance && clearance.joint && clearance.joint.engaged) {
+      const stationMm = map.Lmin / stations;
+      if (clearance.joint.depthMin < stationMm)
+        w.push(`The coped joints meet at the aperture on all ${clearance.joint.pairs} neighbour pairs — the cells tile, so any bulge overlaps them — but the shallowest cope runs only ${fmt(clearance.joint.depthMin, 1)} mm back, against ${fmt(stationMm, 1)} mm between stations at the export setting. A joint thinner than one station cannot be lofted and exports as a lip. Raise the bulge amplitude, or raise the export station count.`);
+    }
     if (map && clearance && clearance.throat && clearance.throat.dip != null)
       w.push(`The duct gap stops opening at station ${clearance.throat.dipAt} of ${clearance.throat.stations} and closes by ${fmt(clearance.throat.dip, 3)} mm before the ducts ever reach the ${fmt(sepFloor, 1)} mm minimum. Near the throat the cells tile, so no absolute clearance is asked for there — only that the wall never gets THINNER than it already is, and here it does. That is a defect at any magnitude, and it is not a knife edge. Note the depth quoted is a LOWER BOUND: the dip is sharp, the preview samples ${PREVIEW_STATIONS} stations, and the same geometry measured at 48 reads several times deeper.`);
     if (map && clearance && clearance.throat && clearance.throat.saturated > 0)
@@ -958,17 +963,13 @@ export default function GinkgoHorn() {
       w.push(`f_c spans ${fmt(map.fcDecomp.lo, 0)}–${fmt(map.fcDecomp.hi, 0)} Hz across cells — a ${fmt(map.fcDecomp.full, 1)}% spread, so the horn does not have one cutoff. Path length dominates it (${fmt(map.fcDecomp.fromLength, 1)}% alone), so the lever is ΔL: move depth toward the equalising optimum, and the equal-area horn becomes the equal-f_c horn (measured 0.5% spread at the dL optimum).`);
     if (map && map.aimMax > map.aimLimitDeg)
       w.push(`Aim error reaches ${fmt(map.aimMax, 1)}° against a ${fmt(map.aimLimitDeg, 1)}° tangency tolerance. Shape the aperture surface from the directivity requirement first — a surface chosen for routing radiates its own curvature error phase-coherently and no EQ removes it.`);
-    if (shown.family === "hgrid" && solve.converged && solve.monotone && solve.monotone.gap < 0.02)
+    if (solve.converged && solve.monotone && solve.monotone.gap < 0.02)
       w.push(`Two grid lines come within ${solve.monotone.gap.toExponential(2)} of each other in parameter space — the areas are equal but a cell is pinched to nearly nothing there, which will not print and will not behave like a duct. Ease the bow, raise the shape order m, or move the corner angle.`);
-    if (throat.curvatureFlagged)
-      w.push(`${throat.curvatureFlagged} cell(s) have edge curvature strong relative to their own short dimension. The flat-rectangle first-mode model errs as O((L/r_curv)²) with the sign not established — verify these in ABEC.`);
-    if (shown.family !== "hgrid")
-      w.push(`An O-grid throat has no cell-for-cell match to a rectangular mouth grid — that is a property of its topology, not a gap in the tool. The mouth mapping below is inactive; the throat metrics are still valid and comparable at equal N.`);
     return w;
   }, [solve, throat, shown, thickness, fab, map, clearance, profileT, fTarget, sepFloor]);
 
   // ── exports ────────────────────────────────────────────────────────────────
-  const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.family === "hgrid" ? `${shown.nc}x${shown.nr}` : shown.family}_${throat.N}cells`;
+  const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.nc}x${shown.nr}_${throat.N}cells`;
 
   // Exports run at the export station count, not the preview's. The map is
   // rebuilt here, once, when a button is pressed — ~140 ms at 64 stations,
@@ -1038,18 +1039,17 @@ export default function GinkgoHorn() {
     units: "mm, Hz, degrees",
     driver: { exitDiameter: exitDia, exitHalfAngle: exitAngle, temperature, speedOfSound: c },
     topology: {
-      family: shown.family, nCols: shown.nc, nRows: shown.nr,
-      rings: shown.family === "ogrid" ? shown.rings : undefined,
+      nCols: shown.nc, nRows: shown.nr,
       cornerAlphaDeg: alphaEff, equalArcAlphaDeg: G.equalArcAlphaDeg(shown.nc, shown.nr),
       seed, singularVertices: singular.length,
-      lineShapes: shown.family === "hgrid" ? {
+      lineShapes: {
         shapeOrder, symmetric, chebyshevOrders: cfg.orders,
         freeParameters: cfg.nParams, independentConstraints: cfg.nConstraints, spare: cfg.spare,
         parameters: labels.map((l, i) => ({
           group: l.group, name: l.name, kind: l.kind,
           requested: +pReq[i].toFixed(8), achieved: +pOut[i].toFixed(8),
         })),
-      } : undefined,
+      },
     },
     solve: {
       converged: solve.converged,
@@ -1106,7 +1106,7 @@ export default function GinkgoHorn() {
       ? G.ductClearance(map.rows) : null;
     const head = [
       "cell", "i", "j", "kind", "area_mm2", "open_area_mm2", "L_long_mm", "L_short_mm",
-      "aspect", "diameter_mm", "convex", "pw_floor_Hz", "min_curv_radius_mm", "curvature_flag",
+      "aspect", "diameter_mm", "convex", "pw_floor_Hz",
       "f1_Hz", "f1_model", "centroid_x", "centroid_y",
       "path_length_mm", "s_pad_mm", "turn_deg", "twist_deg", "aim_err_deg",
       // the expansion profile, per cell. Empty when no law is imposed.
@@ -1122,8 +1122,7 @@ export default function GinkgoHorn() {
         // the label is "col,row" — it must be quoted or it splits the row
         `"${cc.label}"`, cc.i ?? "", cc.j ?? "", cc.kind, cc.area.toFixed(4), cc.open.toFixed(4),
         cc.Llong.toFixed(4), cc.Lshort.toFixed(4), cc.aspect.toFixed(4), cc.dia.toFixed(4),
-        cc.convex, cc.pwFloor ? cc.pwFloor.toFixed(1) : "", isFinite(cc.minCurvR) ? cc.minCurvR.toFixed(3) : "inf",
-        cc.curvatureSensitive ? "verify_in_ABEC" : "", cc.f1.toFixed(1), `"${cc.f1model}"`,
+        cc.convex, cc.pwFloor ? cc.pwFloor.toFixed(1) : "", cc.f1.toFixed(1), `"${cc.f1model}"`,
         cc.centroid[0].toFixed(4), cc.centroid[1].toFixed(4),
         r ? r.Lpath.toFixed(4) : "", r ? r.pad.toFixed(4) : "", r ? r.turnDeg.toFixed(3) : "",
         r ? r.twistDeg.toFixed(3) : "", r ? r.aimErrDeg.toFixed(3) : "",
@@ -1498,12 +1497,7 @@ export default function GinkgoHorn() {
 
       <Stage n={2} title="Throat partition" why="divide the exit into equal open areas — buy f₁ with rows, not columns">
         <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {[["hgrid", "H-grid — one (i,j) index, 4 rim singularities"],
-            ["ogrid", "O-grid — concentric rings, no singularities"]].map(([v, l]) => (
-            <button key={v} onClick={() => setFamily(v)} style={{ ...btn(family === v, C.series4), fontSize: 11, padding: "5px 10px" }}>{l}</button>
-          ))}
-          {family === "hgrid" && <>
-            <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 8 }}>shape order m</span>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>shape order m</span>
             {[1, 2, 3].map((d) => (
               <button key={d} onClick={() => setShapeOrder(d)} style={btn(shapeOrder === d, C.series7)}>{d}</button>
             ))}
@@ -1512,18 +1506,10 @@ export default function GinkgoHorn() {
               <span style={{ color: C.inkDim }}>both mirrors</span>
             </label>
             <button onClick={() => setRequest(null)} style={{ ...btn(false, C.series5), marginLeft: 4 }}>Reset to nominal</button>
-          </>}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0 12px", marginBottom: 4 }}>
-          {family === "hgrid" && <>
-            <NumInput label="Columns n_cols" value={nc} onChange={(v) => setNc(Math.round(v))} min={2} max={16} step={1} accent={C.series4} />
-            <NumInput label="Rows n_rows" value={nr} onChange={(v) => setNr(Math.round(v))} min={1} max={10} step={1} accent={C.series4} />
-          </>}
-          {family === "ogrid" && <div style={{ gridColumn: "span 2" }}>
-            <label style={sLabel}>Ring counts</label>
-            <input value={ringSpec} onChange={(e) => setRingSpec(e.target.value)} placeholder="1,6,12" style={{ ...sInput, fontSize: 12 }} />
-            <div style={{ fontSize: 10, color: C.series3, fontFamily: C.mono, marginTop: 4 }}>{rings.join(" + ")} = {rings.reduce((a, b) => a + b, 0)}</div>
-          </div>}
+          <NumInput label="Columns n_cols" value={nc} onChange={(v) => setNc(Math.round(v))} min={2} max={16} step={1} accent={C.series4} />
+          <NumInput label="Rows n_rows" value={nr} onChange={(v) => setNr(Math.round(v))} min={1} max={10} step={1} accent={C.series4} />
           <div>
             <label style={sLabel}>Seed map</label>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -1533,17 +1519,12 @@ export default function GinkgoHorn() {
             <div style={{ fontSize: 10, color: C.inkMuted, marginTop: 6, lineHeight: 1.4 }}>{SEED_NOTE[seed]}</div>
           </div>
           <div style={{ fontFamily: C.mono, fontSize: 11, lineHeight: 1.7, color: C.inkDim }}>
-            {family === "hgrid" ? (<>
-              <div><span style={{ color: C.series4 }}>{cfg.nParams}</span> free · <span style={{ color: C.series1 }}>{cfg.nConstraints}</span> constraints · spare <span style={{ color: cfg.spare >= 0 ? C.series3 : C.series5 }}>{cfg.spare}</span></div>
-              <div style={{ color: C.inkMuted }}>{cfg.nClasses} distinct cells under the mirrors · {singular.length} singular vertices</div>
-            </>) : (<>
-              <div><span style={{ color: C.series4 }}>{layout.mesh ? G.dofCount(layout.mesh) : 0}</span> node DOF · comparison family</div>
-              <div style={{ color: C.inkMuted }}>{singular.length} singular vertices</div>
-            </>)}
+            <div><span style={{ color: C.series4 }}>{cfg.nParams}</span> free · <span style={{ color: C.series1 }}>{cfg.nConstraints}</span> constraints · spare <span style={{ color: cfg.spare >= 0 ? C.series3 : C.series5 }}>{cfg.spare}</span></div>
+            <div style={{ color: C.inkMuted }}>{cfg.nClasses} distinct cells under the mirrors · {singular.length} singular vertices</div>
           </div>
         </div>
 
-        {family === "hgrid" && (
+        {(
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0 18px" }}>
               {groups.map((grp) => (
@@ -1880,9 +1861,9 @@ export default function GinkgoHorn() {
                   {clearance.joint.engaged} / {clearance.joint.pairs}</span>
                 <span style={{ color: C.inkMuted }}> neighbour pairs</span></span>
               {clearance.joint.engaged > 0 && <>
-                <span><span style={{ color: C.inkMuted }}>knife edges from </span>
-                  <span style={{ color: C.ink }}>{fmt(100 * clearance.joint.knifeMin / clearance.joint.stations, 0)}%</span>
-                  <span style={{ color: C.inkMuted }}> of the path</span></span>
+                <span><span style={{ color: C.inkMuted }}>cope depth </span>
+                  <span style={{ color: C.ink }}>{fmt(clearance.joint.depthMin, 1)}–{fmt(clearance.joint.depthMax, 1)} mm</span>
+                  <span style={{ color: C.inkMuted }}> back from the aperture</span></span>
                 <span><span style={{ color: C.inkMuted }}>engagement up to </span>
                   <span style={{ color: C.ink }}>{fmt(clearance.joint.engageMax, 1)} mm</span></span>
               </>}
@@ -1902,6 +1883,9 @@ export default function GinkgoHorn() {
           each cell's expansion law now lands on its bulged outline, so the flare cutoff reads higher by roughly the double-count over
           twice the log of the radius ratio. Overlap inside a joint run is <strong style={{ color: C.inkDim }}>engagement</strong>, not a
           defect: the clearance readouts and warnings count only what happens before the knife edges.
+          Because the cells <strong style={{ color: C.inkDim }}>tile</strong> the aperture, any bulge at all makes every neighbouring pair
+          overlap at the mouth — by exactly twice the amplitude, since both sides bow into each other. So "meeting" is never the question;
+          the depth the cope runs back from the aperture is, and that is what is reported.
         </div>
       </Stage>
 
@@ -2264,7 +2248,7 @@ export default function GinkgoHorn() {
     }}>
       <div style={{ padding: "8px 14px", display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap", borderBottom: `1px solid ${C.border}`, background: C.panel }}>
         <span style={{ fontFamily: C.mono, fontSize: 12, fontWeight: 600, color: C.accent, letterSpacing: "0.04em" }}>
-          {shown.family === "hgrid" ? `${shown.nc}×${shown.nr}` : "O-grid"} · ⌀{fmt(exitDia, 1)} · {fmt(thetaH, 0)}°×{fmt(thetaV, 0)}°
+          {shown.nc}×{shown.nr} · ⌀{fmt(exitDia, 1)} · {fmt(thetaH, 0)}°×{fmt(thetaV, 0)}°
         </span>
         <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
           depth {fmt(depth, 0)} · T {fmt(profileT, 2)} · {throat.N} cells · swept
@@ -2337,7 +2321,7 @@ export default function GinkgoHorn() {
                       {td(fmt(cc.aspect, 2), cc.aspect > 2.5 ? C.series1 : C.ink)}
                       {td(fmt(cc.f1 / 1000, 2), isMin ? C.series5 : C.series4)}
                       <td style={{ textAlign: "right", padding: "3px 9px", color: C.inkMuted, fontSize: 10, whiteSpace: "nowrap" }}>
-                        {cc.f1model}{cc.curvatureSensitive ? " ⚠" : ""}
+                        {cc.f1model}
                       </td>
                       {td(r ? fmt(r.Lpath, 2) : "—", C.inkDim)}
                       {td(r ? fmt(r.turnDeg, 1) : "—", C.inkDim)}
@@ -2461,8 +2445,8 @@ export default function GinkgoHorn() {
             sub={`${fmt(throat.dividerTotal, 0)} mm of centreline at ${fmt(thickness, 2)} mm`}
             color={throat.blockage > 0.12 ? C.series1 : C.ink} />
           <Metric label="Cells" value={`${throat.N}`}
-            sub={`worst aspect ${fmt(throat.aspectMax, 2)} · ${throat.nonConvex} non-convex · ${throat.curvatureFlagged} curvature-flagged`}
-            color={throat.nonConvex || throat.curvatureFlagged ? C.series1 : C.ink} />
+            sub={`worst aspect ${fmt(throat.aspectMax, 2)} · ${throat.nonConvex} non-convex`}
+            color={throat.nonConvex ? C.series1 : C.ink} />
         </div>
 
         {map && (
@@ -2502,8 +2486,8 @@ export default function GinkgoHorn() {
                 : `${clearance.joint.engaged} / ${clearance.joint.pairs}`}
               sub={!clearance || !clearance.joint ? "deferred off the render pass"
                 : clearance.joint.engaged
-                  ? `knife edges from ${fmt(100 * clearance.joint.knifeMin / clearance.joint.stations, 0)}% of the path · up to ${fmt(clearance.joint.engageMax, 1)} mm deep`
-                  : "no pair engages — raise the bulge amplitude"}
+                  ? `cope runs ${fmt(clearance.joint.depthMin, 1)}–${fmt(clearance.joint.depthMax, 1)} mm back from the aperture · up to ${fmt(clearance.joint.engageMax, 1)} mm deep`
+                  : "no pair meets — the mouth rings do not overlap"}
               color={!clearance || !clearance.joint ? C.inkMuted
                 : clearance.joint.engaged === clearance.joint.pairs ? C.series4 : C.series1} />
           </> : <>
