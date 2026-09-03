@@ -503,7 +503,16 @@ export default function GinkgoHorn() {
   // 2x this number. EXPORT ONLY: the blanks are not drawn, see the 3-D
   // preview note below.
   const [shellWall, setShellWall] = useState(3);
-  const [shellExtend, setShellExtend] = useState(true);
+  // THE TWO ENDS ARE SET SEPARATELY, because they are not the same problem.
+  // Each is "trim" (extend past the face and ship the trim solid that cuts it
+  // back), "extend" (extend, ship no trim, cut it yourself) or "plain" (the
+  // loft's own end ring makes the face, no cut at all). The MOUTH trim cuts on
+  // the aperture surface itself and has never been reported failing; the
+  // THROAT trim cuts on the plane z = 0, which is exactly the operation the
+  // owner measured failing as a plane split on individual blanks.
+  const [throatEnd, setThroatEnd] = useState("trim");
+  const [mouthEnd, setMouthEnd] = useState("trim");
+  const endCfg = (v) => ({ extend: v !== "plain", trim: v === "trim" });
   const [wallJitter, setWallJitter] = useState(0.5);
   const [shellStations, setShellStations] = useState(32);
   // WHICH SIDE OF EACH MIRROR TO EXPORT. 0 keeps both. The horn is symmetric
@@ -983,7 +992,8 @@ export default function GinkgoHorn() {
       `bulge=${o.bulge ? o.bulge.amp : "off"}`,
       `separate=${o.separate ? `${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]` : "off"}`,
       `wall=${shellWall}`, `jitter=${wallJitter}`, `shellStations=${shellStations}`,
-      `extend=${shellExtend}`, `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
+      `throatEnd=${throatEnd}`, `mouthEnd=${mouthEnd}`,
+      `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
     ];
     return g.join(" ");
   };
@@ -1989,18 +1999,27 @@ export default function GinkgoHorn() {
             setStepNote({ ok: true, msg: "building the shell — offsetting each duct outwards…" });
             setTimeout(() => {
             const em = exportMap();
-            const cfg = { t: thickness, wall: shellWall, extend: shellExtend, jitter: wallJitter, stations: shellStations };
+            const cfg = {
+              t: thickness, wall: shellWall, jitter: wallJitter, stations: shellStations,
+              extendThroat: endCfg(throatEnd).extend, trimThroat: endCfg(throatEnd).trim,
+              extendMouth: endCfg(mouthEnd).extend, trimMouth: endCfg(mouthEnd).trim,
+            };
             const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell` });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
             const co = G.shellCoincidence(throat, em, cfg);
-            const ov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
+            const sov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
             // The number `wall` has to be read against. At the throat the cells
             // TILE, so each blank pushes `wall` into its neighbour across the
             // whole shared face; once 2·wall passes a cell's width, the blanks
             // on either side of that cell reach past each other and solids that
             // share no edge at all share material.
+            // Does the loft run past its own throat cap? Only meaningful when
+            // the throat is extended — a plain throat stops at its end ring.
+            const ov = endCfg(throatEnd).extend
+              ? G.shellCapOvershoot(throat, em, { t: thickness, wall: shellWall, jitter: wallJitter, stations: shellStations })
+              : null;
             const cw = G.throatCellWidth(throat, em, { t: thickness });
             const span = 2 * shellWall + wallJitter;
             const reaches = cw && span > cw.min;
@@ -2009,14 +2028,18 @@ export default function GinkgoHorn() {
             const mir = r.region ? G.mirrorSymmetry(throat, em, { t: thickness }) : null;
             const axes = r.region ? [regX && "x", regY && "y"].filter(Boolean) : [];
             const mirWorst = mir ? Math.max(...axes.map((k) => mir[k].worst)) : 0;
-            const recipe = shellExtend
-              ? `${r.cells} blanks + ${r.cells} cutters + 2 trims — union the blanks, subtract both trims, subtract the cutters`
+            const ends = [r.ends.throat && "throat", r.ends.mouth && "mouth"].filter(Boolean);
+            const recipe = ends.length
+              ? `${r.cells} blanks + ${r.cells} cutters${r.trims ? ` + ${r.trims} trim${r.trims > 1 ? "s" : ""}` : ""} — union the blanks (extended past the ${ends.join(" and ")}${ends.length > 1 ? " faces" : " face"})${
+                r.trimNames.length ? `, subtract ${r.trimNames.join(" and ")}` : ""}, subtract the cutters`
               : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`;
             setStepNote({
               ok,
               msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
                 co ? ` · near-copy surface ${fmt(co.arc, 1)} mm${co.arc > 1 ? " — RAISE THE JITTER" : ""}` : ""}${
-                ov ? ` · blanks share material over ${fmt(ov.fracTouching * 100, 0)}% of the path` : ""}${
+                sov ? ` · blanks share material over ${fmt(sov.fracTouching * 100, 0)}% of the path` : ""}${
+                ov ? ` · throat cap overshoot ${fmt(ov.worst, 3)} mm${
+                  ov.worst > 1e-3 ? ` at cell ${ov.at} — the extension is ${fmt(ov.minRatio, 2)}x the station step, RAISE IT ABOVE 0.5x OR USE A PLAIN THROAT` : ""}` : ""}${
                 cw ? ` · throat cells ${fmt(cw.min, 1)}-${fmt(cw.max, 1)} mm wide against 2x wall ${fmt(span, 1)} mm${
                   reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt((cw.min - wallJitter) / 2, 2)} mm to stop it` : ""}` : ""}${
                 r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
@@ -2044,7 +2067,8 @@ export default function GinkgoHorn() {
               }
             }
             const r = lab && G.buildShellSTEP(throat, em, {
-              t: thickness, wall: shellWall, extend: shellExtend, jitter: wallJitter,
+              t: thickness, wall: shellWall, jitter: wallJitter,
+              extendThroat: endCfg(throatEnd).extend, extendMouth: endCfg(mouthEnd).extend,
               stations: shellStations, only: lab, params: exportParams(), name: `${stem}_twocell`,
             });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
@@ -2057,11 +2081,14 @@ export default function GinkgoHorn() {
             });
             if (ok) dl(`${stem}_twocell.step`, r.text, "application/step");
           }}>STEP · two-cell test</button>
-          <div style={{ display: "flex", gap: 4 }}>
-            {[[true, "extended + trims"], [false, "plain cells"]].map(([v, l]) => (
-              <button key={String(v)} onClick={() => setShellExtend(v)} style={btn(shellExtend === v, C.series2)}>{l}</button>
-            ))}
-          </div>
+          {[["throat", throatEnd, setThroatEnd], ["mouth", mouthEnd, setMouthEnd]].map(([lab, val, set]) => (
+            <div key={lab} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, width: 40 }}>{lab}</span>
+              {[["trim", "extend + trim"], ["extend", "extend only"], ["plain", "plain"]].map(([v, l]) => (
+                <button key={v} onClick={() => set(v)} style={btn(val === v, C.series2)}>{l}</button>
+              ))}
+            </div>
+          ))}
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>region</span>
             {[[0, "both"], [1, "+x"], [-1, "\u2212x"]].map(([v, l]) => (
@@ -2113,20 +2140,21 @@ export default function GinkgoHorn() {
           no unions</strong>, and what comes back is {throat.N} cell shells of exactly {fmt(shellWall, 1)} mm wall.
           {" "}Adjacent blanks share material wherever their ducts run closer than {fmt(2 * shellWall, 0)} mm — most of the throat half of
           the horn — which is what a multicell's shared walls are.
-          {shellExtend ? <>
-            {" "}<strong style={{ color: C.inkDim }}>Extended + trims</strong> is built to be UNIONED. The blanks run past both end faces
-            (staggered per cell, so no two adjacent ones end on the same plane) and two trim solids come with them, so the union never
-            touches an end plane — that is where 54 of the measured degeneracies lived, 27 pairs of coplanar throat caps and 27 of
-            co-surface mouth caps. <strong style={{ color: C.inkDim }}>Union the {throat.N} blanks, subtract both trims, then subtract
-            the {throat.N} cutters.</strong> The <em>wall jitter</em> gives cells of opposite grid parity different walls: without it two
-            adjacent blanks each offset the same shared grid line by the same amount, so millimetres of their surfaces are the same
-            surface computed twice, landing under a micron apart — invisible, and below what a kernel can resolve. The note measures how
-            much near-copy surface is left; raise the jitter if it is not zero.
-          </> : <>
-            {" "}<strong style={{ color: C.inkDim }}>Plain cells</strong> keeps the ends exact and asks for no union at all:{" "}
-            <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell</strong>, {throat.N} independent
-            subtractions giving {throat.N} separate cell shells. Merging them into one horn is then a modelling decision to make in CAD.
-          </>}
+          {" "}<strong style={{ color: C.inkDim }}>The two ends are set separately, because they are not the same problem.</strong>
+          {" "}<em>Extend + trim</em> runs the blanks past that face (staggered per cell, so no two adjacent ones end on the same plane)
+          and ships the trim solid that cuts them back, so the union never touches that plane — where 54 of the measured degeneracies
+          lived, 27 pairs of coplanar throat caps and 27 of co-surface mouth caps. <em>Extend only</em> ships the overlength blanks and
+          leaves the cut to you. <em>Plain</em> makes the face from the loft's own end ring and asks for no cut there at all.
+          {" "}<strong style={{ color: C.inkDim }}>The mouth trim cuts on the aperture surface itself</strong>, a curved face the blanks
+          cross transversally, and it has never been reported failing. <strong style={{ color: C.inkDim }}>The throat trim cuts on the
+          plane z = 0</strong> — the same operation as a plane split at the throat, which has been measured failing on individual blanks.
+          On a <em>plain</em> throat the end ring is planar in z = 0 by construction and the wall stops exactly there; extended, the loft
+          runs up to 0.016 mm past its own cap plane on the shortest-extension cells, measured. The price of a plain throat is the
+          coplanar overlapping caps coming back, so it is a trade, not a fix.
+          {" "}The <em>wall jitter</em> gives cells of opposite grid parity different walls: without it two adjacent blanks each offset
+          the same shared grid line by the same amount, so millimetres of their surfaces are the same surface computed twice, landing
+          under a micron apart — invisible, and below what a kernel can resolve. The note measures how much near-copy surface is left;
+          raise the jitter if it is not zero.
           {" "}<strong style={{ color: C.inkDim }}>The wall has to be read against the throat cell width.</strong> The cells tile
           there, so each blank pushes the wall into its neighbour across the whole shared face; once 2x the wall passes a cell's width,
           the blanks on either side of that cell reach past each other and solids that share no edge at all share material. Measured at
