@@ -63,6 +63,21 @@ idea cannot come back by memory.
      cutters, so the region that stacks 6 deep is never unioned at all. This
      is the structural answer and the reason Phase 2 is still the plan.
 
+**THE IMPORT SETTINGS ARE THE NEXT THING TO RULE OUT (2026-09-03).** The
+shipped bodies audit topologically perfect — F-E+V = 2, every edge used once
+each way, every edge curve's control points ARE control points of both
+adjoining surfaces — so Shapr3D's default-ON Simplify Geometry, Advanced
+Healing, Healing (HOOPS) and Accurate Edge Computation have nothing to repair
+and can only subtract. Owner to re-import the SAME file with those four off
+(Sewing left on) and repeat both the throat-plane splits and the 13 pair
+unions. Same file, so any difference is import processing alone.
+This is also the best explanation for the per-body unpredictability: healing
+damage is decided per solid at import, which is invisible in what we ship.
+The owner reporting some blanks failing a plane SPLIT — one body, no union —
+is the observation that cannot be a pair effect. **Ask which blanks fail the
+split**; if that set is the set appearing in the union failures, it is the
+bodies, not the pairs.
+
 **Pair-hunting is over.** On the owner's own quarter export, 5 of 13 pair
 unions failed and no measured property of a pair predicted which — two
 near-twin pairs landed on opposite sides. See the CLAUDE.md finding for the
