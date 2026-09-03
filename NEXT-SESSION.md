@@ -28,6 +28,17 @@ carry the rest. Nothing here is a task.
   `fluxVsThroatMin`, and `bendFoldMin` (the torus condition — the only
   witness to a folded duct, since a folded one still meshes closed and passes
   every cap check).
+- **`samples` raised 64 -> 512** and `stations` can no longer exceed it. Only
+  ONE number in CLAUDE.md moved — the fold margin, which was 56% optimistic —
+  and the file's recorded 10.9% passage contraction turned out to be an
+  ALIASING artifact of reading stations 192 against samples 64.
+- **Mutual repulsion built** (`solveSeparation` mode `"repel"`, the owner's
+  proposal): every deficient pair as one linear constraint, all solved
+  together as a regularised least-squares. What it actually bought was the
+  DIAGONALS — the chain's own field slides ducts into diagonal neighbours and
+  nothing was scoring that (measured -3.28 mm reported against -5.52 mm left).
+  All three modes are now scored on the diagonals, which costs nothing on an
+  unseparated horn.
 - **The housekeeping pass**: the O-grid family and its whole mesh machinery
   deleted (~1130 lines), along with `solveBow`, `solveDepthForFc`,
   `shellSolids`, `buildSolidsSTEP`, `polyArea2`, `hypexFlareRate` and five
@@ -52,78 +63,78 @@ small enough that it may not be.
   curvature ~19% against sin^2 but buys a curvature discontinuity at each
   junction. Trade recorded in CLAUDE.md, not built.
 
-## AN IDEA WORTH A SESSION — separation as mutual REPULSION rather than a chain
+## SHIPPED, and what it did NOT fix — separation as mutual repulsion
 
-The owner's suggestion, and it is a better fit to the problem than the current
-chain solve. See CLAUDE.md for how `nudge` works today. The chain is 1-D: it
-walks each row and each column independently, sums the deficits along it and
-displaces each cell by the mean-centred cumulative. That is exact for a 1-D
-contact chain and it is why it beat naive pairwise pushes — but the geometry
-is not 1-D, so a cell pushed along its row lands somewhere its COLUMN chain
-did not account for, and the two fields are simply added.
+Built this session. Full numbers in CLAUDE.md; the short version is that the
+win was the diagonals and the scoring, not the search. On the one case in the
+comparison set that can actually be separated the two modes land within
+0.024 mm of each other, repulsion getting there in 10 rounds against 14 with
+less displacement and less dL. On the cases that cannot be separated they
+trade, and neither reaching the floor is the signal to move the DEPTH.
 
-A repulsion field would instead give every pair a force that grows as its gap
-closes, sum the forces per cell as VECTORS, and relax. What it buys:
-- diagonal and non-adjacent pairs enter naturally (today only the 27
-  orthogonal pairs are chained at all, while the shell audit found blanks
-  overlapping two columns apart)
-- the row and column fields stop being solved separately and then added
-- a gap that is comfortable contributes nothing, so the field concentrates
-  where the trouble is without a window having to be placed by hand
+Two things it deliberately did not do, both still open:
 
-What it must not lose, all currently guaranteed and all testable:
-- both mirrors (today by construction; a repulsion sum keeps them iff the
-  force law is isotropic and the pairs are mirror-complete)
-- the two pinned ends (the window is zero there — keep the same windowing)
-- dL, which the chain preserves to 0.07 mm today
-Start from the measured gap per pair per station, not from centroid distance.
+- **The field is one vector per cell times one window**, so it can slide a
+  duct but not re-route it. The chain's third structural limit — a pair's
+  push taken at that pair's single worst station — is untouched. A
+  per-STATION field is the next step and is a bigger build: the amplitude
+  becomes a profile, the windowing stops being a window, and the mirror and
+  end-pinning guarantees have to be re-established per station.
+- **No mode accounts for dL when it picks its answer** — see the queue.
 
 ## The queue
 
 In priority order. Each rests on a measurement, named.
 
-### 1. Raise the sampling — `samples` AND the preview stations
+### 1. What a FAILED separation solve should return
 
-**HALF OF THIS LANDED 2026-09-03: the clearance and the separation solve now
-build their own map at the EXPORT station count instead of reading the
-24-station preview.** That was forced by a returned export whose ducts
-interpenetrated 4.9 mm while the readout said +1.14 mm — see the CLAUDE.md
-finding. What is left here is `samples` (still 64 over the whole path) and the
-preview count itself, which the sliders still run on.
+All three modes return the best GAP they visited, with no account of dL. On a
+horn with no room that state can carry tens of millimetres of extra path
+spread, and it is applied to the geometry the moment the solve returns.
+Measured at 20 rounds, both modes on the same 47 pairs:
 
-The single highest-value item, and it fixes three metrics at once. `samples`
-defaults to 64 over the whole path, so a 65 mm bow feature gets ~13 samples
-and its curvature peak is missed.
+- the tool's defaults with the throat-fifth bow: repulsion buys 1.7 mm more
+  gap than the chain for **19 mm more dL**
+- at the dL-solved depth 357: the chain buys 0.5 mm more gap for **20.8 mm
+  more dL**
 
-- `bendFoldMin` reads 3.28 / 2.09 / 1.29 / 1.11 mm at 64 / 128 / 192 / 256
-  samples — monotone downward, so **the shipped margin is an upper bound**.
-- `fluxContractMax` reads 0.00% at both the preview (24) and export (64)
-  station counts against 10.9% at 192.
-- The clearance metric misses the near-throat dive at the preview's 24
-  stations entirely (+0.520 mm where 48 stations read -0.230), which is
-  asserted as a `KNOWN LIMIT` test that will flip when this lands.
+Same flaw from both sides. It only bites where the floor cannot be met, which
+is exactly where the honest answer is that there is no room — so one option is
+to return the INPUT whenever the floor is unreachable, and another is to
+report both states and let the owner apply either. A lexicographic rule (best
+gap, ties inside `tol` broken on dL) was checked against these numbers and
+changes nothing: the differences are 30x the tolerance. **This is a decision,
+not a bug hunt** — what to trade is the owner's call, which is why nothing was
+invented here.
 
-Measured cost: **essentially nil**. The map is dominated by `stations`, since
-the profile solve runs per station — ~90 ms at samples 64 against ~80 ms at
-samples 256, stations 64 both. What makes it a whole session is that it
-re-baselines recorded numbers across CLAUDE.md; doing it in one pass costs one
-re-baselining instead of three.
+Note also that `ampCap` is 40 mm and both modes hit it on the hard cases. A
+40 mm displacement on a horn whose throat cells are 4.5-7.3 mm wide is not a
+correction, and the cap is what permits the dL above.
 
-Note that `stations` ABOVE `samples` aliases outright: `idx = Math.round(u*M)`
-makes consecutive rings share a centreline point and frame. The UI ships 24
-(preview) and 64 (export) against samples 64, so it is safe today — but do not
-raise `stations` alone.
+### 2. Raise the PREVIEW station count
 
-### 2. Interpolate the station position and frame between samples
+**The `samples` half of this landed 2026-09-03** (64 -> 512, and `stations`
+can no longer exceed `samples`, so the aliasing trap is unreachable rather
+than documented). What is left is the preview count itself — the sliders still
+run on 24 stations while the exports and the clearance solve build at 64.
 
-Pairs naturally with (1) — same subsystem, same re-baselining. See the map
-defect below.
+The measurement behind it: the near-throat gap has a SHARP minimum near
+u = 0.021 and a station grid finds it only if a station lands there. 48, 96
+and 192 stations all contain u = 1/48 and all read exactly -0.2422 mm; 64
+straddles it; 24 misses it. The clearance readout and the separation solve
+already build their own 64-station map, so what remains is the geometry the
+sliders and the 3-D preview show.
 
-### 3. Decide whether depth 300 stays the default
+### 3. Interpolate the station position and frame between samples
+
+Pairs naturally with (2) — same subsystem. See the map defect below, which
+the `samples` raise has already taken from a 2.4x irregularity to 1.15x.
+
+### 4. Decide whether depth 300 stays the default
 
 See the note above. Owner's call, numbers ready.
 
-### 4. The clearance metric reads GROSS outlines; the export carries INSET ones
+### 5. The clearance metric reads GROSS outlines; the export carries INSET ones
 
 Offered and declined once, and still open. On the default horn the gross
 outlines interpenetrate 0.242 mm while the EXPORTED ones do not interpenetrate
@@ -134,31 +145,39 @@ thicker.
 
 ## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
 
-`mapThroatToMouth` samples each centreline at `samples = 64` internal points
-and then places each station by **`idx = Math.round(u * M)`, taking
+`mapThroatToMouth` samples each centreline at `samples` internal points and
+then places each station by **`idx = Math.round(u * M)`, taking
 `C = pts[idx]`** (src/hgrid-model.js, in the swept-section branch). The
-station's centre is therefore quantised to the nearest of 64 samples instead
-of being interpolated along the centreline.
+station's centre is therefore quantised to the nearest sample instead of
+being interpolated along the centreline.
 
-Consequence, measured: whenever `stations` does not divide 64, the ring
-spacing goes irregular. At **48 stations, every third step is exactly 2.00x
-its neighbours** — on all 18 cells, at stations 1, 4, 7, ... 46 (origin steps
-6.44, 6.62, **13.83**, 7.22 mm). At 24 it is a milder 3,2,3 pattern. At 64
-and 32 it is exact. Because the loft interpolates with a UNIFORM
-parameterisation, unevenly spaced rings are told they are evenly spaced and
-the surface leaves them — this is the same mechanism that made a
-non-dividing shell station count run 4.6 mm off its own rings.
+**THE `samples` RAISE HAS ALREADY TAKEN MOST OF THE STING OUT OF THIS**, which
+is worth knowing before budgeting a session for it. The quantum is one sample,
+so 8x the samples is 1/8 the error. Worst ratio between ADJACENT station steps
+on the default horn, samples 64 -> 512:
 
-**The tool's UI default is 64 stations, which divides exactly, so the
-shipped default export is clean.** That is why this has never shown up. It
-bites at 48, 40, 36 and any other non-dividing count, and it affects the
-DUCTS as well as the shell.
+| stations | 64 | 512 |
+|---|---|---|
+| 24 | 1.626 | 1.147 |
+| 32 | 1.071 | 1.071 |
+| 40 | 2.105 | 1.143 |
+| 48 | **2.443** | 1.150 |
+| 64 | 1.243 | 1.243 |
+
+32 and 64 divide both sample counts and do not move — their 1.07 and 1.24 are
+the horn's own path curvature, not snapping. What was a step 2.4x its
+neighbour at 48 stations is now 1.15x. Because the loft interpolates with a
+UNIFORM parameterisation, unevenly spaced rings are still told they are evenly
+spaced — the same mechanism that made a non-dividing shell station count run
+4.6 mm off its own rings — so interpolating is still the right fix, it is just
+no longer urgent.
 
 The fix is to interpolate `C` (and the frame) between samples rather than
 snapping, which is a small change with a wide blast radius: every duct
 moves slightly, and every measurement recorded in CLAUDE.md was taken on the
 snapped geometry. It deserves its own session and its own re-verification.
-Until then, **use station counts that divide 64**.
+Until then, station counts that divide 512 (32 and 64 among them) are exact,
+and everything else is now within about 15%.
 
 ## THE SHELL: WHAT FAILED, AND THE RULE THAT COMES OUT OF IT
 
@@ -267,7 +286,7 @@ thing being controlled.
 perfectly.
 
 ```bash
-npm run test:hgrid     # 475 closed-form checks; a physics change without a
+npm run test:hgrid     # ~490 closed-form checks; a physics change without a
                        # matching change here is a change that is not verified
 npm run build          # runs check:palette then test:hgrid, then vite
 npm run preview        # then load every page and confirm no console errors

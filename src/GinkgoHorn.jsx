@@ -709,7 +709,8 @@ export default function GinkgoHorn() {
     lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo } : null,
     bulge: bulgeOn ? { amp: bulgeAmp } : null,
     separate: sepSolve && sepSolve.amps
-      ? { amps: sepSolve.amps, uStart: sepSolve.uStart, uEnd: sepSolve.uEnd, lobes: sepSolve.lobes }
+      ? { amps: sepSolve.amps, uStart: sepSolve.uStart, uEnd: sepSolve.uEnd,
+          lobes: sepSolve.lobes, mode: sepSolve.mode }
       : null,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     thetaH, thetaV, arcH, arcV,
@@ -752,8 +753,18 @@ export default function GinkgoHorn() {
         // `sepFloor` is the one minimum-gap number: it is the thin-wall band,
         // the separation target, AND the throat knife-edge boundary — the run
         // over which the ducts have not yet opened to it is not a defect.
+        // THE DIAGONAL NEIGHBOURS ARE IN THE PAIR SET, and they cost
+        // nothing on an unseparated horn (measured identical worst gap,
+        // station and thin-band count at the defaults, with the bow and at
+        // the dL-solved depth — an ordered grid always has an orthogonal
+        // pair closer than any diagonal one). What they catch is a
+        // SEPARATION FIELD sliding a duct into the neighbour no chain
+        // walks: the per-duct nudge leaves -5.52 mm on the diagonals while
+        // reading -3.28 mm on the orthogonal pairs. The solver is scored on
+        // the same set, so this readout and the stage-8 one cannot disagree.
         value: G.ductClearance(rows, {
           jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
+          pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
         }),
       });
     }, 30);
@@ -1028,7 +1039,10 @@ export default function GinkgoHorn() {
       `mapStations=${stations}`,
       `lengthen=${o.lengthen ? `${o.lengthen.lobes}lobe/${o.lengthen.dir}/[${o.lengthen.uStart},${o.lengthen.uEnd}]` : "off"}`,
       `bulge=${o.bulge ? o.bulge.amp : "off"}`,
-      `separate=${o.separate ? `${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]` : "off"}`,
+      // the MODE and the peak amplitude go in the stamp too: a session was
+      // spent inferring an export's settings back out of its geometry, and a
+      // separation field is not recoverable from the solids at all
+      `separate=${o.separate ? `${o.separate.mode || "?"}/${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]${map && map.separate ? `/max${n(map.separate.ampMax)}mm` : ""}` : "off"}`,
       `wall=${shellWall}`, `jitter=${wallJitter}`, `shellStations=${shellStations}`,
       `throatEnd=${throatEnd}`, `mouthEnd=${mouthEnd}`,
       `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
@@ -1946,6 +1960,16 @@ export default function GinkgoHorn() {
             }, 30);
           }} style={{ ...btn(false, C.series3), opacity: sepBusy ? 0.4 : 1 }}>
             {sepBusy ? "solving…" : "solve · per-duct nudge"}</button>
+          <button disabled={sepBusy} onClick={() => {
+            setSepBusy(true);
+            setTimeout(() => {
+              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
+                { floor: sepFloor, mode: "repel", maxIter: 20 });
+              setSepSolve(r);
+              setSepBusy(false);
+            }, 30);
+          }} style={{ ...btn(false, C.series6), opacity: sepBusy ? 0.4 : 1 }}>
+            {sepBusy ? "solving…" : "solve · mutual repulsion"}</button>
           {sepSolve && sepSolve.amps && (
             <button onClick={() => setSepSolve(null)} style={btn(false, C.series5)}>clear</button>
           )}
@@ -1956,7 +1980,9 @@ export default function GinkgoHorn() {
               ? <span style={{ color: C.series4 }}>nothing to solve — the worst gap is already {fmt(sepSolve.gapBefore, 2)} mm</span>
               : <>
                   <span style={{ color: sepSolve.ok ? C.series4 : C.series1 }}>
-                    {sepSolve.mode === "uniform" ? "quick spread" : "per-duct nudge"}: worst gap {fmt(sepSolve.gapBefore, 2)} → {fmt(sepSolve.gapAfter, 2)} mm
+                    {sepSolve.mode === "uniform" ? "quick spread"
+                      : sepSolve.mode === "repel" ? `mutual repulsion${sepSolve.diagonals ? " (diagonals included)" : ""}`
+                      : "per-duct nudge"}: worst gap {fmt(sepSolve.gapBefore, 2)} → {fmt(sepSolve.gapAfter, 2)} mm
                   </span>
                   <span style={{ color: C.inkMuted }}>
                     {" "}· amplitude up to {fmt(sepSolve.ampMax, 1)} mm over [{fmt(sepSolve.uStart, 2)}, {fmt(sepSolve.uEnd, 2)}] of the path
@@ -1980,8 +2006,16 @@ export default function GinkgoHorn() {
           wall too thin to print</strong>, and this is the lever that clears both it and real interpenetration.
           {" "}<em>Quick spread</em> pushes every duct outward by one shared amount — cheap, one knob, and it honestly reports when that
           single knob cannot fix the geometry. <em>Per-duct nudge</em> resolves each over-packed row and column as a contact chain and
-          moves every duct individually — a few seconds, and the field keeps both mirrors by construction. Both leave the throat face and
-          the mouth tiling untouched, and lengthening re-equalises the separated paths if it is on.
+          moves every duct individually — a few seconds, and the field keeps both mirrors by construction. <em>Mutual repulsion</em> puts
+          every deficient pair into <strong style={{ color: C.inkDim }}>one</strong> regularised least-squares and solves them together, so
+          the rows, the columns and the <strong style={{ color: C.inkDim }}>diagonals</strong> stop being three answers added up — the nudge
+          walks rows and columns separately and cannot see a diagonal neighbour at all. All three leave the throat face and the mouth tiling
+          untouched, and lengthening re-equalises the separated paths if it is on.
+          <br />
+          Read the <strong style={{ color: C.inkDim }}>ΔL</strong> beside the gap, not just the gap. All three modes return the best gap they
+          visited, and on a horn with no room to give that state can carry tens of millimetres of extra path spread: measured on this tool's
+          own defaults with the throat-fifth bow, the nudge buys 1.7 mm less gap for 19 mm less ΔL than repulsion, and at the ΔL-solved depth
+          the trade runs the other way round. Neither clears the floor there — which is the signal to move the depth, not to keep solving.
           <br />
           The minimum also sets <strong style={{ color: C.inkDim }}>where it starts applying</strong>. The cells tile at the throat exactly
           as they tile at the mouth, so the first stations are a knife edge too, and asking for a full gap there asks the ducts for room they

@@ -459,8 +459,51 @@ exists.
   spread that is the ring's own slow variation rather than a missed peak. It
   is still optimistic in the SAMPLE count — see the under-resolution finding
   below.
-- **BOTH PASSAGE METRICS ARE UNDER-RESOLVED BY THE 64-SAMPLE CENTRELINE
-  DEFAULT, and this is the next thing to fix.** `samples` defaults to 64 over
+- **`samples` IS NOW 512, AND ONLY ONE NUMBER IN THIS FILE MOVED — THE FOLD
+  MARGIN. The re-baselining was far narrower than expected.** Raising the
+  centreline sample count from 64 to 512 at stations 64, over all 18 cells:
+    dL, Lmin, Lmax, mouth area, wallSpread, fc, kMax   unchanged to 4+ digits
+    sectionObliqMax                                    -0.9%
+    turnMax                                            +2.2%
+    clearance minMid (shipped bow)      -7.319 -> -7.498 mm  (less flattering)
+    bendFoldMin      (shipped bow)       4.454 -> 3.034 mm   -31.9%
+  So the sampling was never distorting the horn; it was mis-reading ONE
+  metric, and in the optimistic direction. Convergence and cost, on the
+  shipped throat-fifth bow:
+    samples     64     128     256     512    1024    2048
+    foldMin   4.455   3.980   3.349   3.034   2.871   2.853  mm
+    error      +56%    +40%    +17%   +6.3%   +0.6%    0.0%
+    preview     49      46      41      49      68     113   ms
+    export     119      95      92      98     131     167   ms
+  **The cost is FLAT to 512** and only starts rising at 1024, so 512 takes
+  the error from 56% to 6.3% for nothing. The residual is a known ONE-SIDED
+  bias — the metric can only be optimistic — and 1024 is what to reach for if
+  a fold margin is ever marginal.
+  **`stations` CAN NO LONGER EXCEED `samples`**: the map takes
+  `M = max(samples, stations)`, so the documented aliasing trap is now
+  unreachable rather than merely written down. Measured on the shipped bow at
+  stations 192, the aliased read (samples 64) reports fluxContract 0.18% and
+  obliquity 35.47 deg against 0.06% and 32.50 for the honest one — aliasing
+  invents about three quarters of a contraction reading.
+  **THE 10.9% CONTRACTION FIGURE THIS FILE CARRIED WAS AN ALIASING ARTIFACT.**
+  It was measured at stations 192 against samples 64. At the current defaults
+  `fluxContractMax` reads 0.01-0.18% at every resolution tried, aliased or
+  not, so it is NOT the metric the sampling raise was needed for. `bendFold`
+  was, and is.
+  **TWO REAL THINGS THE FINER SAMPLING REVEALED**, both about the throat-fifth
+  bow and both in the less flattering direction:
+  (1) the interior obliquity of a throat-start bow was under-read about
+  TENFOLD — 0.81 -> 7.78 deg at the shipped arcH 500, 1.04 -> 10.52 at the
+  superseded 555 — and at 555 that BREAKS the obliquity bound (10.52 deg of
+  tilt against 9.51 of ring curvature) where at 500 it still holds;
+  (2) at arcH 555 the same bow's fold margin is **0.86 mm** at honest
+  sampling, i.e. that horn was within a millimetre of a duct turning inside
+  out. At arcH 500 it is 3.03 mm. One more reason the arc moved.
+  The one cost is the TEST SUITE, which builds hundreds of maps and now takes
+  minutes rather than seconds. Tests that do not care about the fold margin
+  can pass `samples` explicitly; most of them do not need to.
+- **BOTH PASSAGE METRICS WERE UNDER-RESOLVED BY THE OLD 64-SAMPLE DEFAULT.**
+  (Superseded by the finding above, which fixed it; kept for the measurement.) `samples` defaults to 64 over
   the whole path, so a 65 mm bow feature gets ~13 samples and its curvature
   peak is missed. Measured on the shipped bow: `bendFoldMin` reads 3.28 /
   2.09 / 1.29 / 1.11 mm at 64 / 128 / 192 / 256 samples — monotone downward,
@@ -1602,6 +1645,88 @@ exists.
   Higher floors saturate honestly: floor 1.0 reaches +0.73 at the 40 mm
   amplitude cap with dL 10.6 — the throat region genuinely runs out of
   room, and the report says so instead of pretending.
+- **MUTUAL REPULSION IS BUILT (`solveSeparation` mode `"repel"`), AND WHAT IT
+  BOUGHT IS THE DIAGONALS — not a better search.** The owner's proposal. Every
+  pair under the floor contributes ONE linear constraint at that pair's own
+  worst station, `(x_b - x_a) . e_p = d_p`, and the whole set is solved at once
+  as `min_x sum_p ((x_b - x_a).e_p - d_p)^2 + ridge |x|^2` through the normal
+  equations and the same LU the B-spline writer uses. Two of the chain's three
+  structural limits go: rows, columns and diagonals become ONE system instead
+  of three fields added together, and a diagonal pair can be pushed on at all.
+  The third stays — the field is still one vector per cell times one window,
+  so it can SLIDE a duct but not re-route it, and that needs a per-station
+  field.
+  **THE RESULT THAT MATTERS IS A DEFECT THE CHAIN CREATES AND CANNOT SEE.**
+  Only the 27 orthogonal pairs were ever scored, so the chain's own field is
+  free to slide a duct into a DIAGONAL neighbour, and it does: measured on
+  the shipped bow at 32 stations, 4 rounds, the chain reports **-3.28 mm** on
+  the orthogonal pairs while leaving **-5.53 mm** on the diagonals.
+  **THE FIX IS THE SCORE, NOT THE FORCES.** The chain still cannot PUSH on a
+  diagonal pair — its walk is by row and column — but once the diagonals are
+  in the score, a state that damages one can no longer be the best state
+  visited: the same solve on the same geometry then reports -3.37 mm and
+  leaves exactly that, i.e. 2.16 mm better on the real worst gap AND with
+  less material moved (32.3 mm of displacement against 40.0). So EVERY
+  mode is now scored with the diagonals in (`pairSteps`, 47 pairs at 6x3),
+  and that costs nothing on an unseparated horn — measured identical minMid,
+  minMidAt and thin-band count at the defaults, with the bow and at the
+  dL-solved depth, because an ordered grid always has an orthogonal pair
+  closer than any diagonal one. `ductClearance`'s own default stays
+  orthogonal, so every figure recorded in this file still reads the same.
+  The UI's clearance readout uses the same set, or stage 8 and the verdict
+  strip would print two different numbers for one horn.
+  **UNDER-RELAXATION IS NOT NEEDED HERE, and that follows from the argument
+  rather than from tuning.** The diffusion `relax` exists to damp is
+  Jacobi's, and it comes from answering each pair in ignorance of the others;
+  one joint solve cannot diffuse. Measured on the recorded 6x3/d320 case,
+  relax 0.5 / 0.8 / 1.0 all land on the same gap (+0.273 / +0.290 /
+  +0.267 mm) in 17 / 15 / 10 rounds — damping buys only rounds, and rounds
+  are the budget the UI has. `relax` is 1 for `"repel"` and stays 0.5 for the
+  chain.
+  **THE RIDGE HAD TO BE MADE RELATIVE TO THE CONSTRAINT BLOCK, and an
+  absolute one was a real bug rather than a bad taste.** The block's diagonal
+  grows with how many pairs are pushing, so one absolute number is heavy
+  damping on a horn with a few deficient pairs and nearly none on a horn
+  where every pair is deficient. Measured with an absolute ridge of 8 — the
+  value the hard case had selected — the recorded 6x3/d320 case (15 of 47
+  pairs deficient) moved **0.45 mm in 12 rounds** and the iteration turned
+  round on itself. Normalised by the mean diagonal it is scale free, and
+  0.05 is the largest value that still finishes inside the UI's 20 rounds
+  with margin (26 rounds at 0.25; 0.5 and 1 do not finish). On the case that
+  cannot be solved the gap is FLAT in the ridge (-4.31 to -4.32 over 0.02 to
+  0.25), so the knob is chosen on the case that can be.
+  **HEAD TO HEAD, 20 rounds, both modes scored on the same 47 pairs**:
+    case                                gap        dL        amp
+    defaults + shipped bow, floor 0.5
+      nudge                           -6.039     0.910     12.5 mm
+      repel                           -4.314    19.901     40.0 mm  (capped)
+    the dL-solved depth 357, floor 0.5
+      nudge                           -2.788    20.776     40.0 mm  (capped)
+      repel                           -3.291     0.012     15.6 mm
+    bulge 4 + shipped bow, floor 1.0
+      nudge                           -5.419     0.000     23.7 mm
+      repel                           -5.462     0.000     40.0 mm  (capped)
+    recorded 6x3 d320, floor 0.2
+      nudge                          **+0.291**  2.086     17.3 mm  (14 rounds)
+      repel                          **+0.267**  1.658     16.8 mm  (10 rounds)
+    defaults no bow / bow [0.3,0.95]
+      both modes return their input unchanged (-0.125 / -0.122 mm), which is
+      the sharp near-throat dive no per-cell field can reach
+  So: on the one case in the set that CAN be separated, the two land within
+  0.024 mm of each other and repulsion gets there in 10 rounds against 14
+  with less displacement and 0.43 mm less dL. On the cases that cannot, they
+  trade — and neither reaching the floor is the signal to move the depth.
+  **WHAT NEITHER MODE DOES, now visible from both sides: the returned state
+  is the best GAP visited, with no account of dL at all.** On the defaults
+  repulsion buys 1.7 mm more gap for **19 mm more dL**; at depth 357 the
+  chain buys 0.5 mm more gap for **20.8 mm more dL**. Both are the same flaw
+  read in opposite directions, and it only bites where the floor cannot be
+  met — where the honest answer is that there is no room. Not fixed here,
+  because what to trade is the owner's call and inventing a budget would hide
+  it; the UI prints dL before and after beside the gap, and the stage says to
+  read it. A lexicographic rule (best gap, ties inside `tol` broken on dL)
+  was checked against these numbers and would change nothing — the
+  differences are 30x the tolerance.
 - **THE THROAT-FIFTH BOW BREAKS THROUGH AT THE DEFAULT DEPTH AND NOT AT THE
   dL-SOLVED ONE, and the depth is the whole difference.** An earlier version
   of this bullet said the throat fifth was unmanufacturable full stop; that
