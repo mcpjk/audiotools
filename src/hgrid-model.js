@@ -1485,6 +1485,18 @@ export function mapThroatToMouth(throat, opts) {
     // their boundary exactly). "swept" = sections built per cell in specified
     // planes, which trades that invariant for centreline freedom.
     sectionMode = "flow",
+    // ── WHERE THE SECTION PLANE POINTS (swept mode) ─────────────────────────
+    // "tangent" keeps the section square to the direction of travel over the
+    // whole interior, ramping onto z-hat at the throat and onto the aperture
+    // normal at the mouth. That is the plane the expansion law is written on,
+    // so it is the plane the sections have to be built in — see the long note
+    // at `normalAt`. "bernstein" is the superseded quadratic blend, kept
+    // because the tests measure the new construction against it.
+    sectionAlign = "tangent",
+    // How long the two ramps are, in DUCT WIDTHS of the cell's own long
+    // transverse dimension. 1.5 is measured — see the ramp sweep in the tests
+    // and the finding in CLAUDE.md — and both ends can be overridden in mm.
+    alignWidths = 1.5, alignThroatLen = null, alignMouthLen = null,
     // ── PER-CELL PATH LENGTHENING ──
     // { lobes, dir, tol, ampCap } or null. Each cell whose centreline is
     // shorter than the longest cell's gets a lateral bow solved to close its
@@ -2056,14 +2068,77 @@ export function mapThroatToMouth(throat, opts) {
       const throatWorld = throatLocal.map((q) => v3(q[0] + cellRec.centroid[0], q[1] + cellRec.centroid[1], 0));
       const mouthWorld = mouthUV.map((q) => mouthAt(q[0], q[1]));
       const zHat = v3(0, 0, 1);
-      // the section normal at s: z-hat at the throat, the aperture normal at
-      // the mouth, the tangent in between
+      // ── WHERE THE SECTION PLANE POINTS, AND WHY IT IS AN ACOUSTIC CHOICE ──
+      // A horn's expansion law is a statement about the area the wave passes
+      // THROUGH, which is the section normal to the direction of propagation.
+      // A section tilted by th relative to travel carries |A| of surface but
+      // only |A| cos(th) of passage, so the law lands on the wrong quantity by
+      // exactly that factor, and it does so wherever the tilt is — which means
+      // the horn stops delivering the schedule it was solved for.
+      //
+      // Three directions have a claim on the section plane, and each claim is
+      // acoustic rather than geometric:
+      //   z-hat AT THE THROAT — the driver hands over a planar wavefront on
+      //     its own exit face, and that face has to be flat to seat on. The
+      //     claim is real but it is LOCAL: the wave stops being plane-parallel
+      //     as soon as it has crossed the duct once.
+      //   n_surf AT THE MOUTH — the biradial aperture IS the wavefront the
+      //     design aims to launch, which is the whole reason the ducts arrive
+      //     along its normal. Also local: the duct already arrives along
+      //     n_surf, so near the mouth the tangent and n_surf agree anyway.
+      //   THE TANGENT EVERYWHERE ELSE — in between, the wave goes where the
+      //     duct goes, and the cross-section that matters is square to it.
+      //
+      // The construction that was here spread the three over the whole path on
+      // a quadratic Bernstein basis, so the tangent's weight was 2u(1-u) —
+      // never more than 0.5, and under 0.06 at u = 0.03. That is fine while the
+      // path is gentle (it measured 2-4 deg of tilt on an unbowed horn) and it
+      // fails exactly where a bow puts curvature: measured 53.6 deg of tilt at
+      // u = 0.031 with the shipped throat-fifth bow, with the travel direction
+      // 56.5 deg off z-hat while the section plane had moved 3.0 deg. The
+      // passage then CONTRACTED 27% below its own throat area while the ring
+      // areas grew along the law, because the law was being satisfied in a
+      // plane the wave was not crossing.
+      //
+      // So the two end claims are honoured over a RAMP each and the tangent is
+      // followed everywhere between. Both ramps use smoothstep, which has zero
+      // value and zero slope at each end, so the normal field is C1 and the
+      // loft picks up no kink where a ramp begins or ends.
+      //
+      // The ramp LENGTHS are physical, not parametric: the reorientation
+      // happens over a few duct widths, because that is the distance in which
+      // the wave crosses the passage and forgets the flat exit. Stated in mm
+      // and converted per cell, so the same reasoning holds on any horn size,
+      // and floored at two station steps so a coarse preview still renders the
+      // ramp smoothly rather than stepping through it.
+      // The width used is the cell's LONG transverse dimension — the same one
+      // `f1` is keyed on, since it is the slowest crossing and therefore the
+      // one that sets how far downstream the exit plane is still felt.
+      const wCell = cellRec.Llong > 1e-9
+        ? cellRec.Llong : Math.sqrt((4 * Math.max(cellRec.area, 1e-9)) / Math.PI);
+      const rampT = alignThroatLen != null ? alignThroatLen : alignWidths * wCell;
+      const rampM = alignMouthLen != null ? alignMouthLen : alignWidths * wCell;
+      const fracOf = (mm) => Math.min(0.25, Math.max(2 / stations, L > 1e-9 ? mm / L : 0));
+      const uT = fracOf(rampT), uM = fracOf(rampM);
+      const smooth01 = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
       const normalAt = (u, T) => {
-        const b0 = (1 - u) * (1 - u), b1 = 2 * u * (1 - u), b2 = u * u;
-        return un3(v3(
-          b0 * zHat[0] + b1 * T[0] + b2 * nSurf[0],
-          b0 * zHat[1] + b1 * T[1] + b2 * nSurf[1],
-          b0 * zHat[2] + b1 * T[2] + b2 * nSurf[2]));
+        let w0, w1, w2;
+        if (sectionAlign === "bernstein") {
+          // the superseded construction, kept as the comparison baseline the
+          // tests measure the new one against — never as a live default
+          w0 = (1 - u) * (1 - u); w1 = 2 * u * (1 - u); w2 = u * u;
+        } else {
+          w0 = u <= 0 ? 1 : 1 - smooth01(u / uT);
+          w2 = u >= 1 ? 1 : smooth01((u - (1 - uM)) / uM);
+          w1 = 1 - w0 - w2;
+        }
+        const n = v3(
+          w0 * zHat[0] + w1 * T[0] + w2 * nSurf[0],
+          w0 * zHat[1] + w1 * T[1] + w2 * nSurf[1],
+          w0 * zHat[2] + w1 * T[2] + w2 * nSurf[2]);
+        // the three claims can only cancel if the path doubles back on itself,
+        // which is a geometry to report rather than a case to blend through
+        return nrm3(n) > 1e-9 ? un3(n) : un3(T);
       };
       // in-plane axis from the transported frame, projected into the section
       const axisAt = (n, r) => {
@@ -2278,7 +2353,18 @@ export function mapThroatToMouth(throat, opts) {
     // short dimension is a cheaper turn than bending across its long one,
     // which is what the "short" bow direction exists to exploit. Integrated
     // over the path and reported in mm, against the lambda/8 budget.
-    let bendWiden = 0;
+    // `bendFold` rides in the same loop and is the price of squaring the
+    // sections to the path. A section swept around a bend of radius R sweeps
+    // its inner edge around a SMALLER radius, and once the inner edge reaches
+    // the centre of curvature the swept solid turns itself inside out — the
+    // torus condition, a > R for a section of inner half-extent a, and exact
+    // as a criterion — though the kappa it reads is only as good as the
+    // centreline sampling, so the margin comes out an UPPER bound on a bow
+    // whose feature is short against `samples`. The old Bernstein blend hid
+    // this case by leaving the section oblique, which is not a fix: the solid
+    // was legal because the passage was wrong. Reported in mm of clearance,
+    // negative meaning folded.
+    let bendWiden = 0, bendFold = Infinity, bendFoldAt = 0;
     for (let q = 0; q < stations; q++) {
       const idx = Math.round((q / stations) * M), nx = Math.min(M, idx + 1), pv = Math.max(0, idx - 1);
       const d1 = s3(pts[nx], pts[pv]);
@@ -2295,7 +2381,30 @@ export function mapThroatToMouth(throat, opts) {
       const dth = 0.5 * (kappa[q === stations ? M : idx] + kappa[nx]) *
         (sArr[Math.min(M, idx + 1)] - sArr[Math.max(0, idx - 1)]) / 2;
       bendWiden += (hi - lo) * dth;
+      // nHat points at the centre of curvature, so the ring's largest reach
+      // along it, measured from the centreline point the curvature belongs to,
+      // is the inner half-extent.
+      // The curvature is taken as the WORST over the centreline samples this
+      // station stands for, never the value at the station itself: kappa is a
+      // property of the path and a bow can put its peak between two stations,
+      // where a station-point reading would miss it. On the shipped
+      // throat-fifth bow the station-point form read more than TWICE the
+      // margin at 24 stations that it read at 64 — it got safer the less you
+      // looked. The ring's extent, by contrast, varies slowly, so pairing the
+      // worst local curvature with the station's own ring is the conservative
+      // reading; it leaves a 7% spread over the same range.
+      const half = Math.max(1, Math.round(M / (2 * stations)));
+      let kq = 0;
+      for (let z = Math.max(0, idx - half); z <= Math.min(M, idx + half); z++)
+        kq = Math.max(kq, kappa[z]);
+      if (kq > 1e-12) {
+        let inner = -Infinity;
+        for (const pt of ring) inner = Math.max(inner, dot3(s3(pt, pts[idx]), nHat));
+        const margin = 1 / kq - inner;
+        if (margin < bendFold) { bendFold = margin; bendFoldAt = q / stations; }
+      }
     }
+    if (!isFinite(bendFold)) bendFold = Infinity; // a straight duct cannot fold
 
     // ── THE MEASURED INNER-VS-OUTER WALL DIFFERENCE ────────────────────────
     // bendWiden above INTEGRATES w * dtheta and so counts every turn as a
@@ -2365,8 +2474,56 @@ export function mapThroatToMouth(throat, opts) {
       });
     }
 
+    // ── THE AREA THE WAVE ACTUALLY CROSSES ─────────────────────────────────
+    // `area` is the section's own surface and `axial` its projection on the
+    // centreline tangent. Neither is the schedule the expansion law means once
+    // the section is allowed to tilt: the flux-carrying cross-section is the
+    // projection on the direction the SECTION CENTROID travels, which is the
+    // direction the volume integral advances along, and the obliquity is the
+    // angle between the section's own normal and that direction.
+    //
+    // This is the number that has to be monotone, and it is the one no metric
+    // in this tool used to report. `wallSpread` cannot see a tilt (it measures
+    // fibre lengths BY THE MOUTH, so an excursion that unwinds is free) and
+    // `turnMax` is gross turning, which is not the same question. A horn whose
+    // ring areas follow the law perfectly can still put a constriction in the
+    // passage, and did: measured 27% below the cell's own throat area with the
+    // Bernstein blend and the shipped throat-fifth bow.
+    let obliqMax = 0, obliqAt = 0, fluxMin = Infinity, fluxContract = 0, contractAt = 0;
+    {
+      let run = -Infinity;
+      for (let q = 0; q <= stations; q++) {
+        const a = sched[Math.min(stations, q + 1)], b = sched[Math.max(0, q - 1)];
+        const dC = v3(a.cx - b.cx, a.cy - b.cy, a.cz - b.cz);
+        if (!(nrm3(dC) > 1e-12)) continue;
+        const dHatC = un3(dC);
+        const [ax, ay, az] = vecArea(rings[q]);
+        const mag = Math.hypot(ax, ay, az);
+        const flux = Math.abs(ax * dHatC[0] + ay * dHatC[1] + az * dHatC[2]);
+        const ob = Math.acos(Math.min(1, Math.max(0, mag > 1e-12 ? flux / mag : 1))) * R2D;
+        if (ob > obliqMax) { obliqMax = ob; obliqAt = q / stations; }
+        sched[q].flux = flux;
+        sched[q].obliqDeg = ob;
+        fluxMin = Math.min(fluxMin, flux);
+        // contraction is measured against the RUNNING MAXIMUM, not against the
+        // previous station: a passage that opens, closes and reopens has a
+        // constriction whether or not any single step is large
+        if (flux > run) run = flux;
+        else if (run > 1e-12) {
+          const d = (run - flux) / run;
+          if (d > fluxContract) { fluxContract = d; contractAt = q / stations; }
+        }
+      }
+      if (!isFinite(fluxMin)) fluxMin = 0;
+    }
+
     rows.push({
       id: cellRec.id, label: cellRec.label, i, j,
+      obliqMaxDeg: obliqMax, obliqMaxAt: obliqAt,
+      fluxMin, fluxContract, fluxContractAt: contractAt,
+      // the passage measured against the cell's OWN throat: below 1 the horn
+      // is narrower somewhere than the hole the driver feeds it through
+      fluxVsThroat: sched[0].flux > 1e-12 ? fluxMin / sched[0].flux : 1,
       Lpath: L, turnDeg: turn * R2D, twistDeg: twist, aimErrDeg: aimErr,
       mouthCentroid: mc, mouthCorners: corners, mouthNormal: nSurf,
       mouthArea: sched[stations].area,
@@ -2377,6 +2534,7 @@ export function mapThroatToMouth(throat, opts) {
         ? polyArea3(mouthUVTiled.map((q) => mouthAt(q[0], q[1])))
         : sched[stations].area,
       sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll, bendWiden, wallSpread,
+      bendFold, bendFoldAt,
       snakeAmp, snakeShort, snakeOnAxis, snakeSpan, sepAmp,
       profRatioGross,
       // profile: m is per mm, fc the cutoff it corresponds to, and the scale
@@ -2514,6 +2672,23 @@ export function mapThroatToMouth(throat, opts) {
     // the same thing MEASURED on the wall fibres, so reversals do cancel —
     // this is the phase error across the passage and the one to read
     wallSpreadMax: Math.max(...rows.map((r) => r.wallSpread)),
+    // ── THE PASSAGE SCHEDULE, WHICH IS THE ACOUSTIC ONE ────────────────────
+    // How far the section plane departs from square to travel, the worst
+    // contraction of the flux-carrying area anywhere on any duct, and how many
+    // ducts contract at all. A horn is coherent when `sectionObliqMax` is
+    // small and `fluxContractMax` is zero; the ring areas following the law is
+    // a necessary condition and not a sufficient one.
+    sectionObliqMax: Math.max(...rows.map((r) => r.obliqMaxDeg)),
+    sectionObliqCell: rows.reduce((a, r) => (r.obliqMaxDeg > a.obliqMaxDeg ? r : a), rows[0]).label,
+    fluxContractMax: Math.max(...rows.map((r) => r.fluxContract)),
+    fluxContractCells: rows.filter((r) => r.fluxContract > 1e-6).length,
+    // the narrowest the passage ever gets, as a fraction of that cell's own
+    // throat: under 1 the horn is tighter somewhere than the driver's exit
+    fluxVsThroatMin: Math.min(...rows.map((r) => r.fluxVsThroat)),
+    // how much room the tightest bend has left before the swept section turns
+    // itself inside out — mm, negative is a folded solid
+    bendFoldMin: Math.min(...rows.map((r) => r.bendFold)),
+    bendFoldCell: rows.reduce((a, r) => (r.bendFold < a.bendFold ? r : a), rows[0]).label,
     aimMax: Math.max(...rows.map((r) => r.aimErrDeg)),
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
     aimLimitDeg: (lam / (4 * (mouthWEff / nc))) * R2D,

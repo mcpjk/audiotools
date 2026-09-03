@@ -1,5 +1,58 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## THE STANDING PRIORITY (read the top of CLAUDE.md before anything here)
+
+A coherent horn built on acoustic principles is the point. Geometric
+decisions in this tool are acoustic decisions and have to be argued and
+measured that way. The section-plane finding is the worked example of what
+happens otherwise: a construction chosen for construction reasons satisfied
+every number the tool reported while the passage the wave crosses contracted
+27% below its own throat.
+
+## Shipped 2026-09-03 — the section plane follows the tangent
+
+`sectionAlign: "tangent"` is the default: two smoothstep ramps of 1.5 duct
+widths (`alignWidths`) onto z-hat at the throat and the aperture normal at
+the mouth, tangent everywhere between. Interior obliquity 23.14 -> 0.34 deg,
+passage contraction under the shipped bow 20.94% on 14 of 18 ducts -> 0.00%
+on 0 of 18. Two new metrics, both in the UI: **Passage** (`fluxContractMax`,
+`sectionObliqMax`, `fluxVsThroatMin`) and **Bend clearance** (`bendFoldMin`,
+the torus condition — the only witness to a folded duct, since a folded one
+still meshes closed and passes every cap check). `sectionAlign: "bernstein"`
+keeps the superseded blend as the tests' comparison baseline.
+
+### The three things that came out of it, in priority order
+
+1. **RAISE `samples` FROM 64 — both new metrics are under-resolved by it.**
+   A 65 mm bow feature gets ~13 centreline samples, so its curvature peak is
+   missed: `bendFoldMin` reads 3.28 / 2.09 / 1.29 / 1.11 mm at 64 / 128 /
+   192 / 256 samples (monotone down, so the shipped number is an UPPER
+   bound), and `fluxContractMax` reads 0.00% at both the preview (24) and
+   export (64) station counts against 10.9% at 192. Measured cost of raising
+   it: essentially nil — the map is dominated by `stations`, since the
+   profile solve runs per station (~90 ms at samples 64 against ~80 ms at
+   samples 256, stations 64 both). It was not done in that session because
+   it re-baselines recorded numbers across CLAUDE.md and deserves its own
+   verification pass. Do it next.
+
+2. **THE SHIPPED BOW WINDOW IS TOO TIGHT AT THE CURRENT DEFAULTS.** At depth
+   300 the middle row is 25.5 mm short and the throat fifth is 65 mm of path,
+   so the solved bow is a 28.3 mm hairpin at R_min 8.0 mm in a duct 4.5-7.3
+   mm wide — fold margin +3.3 mm at 1 lobe, NEGATIVE at 2 and 3. Under
+   refinement it constricts the passage 11.7%, where every other window
+   measures 0.00% at every resolution. Two ways out, both already measured:
+   widen the window ([0,0.5], [0.2,0.8] and [0.3,0.95] are all clean), or
+   solve the depth to 360.8 mm (dL 25.5 -> 11.1 mm) so there is less to buy
+   back. This is an owner decision — the recorded habit is "throat fifth
+   almost every time" — so put the two numbers in front of them rather than
+   changing a default.
+
+3. **INTERPOLATE `C` AND THE FRAME BETWEEN SAMPLES** rather than snapping —
+   the map defect below. It pairs naturally with (1), since both are about
+   the centreline sampling, and doing them in one pass costs one
+   re-baselining instead of two.
+
+
 ## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
 
 `mapThroatToMouth` samples each centreline at `samples = 64` internal points
