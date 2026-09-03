@@ -791,24 +791,50 @@ exists.
   2 reads +0.046 mm, still under any usable floor, because the ducts have
   not had path length to open yet. The boundary wanted is "where the ducts
   have separated", not a fixed station count.
-- **THE THROAT BOUNDARY IS NOW BUILT (`throatFloor`), AND THE FLOOR DEFINES
-  IT — one number, not two.** A pair's THROAT RUN is the contiguous run from
-  station 0 over which the gap stays inside the band (-floor, +floor): still
-  within one tolerance of touching, and not yet separated by one. Defect
-  statistics start after it. So raising the minimum moves the boundary with
-  it, which is the point — measured live in the UI at the defaults, floor
-  0.5 / 2 / 5 mm reads the worst gap at station 2 / 4 / 6 of 24, at 0.53 /
-  2.02 / 5.13 mm.
-  **THE BAND IS SYMMETRIC, AND THE NEGATIVE HALF IS THE WHOLE DESIGN.** The
-  obvious rule — mirror the mouth's joint walk-back, i.e. walk while in
-  contact — is WRONG at the throat: the mouth's overlap is a deliberate
-  bulge, the throat's is the profile's own interpenetration, and a contact
-  walk would file the most important defect away as a knife edge. What
-  separates them is scale, measured: the near-throat wobble runs 0.002-0.24
-  mm, a real interpenetration dives to -1.5 mm by station 1 and -3.6 mm by
-  station 5. So a dive past -floor ENDS the run. Verified both ways — at the
-  old defaults, depth 150, T 0.7 and 1.0, minMid stays -2.955 and -3.640 mm
-  at the same stations with the rule on as with it off.
+- **THE THROAT BOUNDARY IS THE GAP HAVING TO BE OPENING (`throatFloor`).**
+  A pair's THROAT RUN is the contiguous run from station 0 over which the
+  gap is still BELOW the floor AND has not decreased from the station
+  before it. Either failure ends it: reaching the floor means the pair has
+  separated and ordinary defect scoring takes over; CLOSING again means the
+  ducts are moving back toward each other, which is a defect at any
+  magnitude and at any station, and the station that closed is scored as
+  one. Near the throat this asks for NO absolute clearance at all — only
+  that the wall never gets thinner than it already is — which is the
+  weakest requirement that still refuses to call closing ducts a joint.
+  **IT REPLACED A SYMMETRIC (-floor, +floor) BAND, and the band was too weak
+  in exactly the place it mattered** (owner's proposal, 2026-09-03). A gap
+  that dived to -0.49 mm and recovered sat inside a 0.5 mm band and was
+  filed as knife edge, so it never reached `minMid` — the number the
+  separation solver optimises. Measured at the 2026-09-02 defaults, 48
+  stations: the band reported minMid +0.510 mm while an independent
+  point-in-solid test on the same outlines found 0.258 mm of real
+  interpenetration at u = 0.021.
+  **THE FLOOR NO LONGER DECIDES WHETHER A DIVE IS FORGIVEN, only how far the
+  knife-edge run reaches**, and that is the behavioural change to know.
+  Under the band, raising the floor widened it and hid more; under the
+  monotone rule the defect reads the SAME at every floor the UI can ask
+  for — measured -0.0015 mm at floors 0.1 / 0.5 / 1 / 2 / 5 while the knife
+  reach grows 1 -> 6 stations.
+  **THE TOLERANCE IS FLOAT NOISE (1e-6 mm), NOT A PHYSICAL SLACK, and that
+  is a measurement rather than a taste**: over the sub-floor stretch the
+  worst backward step on a geometry that is genuinely opening is EXACTLY
+  0.0000 mm at both 24 and 48 stations, across T = 0, 0.3, 0.7, 1.0 and the
+  dL-optimal depth. Every backward step observed anywhere was the station-1
+  dive itself. Do not soften it into a fraction of the floor; there is
+  nothing measured to justify one.
+  It still does its ORIGINAL job wherever the pair really is just opening
+  from the tiling: at T 0.3 it lifts minMid 0.3231 -> 0.6229 mm over 6 of 27
+  pairs and reports `throat.dip === null`. `throat.dip` / `dipAt` report the
+  backward step that ended a run, so the closing is named rather than merely
+  scored, and the UI carries a warning keyed on it (with the two generic
+  clearance warnings gated off when the dip is what they are both seeing —
+  otherwise one fact arrived three times).
+  **SATURATION IS NOW STRUCTURALLY HARD TO REACH**, because the cells tile at
+  the MOUTH too, so every pair closes again somewhere and the run terminates
+  on its own. The cap (one station short of the joint) is still what
+  guarantees it and still fires at coarse resolutions — 19 of 27 pairs at 4
+  stations with a 40 mm floor — and the invariant that matters (a floor the
+  horn never reaches must never pass vacuously) is asserted at both.
   **THE "WOBBLE" IS NOT A WOBBLE — IT IS REAL INTERPENETRATION THAT 24
   STATIONS CANNOT SEE, and this bullet said otherwise for two sessions.**
   The station-dependent readings (-0.002 / -0.122 / -0.241 / -0.122 mm at

@@ -35,18 +35,26 @@ printable wall thickness. All are in the CLAUDE.md findings with numbers.
    interpenetrate at all — they leave a 0.123 mm wall sliver, and the tool
    reports +0.568 mm. The two errors partly cancel, which is why this went
    unnoticed.
-3. **The throat rule.** The symmetric (-floor, +floor) band classifies
-   stations 1..4 as knife edge for 19 of 27 pairs at the defaults, so a real
-   dip inside the band never reaches `minMid` — the number the separation
-   solver optimises. The owner's proposal is to require the gap to INCREASE
-   monotonically away from the throat until it reaches the floor, which is
-   strictly stronger and would catch exactly this. Note it needs (1) first:
-   at 24 stations the dip is not sampled, so a monotonicity test would give
-   the right verdict with the wrong magnitude (-0.002 rather than -0.24).
+3. **The throat rule — BUILT, this is (3) and the owner took it.** The
+   symmetric (-floor, +floor) band is replaced by "the gap must be opening":
+   the throat run ends the moment the gap reaches the floor OR decreases.
+   See the CLAUDE.md finding for the contract, the measured 1e-6 mm
+   tolerance and the behaviour change (the floor no longer decides whether a
+   dive is forgiven). It fires on the tool's own defaults, correctly.
 
-**None of these three is built. They change every clearance number the tool
-prints, and (3) replaces a documented deliberate design, so they were put to
-the owner rather than taken.**
+**(1) AND (2) WERE OFFERED AND DECLINED for now, so the caveat below stands
+and is worth re-reading before trusting a small number.** Because (1) was
+declined, the dip's DEPTH at the live 24 stations is a lower bound — the
+default horn reads -0.002 mm where 48 stations and the independent test both
+read -0.24. The verdict is right at every resolution; the magnitude is not.
+The UI says so, in the warning and in the stage 8 hint. Because (2) was
+declined, "min gap" is still the gap between the AIR columns, not the printed
+wall, which is 0.4(1-s) mm thicker.
+
+**The owner also declined steering away from the throat-fifth bow region**,
+on the grounds that the solver's `ok: false` is enough. That geometry carries
+4.4 mm of confirmed interpenetration that no separation field can fix; it is
+a known and accepted limit, not an open bug.
 
 ## Done in the 2026-09-02 refinements session
 

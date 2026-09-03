@@ -903,14 +903,21 @@ export default function GinkgoHorn() {
       w.push(`${fab.process.label} needs at least ${fab.tMin} mm of wall; ${fmt(thickness, 2)} mm will not print reliably.`);
     if (map && map.band !== "ok")
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
-    if (map && clearance && clearance.overlap > 1e-3)
+    // The throat dip has its own warning below, which names the mechanism and
+    // the resolution caveat. Without this gate the same one fact arrives three
+    // times — once here, once as "the narrowest gap", once as the dip.
+    const dipOwns = clearance && clearance.throat && clearance.throat.dip != null
+      && clearance.minMidAt === clearance.throat.dipAt;
+    if (map && clearance && clearance.overlap > 1e-3 && !dipOwns)
       w.push(`Swept sections interpenetrate ${fmt(clearance.overlap, 3)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s). This is the trade the mode makes on purpose — the ends stay shared, the interior does not — but it is not yet resolved: lower T pulls the sections further inward, and centreline manipulation is the stronger lever that is not built. Note the section scale reads k = ${fmt(map.profScaleMax, 4)} ≤ 1, which proves non-overlap ONLY for flowed sections; here it says nothing.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
       w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${clearance && clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(clearance.overlap, 4)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s).` : ""}`);
-    if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6))
+    if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6) && !dipOwns)
       w.push(`The narrowest duct-to-duct gap is ${fmt(clearance.minMid, 4)} mm at station ${clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
     if (map && map.bulge && clearance && clearance.joint && clearance.joint.engaged < clearance.joint.pairs)
       w.push(`The coped joints are on but only ${clearance.joint.engaged} of ${clearance.joint.pairs} neighbour pairs actually meet — the bulge is too small to reach across the gap on the rest, so those edges end blunt, not coped. Raise the bulge amplitude, or lower T to shrink the gap the profile opens.`);
+    if (map && clearance && clearance.throat && clearance.throat.dip != null)
+      w.push(`The duct gap stops opening at station ${clearance.throat.dipAt} of ${clearance.throat.stations} and closes by ${fmt(clearance.throat.dip, 3)} mm before the ducts ever reach the ${fmt(sepFloor, 1)} mm minimum. Near the throat the cells tile, so no absolute clearance is asked for there — only that the wall never gets THINNER than it already is, and here it does. That is a defect at any magnitude, and it is not a knife edge. Note the depth quoted is a LOWER BOUND: the dip is sharp, the preview samples ${PREVIEW_STATIONS} stations, and the same geometry measured at 48 reads several times deeper.`);
     if (map && clearance && clearance.throat && clearance.throat.saturated > 0)
       w.push(`${clearance.throat.saturated} of ${clearance.throat.pairs} neighbour pairs never open to the ${fmt(sepFloor, 1)} mm minimum anywhere along the path, so the throat knife-edge run would have swallowed the whole duct — it is capped, and the gap reported is the best those pairs actually have. Lower the minimum, or give the profile more room (lower T, or more depth).`);
     if (map && clearance && clearance.thin && clearance.thin.count > 0 && !(clearance.overlap > 1e-3))
@@ -1903,12 +1910,23 @@ export default function GinkgoHorn() {
           the mouth tiling untouched, and lengthening re-equalises the separated paths if it is on.
           <br />
           The minimum also sets <strong style={{ color: C.inkDim }}>where it starts applying</strong>. The cells tile at the throat exactly
-          as they tile at the mouth, so the first stations are a knife edge too, and asking for a gap there asks the ducts for room they have
-          had no path length to open. Each pair's <strong style={{ color: C.inkDim }}>throat run</strong> is the stretch from the throat over
-          which the gap is still within one minimum of touching — inside it, contact is the knife edge; after it, a gap under the minimum is
-          the defect it always was. The band is symmetric, and the negative half is what keeps this honest: a duct driven <em>through</em> its
-          neighbour by more than the minimum ends the run and is reported, so the profile's own interpenetration can never be filed away as a
-          knife edge. Whatever contact the run does contain is reported beside it, never hidden.
+          as they tile at the mouth, so the first stations are a knife edge too, and asking for a full gap there asks the ducts for room they
+          have had no path length to open. Each pair's <strong style={{ color: C.inkDim }}>throat run</strong> is therefore the stretch from
+          the throat over which the gap is still below the minimum <em>and still opening</em>. It ends the moment either fails: reaching the
+          minimum means the pair has separated and ordinary scoring takes over, while <strong style={{ color: C.inkDim }}>closing again</strong>
+          means the ducts are moving back toward each other — a defect at any magnitude, at any station, and the station that closed is scored
+          as one.
+          <br />
+          This replaced a symmetric band around zero, which was too weak in exactly the place it mattered: a gap that dived to −0.49 mm and
+          recovered sat inside a 0.5 mm band and was filed as a knife edge, so it never reached the number this solver optimises. The rule now
+          asks for no absolute clearance near the throat at all — only that the wall never gets <em>thinner</em> than it already is — which is
+          the weakest requirement that still refuses to call closing ducts a joint. One consequence worth knowing: the minimum no longer
+          decides whether a dive is forgiven, only how far the knife-edge run reaches.
+          <br />
+          <strong style={{ color: C.inkDim }}>The verdict is resolution-independent; the depth is not.</strong> The dip is a sharp minimum
+          very close to the throat, and the preview samples {PREVIEW_STATIONS} stations, so it can step straight over the worst of it — on the
+          default horn the same defect reads −0.002 mm here and −0.24 mm at 48 stations, confirmed against an independent point-in-solid test.
+          Treat a reported dip as real and its depth as a lower bound.
         </div>
       </Stage>
 
@@ -2198,7 +2216,9 @@ export default function GinkgoHorn() {
                   ? `ducts interpenetrate at station ${clearance.overlapAt} · k ${fmt(map.profScaleMin, 2)}–${fmt(map.profScaleMax, 2)}`
                   : `narrowest gap at station ${clearance.minMidAt} · widest ${fmt(clearance.max, 1)} mm`
                     + (clearance.throat && clearance.throat.runs
-                      ? ` · measured past the throat knife edge, ${clearance.throat.knifeMax} of ${clearance.throat.stations} stations in`
+                      ? (clearance.throat.dip != null
+                          ? ` · the gap STOPS OPENING at station ${clearance.throat.dipAt}, closing ${fmt(clearance.throat.dip, 3)} mm — depth is a lower bound at ${PREVIEW_STATIONS} stations`
+                          : ` · measured past the throat knife edge, ${clearance.throat.knifeMax} of ${clearance.throat.stations} stations in`)
                       : "")}
               color={!clearance ? C.inkMuted : clearance.overlap > 0 || clearance.minMid < 1e-3 ? C.series5 : C.series4} />
           )}
