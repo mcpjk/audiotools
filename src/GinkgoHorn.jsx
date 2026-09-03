@@ -962,6 +962,32 @@ export default function GinkgoHorn() {
     : map);
   const [stepNote, setStepNote] = useState(null);
 
+  // EVERY EXPORT CARRIES THE SETTINGS THAT MADE IT, in the STEP header's
+  // FILE_DESCRIPTION. A file the owner sends back from CAD is otherwise not
+  // reproducible here — a whole session was spent inferring wall, ext and the
+  // extension phases from the geometry, and depth and the arcs could not be
+  // recovered at all. The writer escapes this, so it may contain anything.
+  const exportParams = () => {
+    const o = mapOpts;
+    const n = (v) => (typeof v === "number" ? +v.toFixed(4) : v);
+    const g = [
+      `nc=${o.nc}`, `nr=${o.nr}`, `m=${shapeOrder}`, `symmetric=${symmetric}`,
+      `R=${o.R}`, `t=${o.t}`, `seed=${seed}`,
+      `c=${n(o.c)}`, `exitHalfAngle=${o.exitHalfAngle}`,
+      `mouthMode=${o.mouthMode}`, `thetaH=${o.thetaH}`, `thetaV=${o.thetaV}`,
+      `arcH=${o.arcH}`, `arcV=${o.arcV}`, `depth=${n(depth)}`, `profileT=${n(profileT)}`,
+      `profileArea=${o.profileArea}`, `sectionMode=${o.sectionMode}`,
+      `divergeLen=${o.divergeLen}`, `arriveLen=${o.arriveLen}`, `tight=${o.tight}`,
+      `mapStations=${stations}`,
+      `lengthen=${o.lengthen ? `${o.lengthen.lobes}lobe/${o.lengthen.dir}/[${o.lengthen.uStart},${o.lengthen.uEnd}]` : "off"}`,
+      `bulge=${o.bulge ? o.bulge.amp : "off"}`,
+      `separate=${o.separate ? `${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]` : "off"}`,
+      `wall=${shellWall}`, `jitter=${wallJitter}`, `shellStations=${shellStations}`,
+      `extend=${shellExtend}`, `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
+    ];
+    return g.join(" ");
+  };
+
   const buildDXF = (map) => {
     const L = [];
     const put = (k, v) => { L.push(String(k)); L.push(String(v)); };
@@ -1946,7 +1972,7 @@ export default function GinkgoHorn() {
             if (solids) dlBin(`${stem}_ducts${regTag}.stl`, G.buildSTL(solids, stem), "model/stl");
           }}>STL · cell ducts</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            const r = G.buildSTEP(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null, name: stem });
+            const r = G.buildSTEP(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null, params: exportParams(), name: stem });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
@@ -1964,7 +1990,7 @@ export default function GinkgoHorn() {
             setTimeout(() => {
             const em = exportMap();
             const cfg = { t: thickness, wall: shellWall, extend: shellExtend, jitter: wallJitter, stations: shellStations };
-            const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, name: `${stem}_shell` });
+            const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell` });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
@@ -2019,7 +2045,7 @@ export default function GinkgoHorn() {
             }
             const r = lab && G.buildShellSTEP(throat, em, {
               t: thickness, wall: shellWall, extend: shellExtend, jitter: wallJitter,
-              stations: shellStations, only: lab, name: `${stem}_twocell`,
+              stations: shellStations, only: lab, params: exportParams(), name: `${stem}_twocell`,
             });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
