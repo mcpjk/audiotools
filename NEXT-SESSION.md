@@ -42,11 +42,54 @@ fold margin 4.45 -> 5.82 mm and its passage contraction 5.57% -> 2.78%.
 Whether the round 300 is worth those is the owner's call — the numbers are now
 small enough that it may not be.
 
+## Explored and REJECTED, so it is not re-proposed
+
+- **Staggering the bow across a row** (owner's proposal): built, measured on
+  three geometries, worse on every one, in both senses. Cells in a row bow the
+  SAME way by construction, so moving together preserves their spacing and
+  de-synchronising them destroys it. Reverted. Full numbers in CLAUDE.md.
+- **A bang-bang (constant-curvature) bow window**: would cut the peak
+  curvature ~19% against sin^2 but buys a curvature discontinuity at each
+  junction. Trade recorded in CLAUDE.md, not built.
+
+## AN IDEA WORTH A SESSION — separation as mutual REPULSION rather than a chain
+
+The owner's suggestion, and it is a better fit to the problem than the current
+chain solve. See CLAUDE.md for how `nudge` works today. The chain is 1-D: it
+walks each row and each column independently, sums the deficits along it and
+displaces each cell by the mean-centred cumulative. That is exact for a 1-D
+contact chain and it is why it beat naive pairwise pushes — but the geometry
+is not 1-D, so a cell pushed along its row lands somewhere its COLUMN chain
+did not account for, and the two fields are simply added.
+
+A repulsion field would instead give every pair a force that grows as its gap
+closes, sum the forces per cell as VECTORS, and relax. What it buys:
+- diagonal and non-adjacent pairs enter naturally (today only the 27
+  orthogonal pairs are chained at all, while the shell audit found blanks
+  overlapping two columns apart)
+- the row and column fields stop being solved separately and then added
+- a gap that is comfortable contributes nothing, so the field concentrates
+  where the trouble is without a window having to be placed by hand
+
+What it must not lose, all currently guaranteed and all testable:
+- both mirrors (today by construction; a repulsion sum keeps them iff the
+  force law is isotropic and the pairs are mirror-complete)
+- the two pinned ends (the window is zero there — keep the same windowing)
+- dL, which the chain preserves to 0.07 mm today
+Start from the measured gap per pair per station, not from centroid distance.
+
 ## The queue
 
 In priority order. Each rests on a measurement, named.
 
-### 1. Raise the sampling — `samples` AND the clearance stations, together
+### 1. Raise the sampling — `samples` AND the preview stations
+
+**HALF OF THIS LANDED 2026-09-03: the clearance and the separation solve now
+build their own map at the EXPORT station count instead of reading the
+24-station preview.** That was forced by a returned export whose ducts
+interpenetrated 4.9 mm while the readout said +1.14 mm — see the CLAUDE.md
+finding. What is left here is `samples` (still 64 over the whole path) and the
+preview count itself, which the sliders still run on.
 
 The single highest-value item, and it fixes three metrics at once. `samples`
 defaults to 64 over the whole path, so a 65 mm bow feature gets ~13 samples

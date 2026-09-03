@@ -2420,16 +2420,52 @@ head("Throat knife edge (the defect metric's other boundary)");
     post.every((r) => r.off.minMid < 0 && r.on.minMid === r.off.minMid && r.on.throat.dipAt === 1),
     post.map((r) => `${r.stations}: ${r.on.minMid.toFixed(3)}`).join(", "));
   //    THE PREVIEW COUNT IS BELOW THAT, AND NOW MISSES THE DIVE ENTIRELY.
-  //    A KNOWN LIMIT of the live UI, not a property of the horn: the dive is
+  //    A LIMIT OF THE SAMPLING, not a property of the horn: the dive is
   //    0.23-0.24 mm deep at every count that resolves it and 24 stations does
-  //    not sample it at all. Asserted so it cannot regress silently, and so
-  //    that raising the clearance resolution (NEXT-SESSION.md) flips a test
-  //    when it lands.
+  //    not sample it at all. The UI no longer READS the clearance at that
+  //    count — it builds its own map at the export count and measures that,
+  //    after an export came back with 4.9 mm of interpenetration while the
+  //    readout said +1.14 mm — but the sampling limit itself still stands and
+  //    is what queue item 1 addresses, so it stays asserted.
   const preview = M.ductClearance(
     M.mapThroatToMouth(th, dflt({ stations: 24 })).rows, { throatFloor: 0.5 });
   checkTrue("KNOWN LIMIT: the preview's 24 stations do not sample the dive at all",
     preview.throat.dip === null && preview.minMid > 0 && post[1].on.minMid < -0.2,
     `24 stations reports no dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
+
+  // 4b. A BOW THAT STARTS AT THE THROAT DRIVES THE DUCTS THROUGH EACH OTHER,
+  //     AND ONE THAT STARTS PAST IT COSTS NOTHING. This is the geometry of an
+  //     export the owner returned (arcH 500, depth 321, divergeLen 3, bulge 4,
+  //     1-lobe radial bow over [0, 0.25]) whose ducts visibly interpenetrate
+  //     in CAD. Measured at the EXPORT resolution, which is the whole point:
+  //     the same horn reads -0.61 mm at 24 stations and -5.53 mm at 64.
+  {
+    const ret = (o) => M.mapThroatToMouth(th, dflt({
+      exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245, depth: 321,
+      divergeLen: 3, bulge: { amp: 4 }, stations: 64, ...o,
+    }));
+    const gap = (m) => M.ductClearance(m.rows, { jointAware: true, throatFloor: 1.5 }).minMid;
+    const bare = gap(ret({ lengthen: null }));
+    const atThroat = gap(ret({ lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.25 } }));
+    const pastIt = gap(ret({ lengthen: { lobes: 1, dir: "radial", uStart: 0.1, uEnd: 0.5 } }));
+    checkTrue("the returned export's horn is clean until the bow is applied",
+      bare > -0.5, `worst gap ${bare.toFixed(3)} mm with no lengthening`);
+    checkTrue("a bow STARTING AT THE THROAT drives the ducts metres-deep through each other",
+      atThroat < -2, `worst gap ${atThroat.toFixed(3)} mm over [0, 0.25]`);
+    checkTrue("...and the same correction started past the throat costs nothing",
+      Math.abs(pastIt - bare) < 0.1 && pastIt > -0.5,
+      `worst gap ${pastIt.toFixed(3)} mm over [0.1, 0.5] against ${bare.toFixed(3)} bare`);
+    // and the resolution the UI reads at is what decides whether it is seen
+    const coarse = M.ductClearance(
+      M.mapThroatToMouth(th, dflt({
+        exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245, depth: 321,
+        divergeLen: 3, bulge: { amp: 4 }, stations: 24,
+        lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.25 },
+      })).rows, { jointAware: true, throatFloor: 1.5 }).minMid;
+    checkTrue("the preview count under-reads that overlap by an order of magnitude",
+      coarse > atThroat + 3,
+      `24 stations reads ${coarse.toFixed(3)} mm where 64 reads ${atThroat.toFixed(3)} mm`);
+  }
 
   // 5. A FLOOR THE HORN NEVER REACHES MUST NOT PASS VACUOUSLY. If the run
   //    were allowed to eat every interior station the defect set would be

@@ -1396,6 +1396,84 @@ exists.
   it to the preview made a perfectly exportable 4 mm cope look untenable. It
   now fires below about 2 mm of bulge, which is where the cope really is
   thinner than the loft can carry.
+- **THE CLEARANCE IS MEASURED ON THE GEOMETRY THE EXPORTS BUILD, and the
+  preview count it used to read was under-reporting a real export by 9x.**
+  The owner returned a shell STEP whose ducts visibly interpenetrate in CAD
+  while the tool's own readout said the separation solve had reached
+  +1.14 mm. Reproduced exactly from that file's settings stamp (arcH 500,
+  depth 321, divergeLen 3, T 0.7, bulge 4, 1-lobe radial bow over [0, 0.25],
+  wall 3, jitter 0.3): the UI solved at PREVIEW_STATIONS = 24 and reported
+  -0.614 -> +1.144 mm in 20 rounds at amplitude 29.2 mm, matching the owner's
+  screenshot to the digit. **That same field re-measured at the export's 64
+  stations is -4.945 mm.** The underlying geometry with no separation field
+  reads -0.614 at 24 stations, -3.841 at 32, -5.459 at 48 and -5.527 at 64.
+  So the number on screen was not a small under-read; it had the wrong SIGN.
+  The clearance effect now builds its OWN map at the export station count and
+  measures that, and `solveSeparation` is handed the same count. It was
+  already deferred off the render pass; measured cost 207 ms at 24 stations
+  against 392 ms at 64 (map 90 ms + clearance 302 ms). At the tool's own
+  defaults with the default bow the readout goes from showing nothing to
+  showing -7.32 mm at station 6 of 64, which is the truth.
+- **A BOW THAT STARTS AT THE THROAT IS WHAT DRIVES THE DUCTS THROUGH EACH
+  OTHER, AND ONE THAT STARTS PAST IT COSTS EXACTLY NOTHING.** On the returned
+  export's geometry at 64 stations, the worst DEFECT gap is -0.104 mm with
+  lengthening OFF and -5.527 mm with the 1-lobe bow over [0, 0.25], in a
+  narrow band at u = 0.03-0.08 that has recovered by u = 0.125. Sweeping the
+  region, every start at u >= 0.10 returns -0.104 mm — **bit-identical to the
+  unbowed horn**, i.e. the correction is free once it is off the throat:
+    region        1 lobe    2 lobes        region        1 lobe    2 lobes
+    [0.00, 0.25]   -5.53      -5.43        [0.20, 0.60]   -0.11      -0.11
+    [0.00, 0.33]   -4.92      -6.07        [0.30, 0.70]   -0.11      -0.11
+    [0.00, 0.50]   -2.45      -4.63        [0.30, 0.95]   -0.11      -0.11
+    [0.10, 0.50]   -0.11      -4.64        [0.50, 1.00]   -0.11      -0.11
+  The mechanism is room, not amplitude: at the throat the cells still TILE
+  (throat cells 4.5-7.3 mm wide, ~0.4 mm apart), so any lateral turn there
+  moves a duct into a neighbour that has nowhere to go, while by u = 0.10 the
+  profile has opened a gap for it to turn in. Note `bendFoldMin` goes NEGATIVE
+  for 2 lobes at [0.30, 0.70], [0.40, 0.90] and [0.50, 1.00] — a folded duct —
+  so the late regions are 1-lobe territory.
+  **This is the same fact the removed `solveBow` kept reporting** when it
+  chose [0.3, 0.95], and it is why the gap profile finding says the room is
+  not at the throat. The tool now warns, naming the bow and the fix, when the
+  worst overlap falls inside the bow region.
+- **STAGGERING THE BOW ACROSS A ROW WAS BUILT, MEASURED AND REJECTED — it
+  makes the overlap WORSE, on every geometry tried** (owner's proposal,
+  2026-09-03). The idea: adjacent tiling cells all start bowing at the same
+  point, so let the outermost turn first and each inner one follow, and the
+  inner one turns into space the outer has left. Implemented as a per-cell
+  shift of the window keyed to the cell's own distance from the axis (so
+  mirrored cells get exactly equal shifts — measured 9e-11 mm, symmetric by
+  construction rather than by hand), clamped to the arrival run with what was
+  asked but not given reported. Measured at 64 stations, worst gap in mm:
+    stagger            0      0.05     0.10     0.20     0.30
+    owner's export   -5.53    -8.34    -8.62    -9.46   -10.62
+    depth 300        -5.53    -9.11    -8.10    -8.75
+    depth 357        -4.46    -9.06    -8.28    -9.38
+  The reverse sense (innermost first) is no better: -5.09 / -5.32 / -5.89 /
+  -8.13 over the same stagger values on the export's geometry.
+  **WHY IT CANNOT WORK: the cells in a row bow the SAME WAY by construction.**
+  A radial-out field on the middle row points along the row, so every cell on
+  one side moves the same direction by a similar amount (amplitudes 22.2 /
+  19.8 / 18.8 mm across the half-row), and moving together largely PRESERVES
+  their spacing. De-synchronising them is what destroys it: when one cell sits
+  at peak displacement its neighbour is back at zero, so the peak lands on an
+  undisplaced duct. Synchronised motion is the feature, not the problem. The
+  problem is where the motion happens, which is the finding above.
+- **THE BOW'S CURVATURE REALLY IS CONCENTRATED AT THREE PLACES, and that is
+  the sin^2 window, not a defect.** The displacement is a sin^2 lobe, so its
+  second derivative goes as cos(2 pi s): |kappa| is extremal at the window's
+  START, MIDDLE and END and passes through zero at the quarter points.
+  Measured on the bend RADIUS of an outer middle-row cell through a [0, 0.25]
+  1-lobe bow: 18 mm at u = 0.016, 116 mm at 0.047, then 14 mm at 0.094,
+  135 mm at 0.156, then 17 mm at 0.203 — three sharp zones at R = 14-21 mm
+  separated by two nearly straight ones at R = 107-135 mm, an 8:1 swing.
+  A piecewise-constant-curvature window (bang-bang, +A/-A/+A over quarter,
+  half, quarter) would hold |kappa| constant and lower the PEAK by about 19%
+  for the same amplitude — A = 16a/L^2 against sin^2's 2 pi^2 a/L^2 = 19.7a/L^2
+  — but it buys that with a curvature DISCONTINUITY at each junction, which is
+  a worse thing to put in a duct wall than a smooth peak. Not built; recorded
+  so the trade does not have to be re-derived. The bigger lever remains the
+  lobe count, which sets amplitude as 1/n.
 - **THE THROAT BOUNDARY IS THE GAP HAVING TO BE OPENING (`throatFloor`).**
   A pair's THROAT RUN is the contiguous run from station 0 over which the
   gap is still BELOW the floor AND has not decreased from the station
