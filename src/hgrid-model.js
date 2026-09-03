@@ -2597,26 +2597,41 @@ export function mapThroatToMouth(throat, opts) {
 //   throatFloor — the mirror of the joint walk-back at the OTHER end. The
 //     cells tile at the throat exactly as they tile at the mouth, so the
 //     first stations are a knife edge too, and judging a minimum gap there
-//     asks the ducts for room they have had no path length to open. A pair's
-//     THROAT RUN is the contiguous run from station 0 over which the gap
-//     stays inside the band (-throatFloor, +throatFloor): still within one
-//     tolerance of touching, and not yet separated by one. Its last station
-//     is that pair's throat knife-edge station; the defect statistics start
-//     after it.
-//     THE BAND IS SYMMETRIC ON PURPOSE, and the negative half is what keeps
-//     the rule honest. A plain "walk while in contact" — the mouth rule
-//     mirrored literally — would swallow the profile's own interpenetration
-//     near the throat and stop reporting the one defect that matters most.
-//     Measured: at the 2026-09-01 defaults the near-throat gap wobbles about
-//     zero at the 0.002-0.24 mm level and does NOT refine away (-0.002 at 24
-//     stations, -0.122 at 32, -0.241 at 48, -0.109 at 64), while a geometry
-//     with real interpenetration dives to -1.5 mm at station 1 and -3.6 mm
-//     by station 5. An order of magnitude separates them, and the floor the
-//     user already sets is the natural place to cut. So a dive past
-//     -throatFloor ENDS the run and is reported as the defect it is.
-//     Nothing is hidden either way: `throat.worst` reports the deepest
-//     contact found INSIDE the run, exactly as `joint.engageMax` does at the
-//     mouth. 0 (the default) turns the whole rule off, and every statistic
+//     asks the ducts for room they have had no path length to open.
+//     THE RULE IS THAT THE GAP MUST BE OPENING. A pair's THROAT RUN is the
+//     contiguous run from station 0 over which the gap is still below
+//     throatFloor AND has not decreased from the station before it. It ends
+//     the moment either is false: reaching the floor means the pair has
+//     separated and ordinary defect scoring takes over; CLOSING again means
+//     the ducts are moving back toward each other, which is a defect at any
+//     magnitude and at any station, and the station that closed is scored as
+//     one. Its last station is that pair's throat knife-edge station.
+//     THIS REPLACED A SYMMETRIC (-throatFloor, +throatFloor) BAND, and the
+//     band was too weak in exactly the place it mattered. A gap that dived to
+//     -0.49 mm and recovered sat inside a 0.5 mm band and was filed as knife
+//     edge, so it never reached `minMid` — the number the separation solver
+//     optimises. Measured at the 2026-09-02 defaults, 48 stations: the band
+//     reported minMid +0.510 mm while an independent point-in-solid test on
+//     the same outlines found 0.258 mm of real interpenetration at u = 0.021.
+//     The monotone rule cannot do that: near the throat it demands no
+//     absolute clearance at all — only that the wall never gets thinner than
+//     it already is — which is the weakest requirement that still refuses to
+//     call closing ducts a knife edge.
+//     THE TOLERANCE IS FLOAT NOISE, NOT A PHYSICAL SLACK, and that is a
+//     measurement rather than a choice: over the sub-floor stretch the worst
+//     backward step on a geometry that is genuinely opening is EXACTLY
+//     0.0000 mm at both 24 and 48 stations, across T = 0, 0.3, 0.7, 1.0 and
+//     the dL-optimal depth. Every backward step observed anywhere was the
+//     station-1 dive itself, i.e. the defect the rule exists to catch.
+//     BE AWARE OF THE RESOLUTION LIMIT. The dive is a sharp minimum near
+//     u = 0.021, so the VERDICT is resolution-independent but the MAGNITUDE
+//     is not: at 24 stations the default horn reads -0.002 mm where 48
+//     stations and the independent test both read -0.24. The rule fires
+//     either way; the number it fires with is a lower bound.
+//     Nothing is hidden: `throat.worst` reports the deepest contact found
+//     INSIDE the run, exactly as `joint.engageMax` does at the mouth, and
+//     `throat.dip` reports the backward step that ENDED the longest run and
+//     where. 0 (the default) turns the whole rule off, and every statistic
 //     reduces exactly to the form that has no throat boundary at all.
 export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFloor = 0 } = {}) {
   if (!rows.length || !rows[0].sched[0].pts) return null;
@@ -2714,6 +2729,9 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
   // station before it clear, so the run is just the mouth — which the
   // interior statistics already exclude, and the two forms coincide.
   const contactTol = 1e-6;
+  // float noise only — see the throatFloor note above for the measurement
+  // that says a genuinely opening pair backs up by exactly 0.0000 mm
+  const OPEN_TOL = 1e-6;
   const jointStart = pairs.map((_, pi) => {
     if (!jointAware) return stations;
     let q0 = stations;
@@ -2721,18 +2739,26 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
     return q0;
   });
   // the throat run: walk FORWARD from the throat while the pair is still
-  // inside the +-throatFloor band, i.e. has neither separated by a tolerance
-  // nor dived through by one. Capped one short of the joint so at least one
-  // interior station always remains a defect station — a pair that never
-  // opens to the floor anywhere is a real finding, and it must surface as a
-  // bad gap rather than as an empty defect set.
+  // below the floor AND still opening. Reaching the floor ends it (the pair
+  // has separated); closing again ends it too, and the station that closed
+  // is left OUTSIDE the run so it scores as the defect it is. Capped one
+  // short of the joint so at least one interior station always remains a
+  // defect station — a pair that never opens to the floor anywhere is a real
+  // finding, and it must surface as a bad gap rather than as an empty defect
+  // set.
   let throatSaturated = 0;
+  let throatDip = 0, throatDipAt = null;
   const throatEnd = pairs.map((_, pi) => {
     if (!(throatFloor > 0)) return 0;
     let q1 = 0;
     while (q1 + 1 < stations) {
       const g = gaps[pi][q1 + 1];
-      if (!(g < throatFloor && g > -throatFloor)) break;
+      if (g >= throatFloor) break;                 // separated: the run is over
+      const back = gaps[pi][q1] - g;
+      if (back > OPEN_TOL) {                       // closing: a defect, not a knife edge
+        if (back > throatDip) { throatDip = back; throatDipAt = q1 + 1; }
+        break;
+      }
       q1++;
     }
     // leave at least one interior station OUTSIDE both runs, or the defect
@@ -2833,6 +2859,10 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
       knifeMin: throatRuns ? throatKnifeMin : null,
       knifeMax: throatRuns ? throatKnifeMax : null,
       worst: throatWorst, saturated: throatSaturated, stations,
+      // the backward step that ENDED a run, and where — the ducts closing on
+      // each other before they ever opened to the floor. null when every run
+      // ended by reaching the floor instead, which is the healthy case.
+      dip: throatDipAt == null ? null : throatDip, dipAt: throatDipAt,
     } : null,
     joint: jointAware ? {
       engaged, pairs: pairs.length,
@@ -3165,9 +3195,20 @@ export function solveSeparation(throat, opts, cfg = {}) {
       best = { gap: gapOf(cl), acc: Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, v.slice()])), dL: m.dL };
     if (gapOf(cl) >= floor - tol) break;
   }
-  // hand back the best configuration, rebuilt if the last step was not it
-  if (best.acc && best.gap > gapOf(cl)) {
-    for (const id in best.acc) acc[id] = best.acc[id];
+  // Hand back the BEST configuration, rebuilt if the last step was not it.
+  // `best` starts at the UNSEPARATED gap with a null field, so when no
+  // iterate ever beats doing nothing the answer is "no displacement" — and
+  // that case has to be handled explicitly. Guarding the restore on
+  // `best.acc` alone fell through to the LAST iterate instead, which is the
+  // one the chain had just driven furthest into trouble: measured on the
+  // tool's own default lengthening (throat fifth, 1 lobe) the solver
+  // returned a field that took the worst gap from -5.10 mm to -6.80 mm,
+  // and the UI applies whatever field comes back, so a failed solve made
+  // the horn WORSE. A solver that cannot improve on the input must return
+  // the input.
+  if (best.gap > gapOf(cl)) {
+    if (best.acc) for (const id in best.acc) acc[id] = best.acc[id];
+    else for (const id in acc) acc[id] = [0, 0];
     m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
     cl = measure(m);
   }

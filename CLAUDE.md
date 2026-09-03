@@ -1192,29 +1192,74 @@ exists.
   2 reads +0.046 mm, still under any usable floor, because the ducts have
   not had path length to open yet. The boundary wanted is "where the ducts
   have separated", not a fixed station count.
-- **THE THROAT BOUNDARY IS NOW BUILT (`throatFloor`), AND THE FLOOR DEFINES
-  IT — one number, not two.** A pair's THROAT RUN is the contiguous run from
-  station 0 over which the gap stays inside the band (-floor, +floor): still
-  within one tolerance of touching, and not yet separated by one. Defect
-  statistics start after it. So raising the minimum moves the boundary with
-  it, which is the point — measured live in the UI at the defaults, floor
-  0.5 / 2 / 5 mm reads the worst gap at station 2 / 4 / 6 of 24, at 0.53 /
-  2.02 / 5.13 mm.
-  **THE BAND IS SYMMETRIC, AND THE NEGATIVE HALF IS THE WHOLE DESIGN.** The
-  obvious rule — mirror the mouth's joint walk-back, i.e. walk while in
-  contact — is WRONG at the throat: the mouth's overlap is a deliberate
-  bulge, the throat's is the profile's own interpenetration, and a contact
-  walk would file the most important defect away as a knife edge. What
-  separates them is scale, measured: the near-throat wobble runs 0.002-0.24
-  mm, a real interpenetration dives to -1.5 mm by station 1 and -3.6 mm by
-  station 5. So a dive past -floor ENDS the run. Verified both ways — at the
-  old defaults, depth 150, T 0.7 and 1.0, minMid stays -2.955 and -3.640 mm
-  at the same stations with the rule on as with it off.
-  **THE WOBBLE DOES NOT REFINE AWAY, which is why a station COUNT could not
-  have worked**: measured -0.002 / -0.122 / -0.241 / -0.122 mm at 24 / 32 /
-  48 / 64 stations, non-monotone, i.e. the sampled minimum near the throat
-  depends on where the stations land. Keyed to the floor instead, the answer
-  is stable: 0.528 / 0.513 / 0.513 / 0.513 mm across the same four.
+- **THE THROAT BOUNDARY IS THE GAP HAVING TO BE OPENING (`throatFloor`).**
+  A pair's THROAT RUN is the contiguous run from station 0 over which the
+  gap is still BELOW the floor AND has not decreased from the station
+  before it. Either failure ends it: reaching the floor means the pair has
+  separated and ordinary defect scoring takes over; CLOSING again means the
+  ducts are moving back toward each other, which is a defect at any
+  magnitude and at any station, and the station that closed is scored as
+  one. Near the throat this asks for NO absolute clearance at all — only
+  that the wall never gets thinner than it already is — which is the
+  weakest requirement that still refuses to call closing ducts a joint.
+  **IT REPLACED A SYMMETRIC (-floor, +floor) BAND, and the band was too weak
+  in exactly the place it mattered** (owner's proposal, 2026-09-03). A gap
+  that dived to -0.49 mm and recovered sat inside a 0.5 mm band and was
+  filed as knife edge, so it never reached `minMid` — the number the
+  separation solver optimises. Measured at the 2026-09-02 defaults, 48
+  stations: the band reported minMid +0.510 mm while an independent
+  point-in-solid test on the same outlines found 0.258 mm of real
+  interpenetration at u = 0.021.
+  **THE FLOOR NO LONGER DECIDES WHETHER A DIVE IS FORGIVEN, only how far the
+  knife-edge run reaches**, and that is the behavioural change to know.
+  Under the band, raising the floor widened it and hid more; under the
+  monotone rule the defect reads the SAME at every floor the UI can ask
+  for — measured -0.0015 mm at floors 0.1 / 0.5 / 1 / 2 / 5 while the knife
+  reach grows 1 -> 6 stations.
+  **THE TOLERANCE IS FLOAT NOISE (1e-6 mm), NOT A PHYSICAL SLACK, and that
+  is a measurement rather than a taste**: over the sub-floor stretch the
+  worst backward step on a geometry that is genuinely opening is EXACTLY
+  0.0000 mm at both 24 and 48 stations, across T = 0, 0.3, 0.7, 1.0 and the
+  dL-optimal depth. Every backward step observed anywhere was the station-1
+  dive itself. Do not soften it into a fraction of the floor; there is
+  nothing measured to justify one.
+  It still does its ORIGINAL job wherever the pair really is just opening
+  from the tiling: at T 0.3 it lifts minMid 0.3231 -> 0.6229 mm over 6 of 27
+  pairs and reports `throat.dip === null`. `throat.dip` / `dipAt` report the
+  backward step that ended a run, so the closing is named rather than merely
+  scored, and the UI carries a warning keyed on it (with the two generic
+  clearance warnings gated off when the dip is what they are both seeing —
+  otherwise one fact arrived three times).
+  **SATURATION IS NOW STRUCTURALLY HARD TO REACH**, because the cells tile at
+  the MOUTH too, so every pair closes again somewhere and the run terminates
+  on its own. The cap (one station short of the joint) is still what
+  guarantees it and still fires at coarse resolutions — 19 of 27 pairs at 4
+  stations with a 40 mm floor — and the invariant that matters (a floor the
+  horn never reaches must never pass vacuously) is asserted at both.
+  **THE "WOBBLE" IS NOT A WOBBLE — IT IS REAL INTERPENETRATION THAT 24
+  STATIONS CANNOT SEE, and this bullet said otherwise for two sessions.**
+  The station-dependent readings (-0.002 / -0.122 / -0.241 / -0.122 mm at
+  24 / 32 / 48 / 64) were read as sampled noise about zero. They are not.
+  The gap has a SHARP MINIMUM near u = 0.021, and a station grid finds it
+  only if a station lands there: 48, 96 and 192 stations all contain
+  u = 1/48 and all read exactly -0.2422 mm; 64 straddles it (1/64 = 0.0156,
+  2/64 = 0.0313) and reads -0.125; 24 (u = 0, 0.042, ...) misses it entirely
+  and reads -0.002. So it is a RESOLUTION failure, not noise, and the live
+  UI at 24 stations under-reports it by about 100x.
+  Confirmed against an INDEPENDENT test — point-in-closed-mesh by jittered
+  ray casting on the triangles the STL writes, with a closed-form
+  point-triangle distance, both unit-tested against a cube — which finds
+  0.2577 mm of penetration on the same gross outlines at 48 stations, and
+  `ductClearance` with its ring stride set to 1 returns -0.2577. The two
+  agree to four decimals, which is a mutual check rather than a tautology:
+  one measures ring-to-ring at a station, the other a point against the
+  lofted solid.
+  Refining the RING moves it the same way and less: 32 / 64 / 128 / 192
+  points round the outline read -0.211 / -0.242 / -0.258 / -0.263, so the
+  hardcoded `nMs = 16` (64 points) and `signedGap`'s `k += 2` stride cost
+  about 0.03 mm between them. **Stations are the binding resolution, 48 is
+  enough, and the ring is not the problem.** Cost of the move, measured:
+  map + clearance 235 ms at 24 stations against 353 ms at 48.
   Two guards, both tested. The run is capped two stations short of the joint
   so the defect set can never be EMPTY — a floor of 40 mm on this horn would
   otherwise return minMid = Infinity and read as "clear"; it now reports the
@@ -1225,6 +1270,20 @@ exists.
   the boundary-less form to the last bit, every statistic and the whole
   per-station profile — asserted, because every other clearance test in the
   suite is written against that form.
+- **`ductClearance` MEASURES THE GROSS OUTLINES; THE EXPORT CARRIES THE
+  INSET ONES, so the reported gap is NOT the printed wall.** It reads
+  `row.sched[q].pts`, while `ductSections` — what the STL and STEP write —
+  insets each shared side by (t/2)(1-s). Two neighbours therefore have
+  0.4(1-s) mm MORE room in the exported solid than the metric says, which
+  near the throat is the whole story. Measured on the 2026-09-02 default
+  horn at 48 stations: the gross outlines interpenetrate 0.242 mm at
+  u = 0.021, and the inset outlines DO NOT interpenetrate at all — the
+  independent point-in-solid test on the exported mesh finds nothing. What
+  they leave instead is a 0.123 mm WALL SLIVER there, and the tool reports
+  +0.568 mm. So the number on screen is wrong in two directions that partly
+  cancel: gross understates the wall by the inset, and the throat rule hides
+  the dip. Neither the sign nor the magnitude of "min gap" can be quoted as
+  a printable wall thickness today.
 - **THE SEPARATION SOLVER IS A CONTACT-CHAIN ITERATION, because pairwise
   pushes diffuse and one shared knob is non-monotone.** Three measured
   facts drove the design. (1) Uniform radial spread improves the worst gap
@@ -1244,11 +1303,58 @@ exists.
   stations) with dL PRESERVED (2.13 -> 2.06), mirrors at 3e-11, ends
   pinned at 5e-14, and lengthening re-equalising on top to dL 0.006. It
   returns the BEST state visited, not the last — the iteration flip-flops
-  at the threshold — and annealing the relaxation was tried and REMOVED
+  at the threshold — **and for two sessions it did NOT, in the one case that
+  matters most.** `best` starts at the UNSEPARATED gap with a null field,
+  and the restore was guarded on that field being non-null, so when no
+  iterate ever beat doing nothing the function fell through and handed back
+  the LAST iterate — the one the contact chain had just driven furthest into
+  trouble. The UI applies whatever field comes back, so a failed solve made
+  the horn WORSE: measured on the tool's own default geometry with the
+  default lengthening (throat fifth, 1 lobe), nudge took the worst gap from
+  -5.10 mm to -6.80 mm while reporting `ok: false`. Fixed — a solver that
+  cannot improve on its input returns its input — and `gapAfter >=
+  gapBefore` is now asserted for BOTH modes on that exact case, together
+  with an independent rebuild of the returned field. Annealing the
+  relaxation was tried and REMOVED
   (0.85/iter decays too fast; measured +0.29 un-annealed against +0.04).
   Higher floors saturate honestly: floor 1.0 reaches +0.73 at the 40 mm
   amplitude cap with dL 10.6 — the throat region genuinely runs out of
   room, and the report says so instead of pretending.
+- **THE THROAT-FIFTH BOW BREAKS THROUGH AT THE DEFAULT DEPTH AND NOT AT THE
+  dL-SOLVED ONE, and the depth is the whole difference.** An earlier version
+  of this bullet said the throat fifth was unmanufacturable full stop; that
+  was measured at depth 300 only and the owner was right to doubt it. Depth
+  300 is the tool's DEFAULT, not the dL optimum, so it leaves dL 24.08 mm to
+  correct and the bow has to be enormous. `solveDepthForMinDL` puts this
+  mouth at 357.2 mm for dL 10.82, and there the same bow is less than half
+  the correction. Measured, EXPORTED (inset) outlines, throat fifth / 1 lobe
+  / radial:
+    depth  dL before  bow amp   worst gap   merged stations
+    300    24.08 mm   28.3 mm   -4.78 mm    6 of 47
+    340    12.97      20.8      -3.21       5
+    350    10.99      20.1      -2.38       3
+    357    10.82      20.1      +0.29       0
+    370    12.67      21.9      +0.24       0
+  The independent point-in-solid test agrees at both ends: 4.437 mm of real
+  interpenetration at depth 300, NONE anywhere at 357.
+  **It is not amplitude alone** — depth 370 carries a BIGGER bow (21.9 mm)
+  and stays clear — so do not read this as an amplitude budget. And the
+  crossing is NOT a clean threshold: sampled at 2 mm steps the gap reads
+  -0.47 / +0.29 / -0.24 / +0.19 mm at depth 356 / 357 / 358 / 360, i.e. it
+  hovers about zero and flips sign. Near the optimum the honest statement is
+  that the interpenetration collapses from ~4.8 mm to a few TENTHS of a
+  millimetre, at which scale the resolution limits recorded above (24
+  stations under-reads a sharp near-throat dip) are the same size as the
+  answer.
+  What survives from the original bullet: the gap profile IS negative or
+  near zero until about u = 0.31 and only peaks near u = 0.78, so the throat
+  fifth is still the tightest place to put a bow, and at depth 300 neither
+  separation mode can fix what it does — uniform reaches -2.39 mm at 30.8 mm
+  of spread, nudge cannot improve on the input at all, and both report
+  `ok: false`. The lesson is the one already recorded for `solveBow`: SOLVE
+  THE DEPTH FIRST and the bow becomes a small correction rather than a
+  fight. Stage 5's own hint says exactly that, and this is the measurement
+  behind it.
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now

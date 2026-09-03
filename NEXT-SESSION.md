@@ -1,5 +1,64 @@
 # Ginkgo Multicell Horn — immediate tasks
 
+## Done in the 2026-09-03 clearance session
+
+- **DUCT SEPARATION IS NOW STAGE 8, AFTER COPED JOINTS** (owner's request).
+  Every stage above it moves the geometry it has to clear, and the bulge
+  most directly — it widens each cell toward its neighbour and so eats the
+  very gap being solved for. The solve was already computed WITH the bulge
+  in its options and already invalidated when the bulge moved; what was
+  wrong was the reading order, which invited solving it before the joints
+  existed. Export is now stage 9.
+- **A REAL BUG IN `solveSeparation` NUDGE MODE IS FIXED: a failed solve
+  returned a field WORSE than no separation, and the UI applied it.**
+  Measured on the tool's own defaults with the default lengthening, nudge
+  took the worst gap from -5.10 mm to -6.80 mm. `best` starts at the
+  unseparated gap with a null field and the restore was guarded on that
+  field being non-null, so "nothing beat doing nothing" fell through to the
+  last iterate. 7 new checks, suite at 410. **This is the most likely cause
+  of the reported "the separation solve still leaves intersecting ducts".**
+
+## THE OPEN QUESTION THIS SESSION RAISED — the clearance metric itself
+
+Three separate measurements say the metric cannot currently be read as a
+printable wall thickness. All are in the CLAUDE.md findings with numbers.
+
+1. **Resolution.** The gap has a sharp minimum near u = 0.021 and the live
+   UI samples at 24 stations, which steps straight over it: it reads
+   -0.002 mm where 48 stations read -0.242 and an independent point-in-solid
+   test reads -0.258. 48 stations is enough and costs 353 ms against 235 ms
+   for the map + clearance pass, which is already deferred off the render.
+   The RING is not the problem (32/64/128/192 points span 0.05 mm).
+2. **Gross vs inset.** `ductClearance` reads the gross outlines; the STL and
+   STEP carry outlines inset by (t/2)(1-s). On the default horn the gross
+   outlines interpenetrate 0.242 mm while the EXPORTED ones do not
+   interpenetrate at all — they leave a 0.123 mm wall sliver, and the tool
+   reports +0.568 mm. The two errors partly cancel, which is why this went
+   unnoticed.
+3. **The throat rule — BUILT, this is (3) and the owner took it.** The
+   symmetric (-floor, +floor) band is replaced by "the gap must be opening":
+   the throat run ends the moment the gap reaches the floor OR decreases.
+   See the CLAUDE.md finding for the contract, the measured 1e-6 mm
+   tolerance and the behaviour change (the floor no longer decides whether a
+   dive is forgiven). It fires on the tool's own defaults, correctly.
+
+**(1) AND (2) WERE OFFERED AND DECLINED for now, so the caveat below stands
+and is worth re-reading before trusting a small number.** Because (1) was
+declined, the dip's DEPTH at the live 24 stations is a lower bound — the
+default horn reads -0.002 mm where 48 stations and the independent test both
+read -0.24. The verdict is right at every resolution; the magnitude is not.
+The UI says so, in the warning and in the stage 8 hint. Because (2) was
+declined, "min gap" is still the gap between the AIR columns, not the printed
+wall, which is 0.4(1-s) mm thicker.
+
+**The owner also declined steering away from the throat-fifth bow region**,
+on the grounds that the solver's `ok: false` is enough — and on re-measuring,
+that call looks right. The 4.4 mm of confirmed interpenetration is a property
+of DEPTH 300, the tool's default, not of the throat fifth: at the dL-solved
+depth of 357 mm the same bow produces NO interpenetration at all in the
+exported solids, independently verified. See the corrected CLAUDE.md finding
+for the depth sweep and for why the crossing is not a clean threshold.
+
 ## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
 
 `mapThroatToMouth` samples each centreline at `samples = 64` internal points
