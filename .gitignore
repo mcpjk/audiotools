@@ -4,7 +4,7 @@ dist/
 *.local
 .vite/
 
-# a generated sample, not source
-ginkgo_shell_sample.step
-ginkgo_shell_bow_sample.step
-ginkgo_twocell_sample.step
+# generated CAD samples, not source — every .step in this repo is written by
+# the tool (buildShellSTEP / buildSolidsSTEP) and sent to the owner, never
+# authored by hand, so the glob saves adding a line per experiment
+*.step
