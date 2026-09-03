@@ -2480,9 +2480,21 @@ head("Throat knife edge (the defect metric's other boundary)");
     divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
     fTarget: 20000, t, profileArea: "open",
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 560, arcV: 250,
-    sectionMode: "swept", stations: 24, depth: 300, profileT: 0.7,
+    sectionMode: "swept", stations: 48, depth: 300, profileT: 0.7,
     keepGeometry: true, computeClearance: false, ...o,
   });
+
+  // WHY 48 STATIONS AND NOT THE PREVIEW'S 24. The near-throat dive is a sharp
+  // minimum near u = 0.021, and 24 stations puts its first interior station at
+  // u = 0.042 — past it. The reading there is a coin-flip on a few-micron
+  // number rather than a measurement of the 0.24 mm feature: it came out
+  // -0.0015 mm under the superseded Bernstein section planes and +0.010 mm
+  // under the tangent-aligned ones, so the same geometry flips from "defect"
+  // to "knife edge" on a change that moved the gap profile by 12 um. At 48
+  // stations a station lands on the minimum and both constructions read it
+  // unambiguously (-0.241 and -0.230 mm). The 24-station behaviour is NOT
+  // swept under the rug — it is asserted as a known limit below, because it
+  // is what the live UI shows.
 
   // 1. INERT BY DEFAULT. The rule may not move a single existing number
   //    unless it is asked for — every other clearance test in this file is
@@ -2497,27 +2509,44 @@ head("Throat knife edge (the defect metric's other boundary)");
     && zero.throat === null,
     "every statistic and the whole per-station profile identical");
 
-  // 2. IT MOVES THE BOUNDARY OFF THE KNIFE EDGE. At these defaults the worst
-  //    "defect" is the throat tiling one station in — measured -0.002 mm at
-  //    station 1 of 24 — and the ducts have simply had no path length to
-  //    open yet. With the floor as the boundary the metric starts where they
-  //    have separated.
+  // 2. THE RUN REQUIRES THE GAP TO BE OPENING, so a pair that CLOSES near the
+  //    throat is a defect at any magnitude. This is what replaced the
+  //    symmetric band: a dive to -0.49 mm sat inside a 0.5 mm band and was
+  //    filed as knife edge, so it never reached `minMid` — the number the
+  //    separation solver optimises. At these defaults the gap dives at
+  //    station 1 and recovers, and the rule must leave that alone entirely.
   const on = M.ductClearance(mD.rows, { throatFloor: 0.5 });
-  // The raw worst "defect" is the tiling knife edge one or two stations in.
-  // Its SIGN is not the point and must not be asserted: the wobble runs
-  // 0.002-0.24 mm either way and moves with where the stations land — it read
-  // -0.002 mm here under the superseded Bernstein section planes and +0.010 mm
-  // under the tangent-aligned ones, on the same horn. What is asserted is that
-  // it sits INSIDE the floor band, which is what makes it a knife edge rather
-  // than a defect, and that the floor moves the boundary past it.
-  checkTrue("the throat knife edge stops being read as a defect",
-    Math.abs(off.minMid) < 0.5 && off.minMidAt <= 2
-    && on.minMid >= 0.5 && on.minMidAt > off.minMidAt,
-    `minMid ${off.minMid.toFixed(3)} at station ${off.minMidAt} -> ${on.minMid.toFixed(3)} at ${on.minMidAt}`);
-  checkTrue("...and reports the run and its deepest contact rather than hiding them",
-    on.throat.runs > 0 && on.throat.knifeMax >= 1
-    && Math.abs(on.throat.worst - Math.max(0, -off.minMid)) < 1e-9,
-    `run to station ${on.throat.knifeMin}-${on.throat.knifeMax} on ${on.throat.runs}/${on.throat.pairs} pairs, ${on.throat.worst.toFixed(4)} mm deep inside it`);
+  checkTrue("a pair that closes near the throat is NOT excused as a knife edge",
+    off.minMid < 0 && off.minMidAt === 1
+    && on.minMid === off.minMid && on.minMidAt === off.minMidAt,
+    `minMid ${off.minMid.toFixed(4)} at station ${off.minMidAt}, unchanged by the rule`);
+  checkTrue("...and the backward step that ended the run is reported, not swallowed",
+    on.throat.dipAt === 1 && Math.abs(on.throat.dip - Math.abs(off.minMid)) < 1e-9,
+    `dip ${on.throat.dip.toFixed(4)} mm at station ${on.throat.dipAt}`);
+  //    ...while the rule still does its ORIGINAL job wherever the pair really
+  //    is just opening from the tiling: there it lifts the boundary past the
+  //    sub-floor stations and reports no dip at all.
+  //    The example this used to use — T 0.3 at the default depth — turns out
+  //    NOT to be monotonically opening once resolved: no dip at 24 stations,
+  //    but a 0.133 mm dive at station 1 at 48, like everything else at this
+  //    depth. A genuinely opening pair needs a well-posed horn, so it is
+  //    measured at the dL-solved depth with T = 0, where the profile holds the
+  //    passage narrow and then opens hard from the tiling.
+  const mOpen = M.mapThroatToMouth(th, dflt({ profileT: 0, depth: 357 }));
+  const oOff = M.ductClearance(mOpen.rows), oOn = M.ductClearance(mOpen.rows, { throatFloor: 0.5 });
+  checkTrue("a monotonically opening throat IS excluded, and reports no dip",
+    oOff.minMid > 0 && oOn.minMid > oOff.minMid && oOn.minMid >= 0.5
+    && oOn.throat.runs > 0 && oOn.throat.dip === null && oOn.throat.dipAt === null,
+    `minMid ${oOff.minMid.toFixed(4)} -> ${oOn.minMid.toFixed(4)} over ${oOn.throat.runs}/${oOn.throat.pairs} runs, no dip`);
+  //    and the floor must no longer decide whether a dive is FORGIVEN — only
+  //    how far the knife-edge run reaches. Under the band, raising the floor
+  //    widened it and hid more; under the monotone rule the defect is the
+  //    same number at every floor the UI can ask for.
+  const acrossFloors = [0.1, 0.5, 1, 2, 5].map((f) => M.ductClearance(mD.rows, { throatFloor: f }));
+  checkTrue("raising the floor no longer forgives a bigger dive",
+    acrossFloors.every((r) => r.minMid === off.minMid)
+    && acrossFloors[4].throat.knifeMax > acrossFloors[0].throat.knifeMax,
+    `minMid ${off.minMid.toFixed(4)} at floors 0.1..5, knife reach ${acrossFloors[0].throat.knifeMax} -> ${acrossFloors[4].throat.knifeMax}`);
 
   // 3. THE NEGATIVE HALF OF THE BAND IS THE POINT. A literal mirror of the
   //    mouth rule — walk while in contact — would swallow the profile's own
@@ -2534,36 +2563,53 @@ head("Throat knife edge (the defect metric's other boundary)");
       `${dOff.minMid.toFixed(3)} mm at station ${dOff.minMidAt}, unchanged by the rule`);
   }
 
-  // 4. IT SURVIVES REFINEMENT. The near-throat gap does NOT refine away —
-  //    measured -0.002 / -0.122 / -0.241 / -0.122 mm at 24 / 32 / 48 / 64
-  //    stations — so a rule keyed to a station COUNT would drift with the
-  //    export resolution. Keyed to the floor, the answer holds.
-  //    The floored answer is NOT as tight as it was: with the superseded
-  //    section planes it measured 0.507-0.552 mm over nine station counts, and
-  //    with tangent-aligned ones it measures 0.516-0.757 mm. That is a real
-  //    cost of squaring the sections — the near-throat gap profile opens a
-  //    little faster, so which station first clears the floor moves around
-  //    more. The rule still does its job: the raw answer changes SIGN across
-  //    these counts while the floored one never leaves [floor, floor + 0.3].
-  const post = [24, 32, 48, 64].map((stations) => {
+  // 4. THE VERDICT IS RESOLUTION-INDEPENDENT; THE MAGNITUDE IS NOT, and both
+  //    halves matter. The near-throat gap has a SHARP minimum near u = 0.021,
+  //    so the depth it reads depends on whether a station lands there —
+  //    measured -0.002 / -0.122 / -0.241 / -0.122 mm at 24 / 32 / 48 / 64,
+  //    and an independent point-in-solid test on the same outlines finds
+  //    -0.258 at 48. What must NOT depend on resolution is the answer to
+  //    "is this a defect": the rule has to say yes at every station count.
+  const post = [32, 48, 64].map((stations) => {
     const m = M.mapThroatToMouth(th, dflt({ stations }));
     return { stations, off: M.ductClearance(m.rows), on: M.ductClearance(m.rows, { throatFloor: 0.5 }) };
   });
-  checkTrue("the boundary holds under refinement, where a station count would not",
-    post.every((r) => Math.abs(r.off.minMid) < 0.5 && r.on.minMid >= 0.5 && r.on.minMid < 0.8)
-    && Math.min(...post.map((r) => r.off.minMid)) < 0
-    && Math.max(...post.map((r) => r.off.minMid)) > 0,
-    post.map((r) => `${r.stations}: ${r.off.minMid.toFixed(3)} -> ${r.on.minMid.toFixed(3)}`).join(", "));
+  checkTrue("the closing pair is called a defect at every RESOLVING station count",
+    post.every((r) => r.off.minMid < 0 && r.on.minMid === r.off.minMid && r.on.throat.dipAt === 1),
+    post.map((r) => `${r.stations}: ${r.on.minMid.toFixed(3)}`).join(", "));
+  //    THE PREVIEW COUNT IS BELOW THAT, AND NOW MISSES THE DIVE ENTIRELY.
+  //    A KNOWN LIMIT of the live UI, not a property of the horn: the dive is
+  //    0.23-0.24 mm deep at every count that resolves it and 24 stations does
+  //    not sample it at all. Asserted so it cannot regress silently, and so
+  //    that raising the clearance resolution (NEXT-SESSION.md) flips a test
+  //    when it lands.
+  const preview = M.ductClearance(
+    M.mapThroatToMouth(th, dflt({ stations: 24 })).rows, { throatFloor: 0.5 });
+  checkTrue("KNOWN LIMIT: the preview's 24 stations do not sample the dive at all",
+    preview.throat.dip === null && preview.minMid > 0 && post[1].on.minMid < -0.2,
+    `24 stations reports no dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
 
   // 5. A FLOOR THE HORN NEVER REACHES MUST NOT PASS VACUOUSLY. If the run
   //    were allowed to eat every interior station the defect set would be
   //    empty and the worst gap would come back Infinity — a floor of 40 mm
-  //    would then read as "clear".
-  const huge = M.ductClearance(mD.rows, { throatFloor: 40 });
-  checkTrue("an unreachable floor saturates and reports, it does not pass",
-    isFinite(huge.minMid) && huge.throat.saturated === huge.throat.pairs
-    && huge.minMid < 40,
-    `saturated ${huge.throat.saturated}/${huge.throat.pairs}, best gap ${huge.minMid.toFixed(2)} mm against the 40 mm asked`);
+  //    would then read as "clear". Under the monotone rule this is now hard
+  //    to provoke, because the cells tile at the MOUTH too, so every pair
+  //    closes again somewhere and the run terminates on its own; the cap is
+  //    still what guarantees it, and at a coarse station count it is what
+  //    fires. Both cases are checked: the invariant always, the cap where it
+  //    can still be reached.
+  for (const stations of [24, 4]) {
+    const mh = stations === 24 ? mD : M.mapThroatToMouth(th, dflt({ stations, profileT: 0 }));
+    const huge = M.ductClearance(mh.rows, { throatFloor: 40 });
+    checkTrue(`an unreachable floor never passes vacuously (${stations} stations)`,
+      isFinite(huge.minMid) && huge.minMid < 40,
+      `best gap ${huge.minMid.toFixed(2)} mm against the 40 mm asked, saturated ${huge.throat.saturated}/${huge.throat.pairs}`);
+  }
+  const capped = M.ductClearance(M.mapThroatToMouth(th, dflt({ stations: 4, profileT: 0 })).rows,
+    { throatFloor: 40 });
+  checkTrue("...and the cap is what stops it, where the run could still eat the path",
+    capped.throat.saturated > 0 && capped.throat.knifeMax <= 4 - 2,
+    `${capped.throat.saturated}/${capped.throat.pairs} pairs capped at station ${capped.throat.knifeMax} of 4`);
 
   // 6. THE TWO BOUNDARIES ARE INDEPENDENT and compose: the mouth joint walk
   //    and the throat run must not interfere.
@@ -2667,6 +2713,40 @@ head("Duct separation (field and solver)");
   checkTrue("uniform reports its best and points at nudge",
     !u.ok && u.gapAfter > u.gapBefore && /nudge/.test(u.reason),
     `best ${u.gapAfter.toFixed(2)} mm at ${u.ampMax.toFixed(1)} mm spread`);
+
+  // ── A SOLVER THAT CANNOT IMPROVE MUST RETURN THE INPUT ──────────────────
+  // The postcondition that was violated: nudge tracks the best state visited,
+  // but `best` starts at the UNSEPARATED gap with a null field, and the
+  // restore was guarded on that field being non-null — so when nothing ever
+  // beat doing nothing, it fell through and returned the LAST iterate, the
+  // one the contact chain had just driven furthest into trouble. The UI
+  // applies whatever field comes back, so a failed solve made the horn worse.
+  // The case below is the tool's own 2026-09-02 default geometry with the
+  // default lengthening (throat fifth, 1 lobe) — the setting the owner
+  // reports using almost always — where no separation field helps at all,
+  // because the bow has already spent the room the solver needs.
+  {
+    const hard = {
+      ...opts, exitHalfAngle: 16.55, thetaV: 0, arcH: 555, arcV: 245, depth: 300,
+      lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2 },
+    };
+    const gBase = M.ductClearance(M.mapThroatToMouth(th, hard).rows, { throatFloor: 0.5 }).minMid;
+    checkTrue("the hard case genuinely cannot be separated", gBase < -1,
+      `baseline worst gap ${gBase.toFixed(2)} mm`);
+    for (const mode of ["uniform", "nudge"]) {
+      const r = M.solveSeparation(th, hard, { floor: 0.5, mode, maxIter: 8 });
+      checkTrue(`${mode} never returns a field worse than no separation`,
+        r.gapAfter >= r.gapBefore - 1e-9,
+        `${r.gapBefore.toFixed(2)} -> ${r.gapAfter.toFixed(2)} mm`);
+      // and the field it hands back must REPRODUCE that gap on a fresh build
+      const sepH = r.amps ? { amps: r.amps, uStart: r.uStart, uEnd: r.uEnd, lobes: r.lobes } : null;
+      const mh = M.mapThroatToMouth(th, { ...hard, separate: sepH });
+      const gh = M.ductClearance(mh.rows, { throatFloor: 0.5 }).minMid;
+      check(`${mode}'s reported gap survives an independent rebuild`, gh, r.gapAfter, 1e-9, "mm");
+      checkTrue(`${mode} reports the failure rather than claiming success`,
+        r.ok === false && !!r.reason, r.reason || "no reason given");
+    }
+  }
 
   // and the two features compose: separation under a bulge clears the defect
   // without disturbing a single joint

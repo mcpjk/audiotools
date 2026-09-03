@@ -9,6 +9,65 @@ happens otherwise: a construction chosen for construction reasons satisfied
 every number the tool reported while the passage the wave crosses contracted
 27% below its own throat.
 
+## Done in the 2026-09-03 clearance session
+
+- **DUCT SEPARATION IS NOW STAGE 8, AFTER COPED JOINTS** (owner's request).
+  Every stage above it moves the geometry it has to clear, and the bulge
+  most directly — it widens each cell toward its neighbour and so eats the
+  very gap being solved for. The solve was already computed WITH the bulge
+  in its options and already invalidated when the bulge moved; what was
+  wrong was the reading order, which invited solving it before the joints
+  existed. Export is now stage 9.
+- **A REAL BUG IN `solveSeparation` NUDGE MODE IS FIXED: a failed solve
+  returned a field WORSE than no separation, and the UI applied it.**
+  Measured on the tool's own defaults with the default lengthening, nudge
+  took the worst gap from -5.10 mm to -6.80 mm. `best` starts at the
+  unseparated gap with a null field and the restore was guarded on that
+  field being non-null, so "nothing beat doing nothing" fell through to the
+  last iterate. 7 new checks, suite at 410. **This is the most likely cause
+  of the reported "the separation solve still leaves intersecting ducts".**
+
+## THE OPEN QUESTION THIS SESSION RAISED — the clearance metric itself
+
+Three separate measurements say the metric cannot currently be read as a
+printable wall thickness. All are in the CLAUDE.md findings with numbers.
+
+1. **Resolution.** The gap has a sharp minimum near u = 0.021 and the live
+   UI samples at 24 stations, which steps straight over it: it reads
+   -0.002 mm where 48 stations read -0.242 and an independent point-in-solid
+   test reads -0.258. 48 stations is enough and costs 353 ms against 235 ms
+   for the map + clearance pass, which is already deferred off the render.
+   The RING is not the problem (32/64/128/192 points span 0.05 mm).
+2. **Gross vs inset.** `ductClearance` reads the gross outlines; the STL and
+   STEP carry outlines inset by (t/2)(1-s). On the default horn the gross
+   outlines interpenetrate 0.242 mm while the EXPORTED ones do not
+   interpenetrate at all — they leave a 0.123 mm wall sliver, and the tool
+   reports +0.568 mm. The two errors partly cancel, which is why this went
+   unnoticed.
+3. **The throat rule — BUILT, this is (3) and the owner took it.** The
+   symmetric (-floor, +floor) band is replaced by "the gap must be opening":
+   the throat run ends the moment the gap reaches the floor OR decreases.
+   See the CLAUDE.md finding for the contract, the measured 1e-6 mm
+   tolerance and the behaviour change (the floor no longer decides whether a
+   dive is forgiven). It fires on the tool's own defaults, correctly.
+
+**(1) AND (2) WERE OFFERED AND DECLINED for now, so the caveat below stands
+and is worth re-reading before trusting a small number.** Because (1) was
+declined, the dip's DEPTH at the live 24 stations is a lower bound — the
+default horn reads -0.002 mm where 48 stations and the independent test both
+read -0.24. The verdict is right at every resolution; the magnitude is not.
+The UI says so, in the warning and in the stage 8 hint. Because (2) was
+declined, "min gap" is still the gap between the AIR columns, not the printed
+wall, which is 0.4(1-s) mm thicker.
+
+**The owner also declined steering away from the throat-fifth bow region**,
+on the grounds that the solver's `ok: false` is enough — and on re-measuring,
+that call looks right. The 4.4 mm of confirmed interpenetration is a property
+of DEPTH 300, the tool's default, not of the throat fifth: at the dL-solved
+depth of 357 mm the same bow produces NO interpenetration at all in the
+exported solids, independently verified. See the corrected CLAUDE.md finding
+for the depth sweep and for why the crossing is not a clean threshold.
+
 ## Shipped 2026-09-03 — the section plane follows the tangent
 
 `sectionAlign: "tangent"` is the default: two smoothstep ramps of 1.5 duct
@@ -34,24 +93,40 @@ keeps the superseded blend as the tests' comparison baseline.
    samples 256, stations 64 both). It was not done in that session because
    it re-baselines recorded numbers across CLAUDE.md and deserves its own
    verification pass. Do it next.
+   **DO IT TOGETHER WITH RAISING THE CLEARANCE RESOLUTION** — item (1) of the
+   open question above, which was offered and declined. They are the same
+   problem seen twice, and squaring the sections made the clearance one
+   sharper rather than milder: the preview's 24 stations now miss the
+   near-throat dive ENTIRELY (+0.520 mm where 48 stations read -0.230), where
+   before they caught it by 2 um. Both metrics and the clearance would be
+   fixed by one change to how finely the centreline and the stations are
+   sampled, and one re-baselining pass instead of three.
 
-2. **THE SHIPPED BOW WINDOW IS TOO TIGHT AT THE CURRENT DEFAULTS.** At depth
-   300 the middle row is 25.5 mm short and the throat fifth is 65 mm of path,
-   so the solved bow is a 28.3 mm hairpin at R_min 8.0 mm in a duct 4.5-7.3
-   mm wide — fold margin +3.3 mm at 1 lobe, NEGATIVE at 2 and 3. Under
-   refinement it constricts the passage 11.7%, where every other window
-   measures 0.00% at every resolution. Two ways out, both already measured:
-   widen the window ([0,0.5], [0.2,0.8] and [0.3,0.95] are all clean), or
-   solve the depth to 360.8 mm (dL 25.5 -> 11.1 mm) so there is less to buy
-   back. This is an owner decision — the recorded habit is "throat fifth
-   almost every time" — so put the two numbers in front of them rather than
-   changing a default.
+2. **NOTHING NEW TO DECIDE ABOUT THE BOW REGION — the two new metrics
+   INDEPENDENTLY CONFIRM the depth finding already recorded above.** The
+   throat-fifth bow at depth 300 is a 28.3 mm hairpin at R_min 7.8 mm in a
+   duct 4.5-7.3 mm wide, and it reads badly on every metric there. Solving
+   the depth fixes all three at once, monotonically (6x3, arcs 555x245,
+   T 0.7, throat-fifth 1-lobe radial):
+     depth        300    320    340    357    370    400
+     dL (mm)    24.08  18.19  12.97  10.82  12.67  17.08
+     bow amp    28.3   24.6   20.8   20.1   21.9   26.3   mm
+     R_min       7.8    9.8   11.9   13.2   12.9   12.6   mm
+     foldMargin  3.28   5.37   7.04   8.35   8.03   7.68  mm
+     contract   10.86%  5.74%  2.78%  1.17%  0.94%  0.60%
+   `solveDepthForMinDL` puts this mouth at 357.2 mm. That is the same depth
+   at which the interpenetration measurement above goes from -4.78 mm to
+   +0.29 mm, so the clearance, the fold margin and the passage schedule are
+   three views of one fact: **the region was never the problem, the depth
+   was.** The owner's call to leave the throat-fifth region alone stands,
+   and the corrected finding stands with two more metrics behind it. No
+   default needs changing; the stage 5 hint already says solve the depth
+   first.
 
 3. **INTERPOLATE `C` AND THE FRAME BETWEEN SAMPLES** rather than snapping —
    the map defect below. It pairs naturally with (1), since both are about
    the centreline sampling, and doing them in one pass costs one
    re-baselining instead of two.
-
 
 ## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
 
