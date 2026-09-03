@@ -855,6 +855,62 @@ exists.
   the geometry class. Note also 1,1-3,2 — two columns apart, no shared edge —
   overlapping 4.62 mm over 40 mm of path, which is the reaching above, measured
   on the shipped file rather than in the model.
+- **THE LOFTED WALL RUNS PAST ITS OWN THROAT CAP PLANE, and that is a
+  SELF-INTERSECTING SOLID no self-check in the file can see.** `extendSections`
+  prepends ONE ring at distance `ext`, and `ductBrep` interpolates with a
+  UNIFORM parameterisation, so a short first gap followed by a full station
+  step is told the two are equal and the cubic overshoots BACKWARDS. The wall
+  then pokes through the flat cap meant to close it. Residual, edge pairing and
+  referential integrity all pass regardless — none of them tests
+  self-intersection. **This is the same mechanism already recorded for the
+  station count** (32 of 48, gaps alternating 1 and 2, ran 4.6 mm off its own
+  rings); it was simply never applied to the extension, which violates it far
+  harder. Measured at 6x3, 32 shell stations, mean station step 11.5 mm:
+    ext/step   0.09    0.17    0.26    0.43   0.69   0.96
+    overshoot  0.94    0.40    0.033   0.000  0.000  0.000  mm
+  **The threshold is about 0.4 of a station step, and the shipped default
+  straddles it**: ext 3 with the five-phase stagger gives 3.0 to 7.8 mm, i.e.
+  0.26 to 0.68 of a step, so the two phase-0 cells overshoot and the rest do
+  not. On the test geometry (step 13.3 mm) the worst is **0.6625 mm**.
+  `shellCapOvershoot` measures it on every export, names the cell and prints
+  the ratio; it is REPORTED, never clamped, because raising `ext` and lowering
+  `stations` both fix it and which one is wanted is the owner's call. A PLAIN
+  throat has no extension ring at all, so its wall stops exactly at its end
+  ring — measured 0.
+  **It does NOT explain the split failures**: the two cells that overshoot on
+  the owner's export are the two that SPLIT SUCCESSFULLY. It is a real defect
+  found while looking for that one, not the answer to it.
+- **THE TWO ENDS OF THE SHELL ARE SET SEPARATELY (`extendThroat` /
+  `extendMouth`, `trimThroat` / `trimMouth`), because they are not the same
+  problem.** The MOUTH trim cuts on the APERTURE SURFACE itself, a curved face
+  the blanks cross transversally, and it has never been reported failing. The
+  THROAT trim cuts on the PLANE z = 0 — which is exactly the operation the
+  owner measured failing as a plane SPLIT on individual blanks, so subtracting
+  it asks the kernel for the operation already known to fail. A plain throat
+  makes that face from the loft's own end ring, planar in z = 0 to 0 by
+  construction, and asks for no cut there at all; the price is the coplanar
+  overlapping throat caps (27 of 27 adjacent pairs) coming back. A trim with no
+  extension behind it would cut into the real body and is REFUSED, not shipped.
+- **ADJACENCY IS THE RULE FOR THE UNIONS, and the second export made it
+  clean.** On the owner's third quarter (settings read from the header: 6x3,
+  m 2, arcs 555x245, depth 357, T 0.7, divergeLen 2, **bulge 4**, radial 1-lobe
+  bow, wall 3, jitter 0.5, 32 shell stations), 15 pair unions:
+    NON-ADJACENT (no shared edge)   4 of 4 succeeded
+    ORTHOGONAL neighbours           0 of 7 succeeded (6 failed, 1 non-manifold)
+    DIAGONAL neighbours             1 of 4 succeeded
+  Across the two exports that is **8 of 8 non-adjacent succeeding and 2 of 13
+  orthogonal**. So the union fails when and only when the blanks are
+  neighbours — when they share a grid line and therefore pass through the
+  tangential contact this file has recorded from the start. The pair-hunting
+  finding above stands (WHICH adjacent pair fails is not readable from its
+  shape); WHETHER a pair can fail is now clear.
+  **The split-failing SET is not stable across exports** — {2,1 3,1 3,2} on one
+  and {1,2 3,1} on the next — so it is not a fixed property of a cell either.
+  Audited on the reproduced geometry and RULED OUT as the cause: ring
+  self-intersection at any station (0), concave radius under the wall (min
+  26 mm against a 3 mm wall), min caliper (10.6-14.9 mm), and a 3-D check for
+  a genuine fold (closest non-neighbour boundary approach 2-7 um, at the mitre
+  corners, and worst on a cell that SUCCEEDS).
 - **EVERY SHELL STEP SHIPPED BEFORE 2026-09-03 HAD A MALFORMED HEADER, and it
   was found while trying to recover an export's settings.** A STEP string
   literal is delimited by apostrophes, so an apostrophe inside one must be

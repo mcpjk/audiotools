@@ -5110,7 +5110,16 @@ export function shellOverlap(throat, map, { t = 0, wall = 3 } = {}) {
 // end ring along that ring's own outward vector-area normal. The added
 // volume is exactly |A_vec|·ext per end — a translated ring spans a prism —
 // which is what the test asserts.
-export function extendSections(sections, ext = 3) {
+// `ends` selects which end is extended. The two are separable because the two
+// ends are not the same problem: the mouth trim cuts on the APERTURE SURFACE
+// itself, a curved face the blanks cross transversally, while the throat trim
+// cuts on the PLANE z = 0 — and a plane cut at z = 0 is exactly the operation
+// the owner measured failing on individual blanks. Turning the throat
+// extension off makes that face by the loft's own end ring instead, which is
+// planar in z = 0 by construction, at the price of the coplanar overlapping
+// throat caps the extension was introduced to remove.
+export function extendSections(sections, ext = 3, { throat = true, mouth = true } = {}) {
+  if (!throat && !mouth) return sections;
   const Q = sections.length - 1;
   const cen = (pts) => {
     const c = [0, 0, 0];
@@ -5136,7 +5145,11 @@ export function extendSections(sections, ext = 3) {
   const nM = ringNormal(sections[Q].pts, [cQ[0] - cQ1[0], cQ[1] - cQ1[1], cQ[2] - cQ1[2]]);
   const shift = (pts, n) => pts.map((p) => [p[0] + n[0] * ext, p[1] + n[1] * ext, p[2] + n[2] * ext]);
   const clone = (sec, n) => ({ s: sec.s, area: sec.area, pts: shift(sec.pts, n), origin: sec.origin });
-  return [clone(sections[0], nT), ...sections, clone(sections[Q], nM)];
+  return [
+    ...(throat ? [clone(sections[0], nT)] : []),
+    ...sections,
+    ...(mouth ? [clone(sections[Q], nM)] : []),
+  ];
 }
 
 // Signed volume of a closed triangle soup, by the divergence theorem. Positive
@@ -6014,6 +6027,56 @@ export function throatCellWidth(throat, map = null, { t = 0 } = {}) {
   return { min, max: Math.max(...ws), per, narrowest: per.find((x) => x.w === min).label };
 }
 
+// Does the lofted WALL run past its own throat cap plane?
+//
+// `extendSections` prepends ONE ring at distance `ext`, and `ductBrep`
+// interpolates with a UNIFORM parameterisation — so a short first gap followed
+// by a full station step is told the two are equal, and the cubic overshoots
+// backwards. The blank's wall then pokes through the flat cap that is supposed
+// to close it: a self-intersecting solid, which no residual, edge-pairing or
+// integrity check can see. Measured against the station step on a 6x3 at
+// 32 shell stations (step 11.5 mm), sweeping ext:
+//   ext/step   0.09    0.17    0.26    0.43   0.69   0.96
+//   overshoot  0.94    0.40    0.033   0.000  0.000  0.000  mm
+// so the threshold is around 0.4 of a station step, and the shipped default
+// (ext 3 with the five-phase stagger, 3.0 to 7.8 mm) straddles it — the two
+// phase-0 cells sit at 0.26 and DO overshoot. Reported, not clamped: raising
+// `ext` or lowering `stations` both fix it, and which one the owner wants is
+// not this function's call.
+export function shellCapOvershoot(throat, map, { t = 0, wall = 3, jitter = 0.5, stations = 32, ext = 3, samples = 24 } = {}) {
+  if (!map) return null;
+  let worst = 0, at = null, minRatio = Infinity, stepSum = 0, nStep = 0;
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const blank = shellSections(cellRec, row, { t, wall, surf: map.mouthSurf, jitter, stations, snapMouth: false });
+    if (!blank) return null;
+    let tot = 0;
+    for (let q = 1; q < blank.length; q++) {
+      let d = 0;
+      const A = blank[q - 1].pts, B = blank[q].pts;
+      for (let k = 0; k < A.length; k++) d += Math.hypot(B[k][0] - A[k][0], B[k][1] - A[k][1], B[k][2] - A[k][2]) / A.length;
+      tot += d;
+    }
+    const step = tot / Math.max(1, blank.length - 1);
+    stepSum += step; nStep++;
+    const e = ext * (1 + 0.4 * cellPhase5(cellRec.label));
+    minRatio = Math.min(minRatio, e / step);
+    const sec = extendSections(blank, e, { throat: true, mouth: true });
+    const br = ductBrep(sec);
+    if (!br) continue;
+    const z0 = sec[0].pts[0][2];
+    let zmin = Infinity;
+    for (let j = 0; j <= samples; j++) {
+      const v = (0.06 * j) / samples;
+      for (const w of br.walls) for (let i = 0; i < br.n; i++)
+        zmin = Math.min(zmin, evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, v)[2]);
+    }
+    if (z0 - zmin > worst) { worst = z0 - zmin; at = cellRec.label; }
+  }
+  return { worst, at, minRatio, step: nStep ? stepSum / nStep : 0 };
+}
+
 // ---------------------------------------------------------------------------
 // SYMMETRY REGIONS
 //
@@ -6128,9 +6191,27 @@ export function mirrorSymmetry(throat, map, { t = 0, every = 2 } = {}) {
 // extended union tractable; see their comments above.
 export function buildShellSTEP(throat, map, {
   t = 0, wall = 3, ext = 3, extend = true, jitter = 0.5, stations = 32,
+  extendThroat = null, extendMouth = null, trimThroat = null, trimMouth = null,
   only = null, xSide = 0, ySide = 0, params = null, name = "ginkgo_horn_shell",
 } = {}) {
   if (!map) return null;
+  // THE TWO ENDS ARE SEPARABLE, and they are not the same problem. `extend`
+  // still sets both at once; the four per-end flags override it.
+  //   MOUTH: the trim's cutting face is the APERTURE ITSELF, a curved surface
+  //     the blanks cross transversally. It has never been reported failing.
+  //   THROAT: the trim's cutting face is the PLANE z = 0 — and a plane split
+  //     at z = 0 is exactly the operation the owner measured failing on
+  //     individual blanks. Turning the throat extension off makes that face by
+  //     the loft's own end ring, which is planar in z = 0 by construction, and
+  //     asks the kernel for no cut there at all. The price is the coplanar
+  //     overlapping throat caps (27 of 27 adjacent pairs) that the extension
+  //     was introduced to remove.
+  // A trim with no extension behind it would cut into the real body, so it is
+  // refused rather than shipped: `trims` reports what was actually emitted.
+  const eT = extendThroat === null ? extend : !!extendThroat;
+  const eM = extendMouth === null ? extend : !!extendMouth;
+  const tT = (trimThroat === null ? eT : !!trimThroat) && eT;
+  const tM = (trimMouth === null ? eM : !!trimMouth) && eM;
   const surf = map.mouthSurf || null;
   const ap = surf ? apertureFrame(surf) : null;
   const capOf = (sections) => (ap ? apertureCapGrid(sections[sections.length - 1].pts, ap) : null);
@@ -6146,40 +6227,56 @@ export function buildShellSTEP(throat, map, {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
     const duct = ductSections(cellRec, row, { t });
-    const blank = shellSections(cellRec, row, { t, wall, surf, jitter, stations, snapMouth: !extend });
+    // the mouth ring is snapped onto the aperture only when the trim is not
+    // the thing that makes that face
+    const blank = shellSections(cellRec, row, { t, wall, surf, jitter, stations, snapMouth: !eM });
     if (!duct || !blank) return null;
-    if (extend) {
-      // staggered per cell so no two adjacent blanks end on the same plane
-      const e = ext * (1 + 0.4 * cellPhase5(cellRec.label));
-      solidsSpec.push({ label: `shell blank ${cellRec.label}`, sections: extendSections(blank, e), capZ: -e });
-    } else {
-      solidsSpec.push({ label: `shell blank ${cellRec.label}`, sections: blank, capZ: 0, capMouthPts: capOf(blank) });
-    }
+    // staggered per cell so no two adjacent blanks end on the same plane
+    const e = ext * (1 + 0.4 * cellPhase5(cellRec.label));
+    const sections = eT || eM ? extendSections(blank, e, { throat: eT, mouth: eM }) : blank;
+    solidsSpec.push({
+      label: `shell blank ${cellRec.label}`,
+      sections,
+      capZ: eT ? -e : 0,
+      ...(eM ? {} : { capMouthPts: capOf(blank) }),
+    });
     solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, ext), capZ: -ext });
   }
   const n = cells.length;
-  if (extend && !only) {
-    const tr = throatTrimSections(throat, map, { t, wall, ext: ext * 3, per: 8 });
-    const mo = mouthTrimSections(throat, map, { t, wall, ext: ext * 3, jitter, per: 8 });
-    if (!tr || !mo) return null;
-    solidsSpec.push({ label: "throat trim", sections: tr, capZ: tr[0].pts[0][2] });
-    solidsSpec.push({ label: "mouth trim", sections: mo, capMouthPts: capOf(mo) });
+  const trims = [];
+  if (!only && (tT || tM)) {
+    if (tT) {
+      const tr = throatTrimSections(throat, map, { t, wall, ext: ext * 3, per: 8 });
+      if (!tr) return null;
+      solidsSpec.push({ label: "throat trim", sections: tr, capZ: tr[0].pts[0][2] });
+      trims.push("throat trim");
+    }
+    if (tM) {
+      const mo = mouthTrimSections(throat, map, { t, wall, ext: ext * 3, jitter, per: 8 });
+      if (!mo) return null;
+      solidsSpec.push({ label: "mouth trim", sections: mo, capMouthPts: capOf(mo) });
+      trims.push("mouth trim");
+    }
   }
-  const recipe = extend
+  const ends = eT && eM ? "both end faces" : eT ? "the throat face" : eM ? "the mouth face" : null;
+  const cutBack = trims.length ? `subtract ${trims.map((x) => `'${x}'`).join(" and ")}, then ` : "";
+  const recipe = ends
     ? (only
-      ? `union the ${n} blanks (they are extended past both end faces; a full export ships the two trim solids that cut them back)`
-      : `union the ${n} 'shell blank' solids, then subtract 'throat trim' and 'mouth trim', then subtract the ${n} 'duct cutter' solids`)
+      ? `union the ${n} blanks (they are extended past ${ends}; a full export ships the trim solid(s) that cut them back)`
+      : `union the ${n} 'shell blank' solids (extended past ${ends}), then ${cutBack}subtract the ${n} 'duct cutter' solids`)
     : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
   const out = stepEmit({
     name, solidsSpec,
-    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} extend=${extend} jitter=${jitter} stations=${stations} xSide=${xSide} ySide=${ySide}`,
+    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} jitter=${jitter} stations=${stations} xSide=${xSide} ySide=${ySide}`,
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
     fileDesc: `ginkgo multicell horn shell kit: ${recipe}`,
   });
   if (out) {
-    out.mode = extend ? "extended" : "cells";
+    out.mode = eT || eM ? "extended" : "cells";
     out.cells = n;
-    out.trims = extend && !only ? 2 : 0;
+    out.trims = trims.length;
+    out.trimNames = trims;
+    out.ends = { throat: eT, mouth: eM };
     out.region = region;
   }
   return out;

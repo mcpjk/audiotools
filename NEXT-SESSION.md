@@ -68,7 +68,27 @@ imported with the four healing options off and again with Shapr3D's standard
 "quality" defaults: identical results on both the throat-plane splits and the
 unions. The hypothesis below was wrong.
 
-**THE OPEN QUESTION IS NOW A ONE-BODY ONE.** Three of six blanks (2,1 / 3,1 /
+**THE THROAT CAP OVERSHOOT IS THE ONE REAL DEFECT FOUND (2026-09-03), and it
+is not the split cause.** The lofted wall runs past its own throat cap plane —
+up to 0.66 mm on the test geometry — because `extendSections` prepends one
+ring at `ext` and the loft parameterises uniformly. Threshold measured at
+about 0.4 of a station step; the default `ext` 3 with the phase stagger
+straddles it. `shellCapOvershoot` now measures it on every export and the note
+warns. **Decide whether to raise `ext`, scale it from the station step, or
+default the throat to plain** — all three fix it and the choice is the
+owner's. Ruled out as the split cause: the two overshooting cells are the two
+that split successfully.
+
+**THE OPEN QUESTION IS STILL A ONE-BODY ONE, and it is now harder.**
+The split-failing set CHANGED between exports ({2,1 3,1 3,2} then {1,2 3,1}),
+so it is not a fixed per-cell property. On the reproduced geometry, ruled out:
+ring self-intersection at any station, concave radius under the wall, minimum
+caliper, and a genuine 3-D fold. Next candidates: evaluate the blank's four
+wall surfaces against EACH OTHER away from their shared edges (a surface-level
+self-intersection the ring test cannot see), and check the throat cap's Coons
+patch against the walls it closes.
+
+**Superseded, kept for the record:** Three of six blanks (2,1 / 3,1 /
 3,2) fail a plane split at the throat. No union, no second solid — a property
 of the single blank. It does not predict the union results. To reproduce it
 here the export's settings are needed, which is why every export now stamps

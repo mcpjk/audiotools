@@ -2864,6 +2864,76 @@ head("Aperture surface, per-cell shell, orientation");
       plain.mode === "cells" && plain.trims === 0 && /no unions/.test(plain.text), "");
   }
 
+  // ── the two ends are separable, and a plain throat stops exactly at z=0 ──
+  // The mouth trim cuts on the aperture surface; the throat trim cuts on the
+  // plane z = 0, which is the operation the owner measured failing as a plane
+  // split. A plain throat makes that face from the loft's own end ring, and
+  // the check that matters is that the WALL does not run past it — extended,
+  // it does, by tens of microns on the shortest-extension cells.
+  {
+    const ext = 3;
+    const cases = [
+      ["both ends", {}, 2, true, true],
+      ["mouth only", { extendThroat: false }, 1, false, true],
+      ["throat only", { extendMouth: false }, 1, true, false],
+      ["neither", { extend: false }, 0, false, false],
+      ["extend both, trim mouth", { trimThroat: false }, 1, true, true],
+    ];
+    for (const [tag, cfg, nTrim, eT, eM] of cases) {
+      const r = M.buildShellSTEP(th, map, { t, wall, ext, jitter: 0.5, stations: 32, ...cfg, name: tag });
+      const ok = r && r.trims === nTrim && r.ends.throat === eT && r.ends.mouth === eM
+        && r.checks.ducts === 2 * th.cells.length + nTrim
+        && M.stepIntegrity(r.text).ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+      checkTrue(`ends: ${tag}`, ok, r ? `${r.checks.ducts} solids, trims [${r.trimNames.join(", ") || "none"}]` : "null");
+    }
+    // a trim with no extension behind it would cut the real body: refused
+    const bad = M.buildShellSTEP(th, map, { t, wall, ext, jitter: 0.5, stations: 32,
+      extendThroat: false, trimThroat: true, name: "bad" });
+    checkTrue("a trim with no extension behind it is refused",
+      bad.trims === 1 && !bad.trimNames.includes("throat trim"),
+      `trims [${bad.trimNames.join(", ")}]`);
+
+    // the geometry that motivates the option: does the WALL pass its own cap?
+    const past = (eThroat) => {
+      let worst = 0;
+      for (const c of th.cells) {
+        const row = map.rows.find((r) => r.id === c.id);
+        const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: false });
+        const e = ext * (1 + 0.4 * M.cellPhase5(c.label));
+        const sec = M.extendSections(b, e, { throat: eThroat, mouth: true });
+        const br = M.ductBrep(sec);
+        const z0 = sec[0].pts[0][2];
+        let zmin = Infinity;
+        for (let j = 0; j <= 24; j++) for (const w of br.walls) for (let i = 0; i < br.n; i++)
+          zmin = Math.min(zmin, M.evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, (0.06 * j) / 24)[2]);
+        worst = Math.max(worst, z0 - zmin);
+      }
+      return worst;
+    };
+    // and the model reports it, with the ratio that explains it
+    const rep = M.shellCapOvershoot(th, map, { t, wall, jitter: 0.5, stations: 32, ext });
+    checkTrue("shellCapOvershoot finds it and names the cell",
+      rep.worst > 1e-3 && rep.at && rep.minRatio < 0.5 && rep.step > 1,
+      `${rep.worst.toFixed(4)} mm at ${rep.at}, ext/step ${rep.minRatio.toFixed(2)}, step ${rep.step.toFixed(1)} mm`);
+    // raising the extension past the threshold removes it
+    const big = M.shellCapOvershoot(th, map, { t, wall, jitter: 0.5, stations: 32, ext: 12 });
+    checkTrue("and a long enough extension removes it entirely",
+      big.worst <= 1e-9 && big.minRatio > 0.5, `${big.worst.toExponential(2)} mm at ext/step ${big.minRatio.toFixed(2)}`);
+    const withExt = past(true), noExt = past(false);
+    checkTrue("a plain throat: the wall stops exactly at its own end ring",
+      noExt <= 1e-9, `${noExt.toExponential(2)} mm past`);
+    checkTrue("and an extended one runs past its cap plane, measurably",
+      withExt > 1e-3, `${withExt.toFixed(4)} mm past — the uniform-parameterisation loft over a short first gap`);
+    // the plain throat ring is exactly planar in z = 0, which is the point
+    let flat = 0;
+    for (const c of th.cells) {
+      const row = map.rows.find((r) => r.id === c.id);
+      const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: false });
+      for (const p of b[0].pts) flat = Math.max(flat, Math.abs(p[2]));
+    }
+    check("and its end ring is planar in z = 0", flat, 0, 1e-9, "mm");
+  }
+
   // ── the header must be a legal STEP string, and carry the settings ──────
   // A string literal is delimited by apostrophes, so one INSIDE it has to be
   // doubled. Every shell kit written before 2026-09-03 put bare quotes in its
