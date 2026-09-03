@@ -2517,19 +2517,19 @@ head("Horn shell export (blanks + cutters)");
     const blank = M.shellSections(cell, rowR, { t, wall });
     // the blank's throat ring stays exactly planar in z = 0
     for (const p of blank[0].pts) capZmax = Math.max(capZmax, Math.abs(p[2]));
-    // at the throat every blank segment lies on the offset LINE of its gross
-    // segment: rim sides at wall, shared sides at wall - t/2 (taper = 1).
+    // at the throat every blank segment lies on the offset LINE of its DUCT
+    // segment, at exactly `wall` on all four sides — constant, which is what
+    // makes the wall the same number wherever it is cut and what removed the
+    // mitre EARS the old rim/shared split threw at every cell junction.
     // Line distance, measured at segment midpoints — exact, not approximate.
-    const gross = rowR.sched[0].pts, bl = blank[0].pts;
-    const N = gross.length, nPer = N / 4;
-    const rim = cell.rimSide || [false, false, false, false];
+    const src = duct[0].pts, bl = blank[0].pts;
+    const N = src.length;
     for (let k = 0; k < N; k++) {
-      const a = gross[k], b = gross[(k + 1) % N];
+      const a = src[k], b = src[(k + 1) % N];
       const m = [(bl[k][0] + bl[(k + 1) % N][0]) / 2, (bl[k][1] + bl[(k + 1) % N][1]) / 2];
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
       const dist = Math.abs(((b[0] - a[0]) * (m[1] - a[1]) - (m[0] - a[0]) * (b[1] - a[1])) / L);
-      const wantD = rim[Math.floor(k / nPer)] ? wall : wall - t / 2;
-      offErr = Math.max(offErr, Math.abs(dist - wantD));
+      offErr = Math.max(offErr, Math.abs(dist - wall));
     }
     // containment and simplicity at every station: each duct point inside its
     // blank ring (tested at the planar throat; elsewhere by area ordering and
@@ -2582,7 +2582,7 @@ head("Horn shell export (blanks + cutters)");
   }
 
   // ── the emitted file ──────────────────────────────────────────────────────
-  const out = M.buildShellSTEP(th, map, { t, wall, ext, name: "shelltest" });
+  const out = M.buildShellSTEP(th, map, { t, wall, ext, extend: false, jitter: 0, stations: null, name: "shelltest" });
   checkTrue("two solids per cell: 18 blanks + 18 cutters", out.checks.ducts === 36, `${out.checks.ducts} solids`);
   check("shell surfaces pass through every sampled ring point", out.checks.residual, 0, 1e-9, "mm");
   checkTrue("every edge used exactly twice, opposite senses", out.checks.edgePairing, "");
@@ -2606,6 +2606,626 @@ head("Horn shell export (blanks + cutters)");
   const ss = M.shellSolids(th, map, { t, wall });
   checkTrue("shellSolids meshes every blank manifold",
     ss.length === 18 && ss.every((sd) => sd.manifold.ok), "");
+}
+
+head("Aperture surface, per-cell shell, orientation");
+{
+  const t = 0.4, wall = 3, ST = 24;
+  const opts = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 40, arcH: 480, arcV: 213,
+    sectionMode: "swept", stations: ST, depth: 320, profileT: 0.7,
+    keepGeometry: true, computeClearance: false,
+  };
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  const map = M.mapThroatToMouth(th, opts);
+  const ap = M.apertureFrame(map.mouthSurf);
+
+  // ── the inversion is exact, and it is an inversion ─────────────────────────
+  // Round-trip the surface's OWN parameters through param() and back: any
+  // point the forward map produces must come back with the same (a, e).
+  let rt = 0, fwd = 0;
+  for (let ia = -4; ia <= 4; ia++)
+    for (let ie = -3; ie <= 3; ie++) {
+      const a = (ia / 4) * (45 * Math.PI / 180), e = (ie / 3) * (20 * Math.PI / 180);
+      const P = ap.at(a, e), pr = ap.param(P);
+      rt = Math.max(rt, Math.abs(pr.a - a), Math.abs(pr.e - e));
+      fwd = Math.max(fwd, Math.abs(ap.deviation(P)));
+    }
+  check("aperture param inverts its own forward map", rt, 0, 1e-12, "rad");
+  check("a surface point measures zero deviation", fwd, 0, 1e-12, "mm");
+  // and the surface the DUCTS were built on is the same surface
+  let ductDev = 0;
+  for (const r of map.rows)
+    for (const p of r.sched[r.sched.length - 1].pts) ductDev = Math.max(ductDev, Math.abs(ap.deviation(p)));
+  check("duct mouth rings already lie on it", ductDev, 0, 1e-9, "mm");
+
+  // ── the shell mouth ring is put back ON the surface ───────────────────────
+  // Offsetting happens in the ring's best-fit plane, so it leaves the curved
+  // aperture by the local slope times the offset — and every cell fits its own
+  // plane, so the lips disagreed with each other too. Snapped, they cannot.
+  let unsnapped = 0, snapped = 0;
+  for (const cell of th.cells) {
+    const row = map.rows.find((r) => r.id === cell.id);
+    const a = M.shellSections(cell, row, { t, wall });
+    const b = M.shellSections(cell, row, { t, wall, surf: map.mouthSurf });
+    for (const p of a[a.length - 1].pts) unsnapped = Math.max(unsnapped, Math.abs(ap.deviation(p)));
+    for (const p of b[b.length - 1].pts) snapped = Math.max(snapped, Math.abs(ap.deviation(p)));
+  }
+  checkTrue("unsnapped blank lips leave the aperture measurably", unsnapped > 0.5,
+    `${unsnapped.toFixed(3)} mm off — the artifact this fixes`);
+  check("snapped blank lips lie on the aperture", snapped, 0, 1e-9, "mm");
+
+  // ── the cap interior lies on the surface too, not on a chord ──────────────
+  // A Coons blend of a boundary that lies on a curved cap falls BEHIND the
+  // surface inside; blending in (a, e) and evaluating cannot.
+  const blank0 = M.shellSections(th.cells[0], map.rows.find((r) => r.id === th.cells[0].id), { t, wall, surf: map.mouthSurf });
+  const ring = blank0[blank0.length - 1].pts;
+  const grid = M.apertureCapGrid(ring, ap);
+  let gDev = 0, gEdge = 0;
+  const nB = ring.length / 4;
+  for (const row of grid) for (const p of row) gDev = Math.max(gDev, Math.abs(ap.deviation(p)));
+  for (let i = 0; i <= nB; i++) {
+    gEdge = Math.max(gEdge, Math.hypot(...grid[i][0].map((v, k) => v - ring[i % ring.length][k])));
+    gEdge = Math.max(gEdge, Math.hypot(...grid[nB][i].map((v, k) => v - ring[(nB + i) % ring.length][k])));
+  }
+  check("every cap grid point lies on the aperture", gDev, 0, 1e-9, "mm");
+  check("the cap grid reproduces the ring on its boundary", gEdge, 0, 1e-9, "mm");
+  {
+    const bare = M.ductBrep(blank0);
+    const withAp = M.ductBrep(blank0, { capMouthPts: grid });
+    const at = (br, u, v) => M.evalBsplineSurf(br.capMouth, br.uKnots, br.uKnots, u, v);
+    let dC = 0, dG = 0;
+    for (let i = 1; i < 8; i++)
+      for (let j = 1; j < 8; j++) {
+        dC = Math.max(dC, Math.abs(ap.deviation(at(bare, i / 8, j / 8))));
+        dG = Math.max(dG, Math.abs(ap.deviation(at(withAp, i / 8, j / 8))));
+      }
+    // AT CELL SCALE THE CAP-FILL CHOICE IS SMALL, and that is worth knowing:
+    // a Coons chord across ONE cell's mouth falls 0.02 mm behind the surface,
+    // against 5.6 mm across the whole aperture. The interpolated cap is still
+    // the right fill — it is what makes every cell's mouth face lie on ONE
+    // analytic surface, which is what the owner asked for — but the argument
+    // for it is co-surface mouths, not a large error.
+    checkTrue("the interpolated cap lies on the aperture and a Coons blend does not",
+      dG < 1e-9 && dC > 1e-3, `Coons ${dC.toFixed(3)} mm off, interpolated ${dG.toExponential(1)} mm`);
+  }
+
+  // ── THE BLANK IS THE DUCT OFFSET OUTWARDS, AND NOTHING ELSE ───────────────
+  // Every construction that gave the horn a single outer skin came out with
+  // visible surface texture, because its rings were DERIVED per station by a
+  // discrete search (a raster iso-line; a convex hull) and the search's
+  // decisions change abruptly along the path. A blank ring is the duct ring
+  // EVALUATED and offset, so vertex k is the same material line all the way
+  // down and the loft is as clean as the duct's. The wall is therefore exact
+  // rather than fitted, and that is what these checks assert.
+  {
+    const dseg = (p, A, B) => {
+      const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+      const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+      let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+      u = Math.max(0, Math.min(1, u));
+      return Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u);
+    };
+    let faceLo = Infinity, faceHi = 0, lipLo = Infinity, mouthDev = 0, zT = 0, cornerHi = 0;
+    for (const cell of th.cells) {
+      const row = map.rows.find((r) => r.id === cell.id);
+      const d = M.ductSections(cell, row, { t });
+      const b = M.shellSections(cell, row, { t, wall, surf: map.mouthSurf });
+      const Q = d.length - 1, n = b[0].pts.length / 4;
+      for (let q = 0; q <= Q; q++)
+        b[q].pts.forEach((p, k) => {
+          let m = Infinity;
+          for (let i = 0; i < d[q].pts.length; i++) m = Math.min(m, dseg(p, d[q].pts[i], d[q].pts[(i + 1) % d[q].pts.length]));
+          if (k % n === 0) cornerHi = Math.max(cornerHi, m);
+          else if (q === Q) lipLo = Math.min(lipLo, m);
+          else { faceLo = Math.min(faceLo, m); faceHi = Math.max(faceHi, m); }
+        });
+      for (const p of b[Q].pts) mouthDev = Math.max(mouthDev, Math.abs(ap.deviation(p)));
+      for (const p of b[0].pts) zT = Math.max(zT, Math.abs(p[2]));
+    }
+    check("the wall is exactly the wall on every face, every station, every cell (min)", faceLo, wall, 1e-9, "mm");
+    // and never more than wall / cos(half the largest turn between two
+    // samples of a run) — the rings are polylines, so an interior vertex
+    // mitres too, by 0.35 um on a 0.9 deg turn. Not a tolerance: a bound.
+    checkTrue("and at most the wall plus the discretisation's own mitre", faceHi - wall < 1e-3,
+      `${((faceHi - wall) * 1000).toFixed(2)} um over ${wall} mm`);
+    // a mitred corner reaches wall / sin(half-angle) — geometry, not error
+    checkTrue("a mitred corner reaches further than the wall, by construction", cornerHi > wall && cornerHi < 4 * wall,
+      `${cornerHi.toFixed(2)} mm at the sharpest corner, against a ${wall} mm wall`);
+    // the mouth lip is snapped onto the aperture, which is what costs it
+    checkTrue("the mouth lip is a little under, because it is snapped to the aperture", lipLo > 0.85 * wall && lipLo < wall,
+      `${lipLo.toFixed(3)} mm — the only ring that is not exactly ${wall}`);
+    check("every blank's mouth ring lies on the aperture", mouthDev, 0, 1e-9, "mm");
+    check("every blank's throat ring is planar in z = 0", zT, 0, 1e-12, "mm");
+  }
+
+  // adjacent blanks share material where the ducts run closer than 2·wall,
+  // which is what a multicell's shared walls ARE — measured, not assumed
+  {
+    const ov = M.shellOverlap(th, map, { t, wall });
+    check("every adjacent pair is examined", ov.pairs, 27, 0, "pairs");
+    checkTrue("adjacent blanks share material near the ends and part mid-path", ov.touching === 27 && ov.fracTouching > 0.1 && ov.fracTouching < 0.9,
+      `${ov.touching}/${ov.pairs} pairs, over ${(ov.fracTouching * 100).toFixed(0)}% of the stations, deepest ${ov.deepest.toFixed(2)} mm`);
+    // at the mouth the ducts tile exactly, so the blanks overlap by exactly 2·wall
+    checkTrue("at the mouth, where the ducts tile, the overlap is 2·wall", Math.abs(ov.deepest - 2 * wall) < 0.05 && ov.deepestAt.q === ov.S - 1,
+      `${ov.deepest.toFixed(3)} mm at station ${ov.deepestAt.q} of ${ov.S - 1}`);
+  }
+
+  // ── the kit, and the recipe it states ─────────────────────────────────────
+  {
+    const out = M.buildShellSTEP(th, map, { t, wall, extend: false, jitter: 0, stations: null, name: "cellstest" });
+    checkTrue("the shell emits one blank and one cutter per cell",
+      !!out && out.mode === "cells" && out.cells === th.cells.length && out.checks.ducts === 2 * th.cells.length,
+      out ? `${out.cells} blanks + ${out.cells} cutters` : "no output");
+    checkTrue("and states the recipe: subtract, never union", /subtract/i.test(out.text) && /no unions/i.test(out.text), "");
+    check("every surface passes through its samples", out.checks.residual, 0, 1e-9, "mm");
+    checkTrue("every solid's edges pair up", out.checks.edgePairing, "");
+    checkTrue("the file is referentially intact", M.stepIntegrity(out.text).ok, "");
+    // the cutter's throat cap is exactly planar below the blank's, so the
+    // subtraction cannot leave a membrane over the passage
+    checkTrue("cutters overhang both end faces", out.checks.capPlanarZ < 1e-9, `${out.checks.capPlanarZ.toExponential(1)} mm`);
+  }
+
+  // ── PHASE 1: WHAT MAKES THE UNION OF THE BLANKS TRACTABLE ────────────────
+  // Three measured degeneracies, three switches, each tested on the number
+  // that justifies it. None of this changes the geometry of the passages —
+  // the cutters are untouched.
+  {
+    // (a) THE NEAR-COPY SURFACES. Two adjacent cells share a grid line, so on
+    // their other sides both blanks offset the SAME curve by the SAME
+    // distance: the identical surface computed twice, landing sub-micron
+    // apart. `jitter` gives cells of opposite grid parity different walls.
+    const bare = M.shellCoincidence(th, map, { t, wall, jitter: 0, stations: 32 });
+    const jit = M.shellCoincidence(th, map, { t, wall, jitter: 0.5, stations: 32 });
+    checkTrue("without jitter, blanks carry surface that is a near-copy of a neighbour's", bare.arc > 10,
+      `${bare.arc.toFixed(1)} mm of arc inside ${bare.eps} mm, over ${bare.pairs} pairs`);
+    check("with jitter, none is left", jit.arc, 0, 1e-12, "mm");
+    checkTrue("every adjacent pair is examined", bare.pairs === 27 && jit.pairs === 27, "");
+    // parity is what guarantees it: orthogonal neighbours always differ
+    let sameParity = 0;
+    for (const c of th.cells) {
+      const [col, rw] = c.label.split(",").map(Number);
+      for (const [dc, dr] of [[1, 0], [0, 1]]) {
+        const nb = `${col + dc},${rw + dr}`;
+        if (th.cells.some((x) => x.label === nb) && M.cellParity(c.label) === M.cellParity(nb)) sameParity++;
+      }
+    }
+    check("no two orthogonally adjacent cells share a wall parity", sameParity, 0, 0, "pairs");
+    // and the jitter only ever ADDS, so the wall stays the minimum
+    let wMin = Infinity;
+    for (const c of th.cells) {
+      const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, jitter: 0.5, snapMouth: false });
+      const d = M.ductSections(c, map.rows.find((r) => r.id === c.id), { t });
+      const n = b[0].pts.length / 4;
+      b[0].pts.forEach((p, k) => {
+        if (k % n === 0) return;
+        let m = Infinity;
+        for (let i = 0; i < d[0].pts.length; i++) {
+          const A = d[0].pts[i], B = d[0].pts[(i + 1) % d[0].pts.length];
+          const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+          const L2 = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2 || 1e-12;
+          let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+          u = Math.max(0, Math.min(1, u));
+          m = Math.min(m, Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u));
+        }
+        wMin = Math.min(wMin, m);
+      });
+    }
+    checkTrue("jitter only ever adds, so the wall stays the minimum", wMin >= wall - 1e-9,
+      `thinnest face ${wMin.toFixed(3)} mm against ${wall}`);
+
+    // (b) THE END CAPS. Every blank's throat ring is planar in z = 0, so
+    // adjacent blanks meet with coplanar OVERLAPPING caps — 27 of 27 pairs.
+    // Extending past the end, staggered per cell, puts no two adjacent
+    // blanks on one plane, and the trim solids cut the faces back exactly.
+    const inside = (pt, poly) => {
+      let ins = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
+        if ((poly[i][1] > pt[1]) !== (poly[j][1] > pt[1])
+          && pt[0] < ((poly[j][0] - poly[i][0]) * (pt[1] - poly[i][1])) / (poly[j][1] - poly[i][1]) + poly[i][0]) ins = !ins;
+      return ins;
+    };
+    const capPairs = (ext) => {
+      const E = new Map();
+      for (const c of th.cells) {
+        const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: ext > 0 ? false : true });
+        E.set(c.label, ext > 0 ? M.extendSections(b, ext * (1 + 0.4 * M.cellPhase5(c.label))) : b);
+      }
+      let n = 0;
+      for (const c of th.cells) {
+        const [col, rw] = c.label.split(",").map(Number);
+        for (const [dc, dr] of [[1, 0], [0, 1]]) {
+          const nb = `${col + dc},${rw + dr}`;
+          if (!E.has(nb)) continue;
+          const A = E.get(c.label)[0].pts, B = E.get(nb)[0].pts;
+          if (Math.abs(A[0][2] - B[0][2]) < 1e-6 && (A.some((p) => inside(p, B)) || B.some((p) => inside(p, A)))) n++;
+        }
+      }
+      return n;
+    };
+    check("plain blanks: every adjacent pair has coplanar overlapping throat caps", capPairs(0), 27, 0, "pairs");
+    check("extended and staggered: none does", capPairs(3), 0, 0, "pairs");
+    let phaseSame = 0;
+    for (const c of th.cells) {
+      const [col, rw] = c.label.split(",").map(Number);
+      for (const [dc, dr] of [[1, 0], [0, 1]]) {
+        const nb = `${col + dc},${rw + dr}`;
+        if (th.cells.some((x) => x.label === nb) && M.cellPhase5(c.label) === M.cellPhase5(nb)) phaseSame++;
+      }
+    }
+    check("no two orthogonally adjacent cells share an extension phase", phaseSame, 0, 0, "pairs");
+
+    // (c) THE STATION COUNT. Fewer knots is a better-conditioned boolean, and
+    // the count is snapped to a DIVISOR because the loft interpolates with a
+    // uniform parameterisation — unevenly spaced rings are told they are
+    // evenly spaced and the surface leaves them.
+    const cell0 = th.cells[0], row0 = map.rows.find((r) => r.id === cell0.id);
+    const full = M.shellSections(cell0, row0, { t, wall, snapMouth: false });
+    const Q = full.length - 1;
+    for (const want of [Q / 2, Q / 4]) {
+      const co = M.shellSections(cell0, row0, { t, wall, stations: want, snapMouth: false });
+      const gaps = new Set();
+      for (let i = 1; i < co.length; i++) gaps.add(Math.round((co[i].s - co[i - 1].s) * Q));
+      check(`stations ${want}: the kept rings are evenly spaced`, gaps.size, 1, 0, "gap sizes");
+      // and the loft passes through every ring it kept, exactly
+      const br = M.ductBrep(co);
+      let dev = 0;
+      for (let j = 0; j < co.length; j++)
+        for (let w = 0; w < 4; w++)
+          for (let i = 0; i <= br.n; i += 4) {
+            const P = M.evalBsplineSurf(br.walls[w], br.uKnots, br.vKnots, i / br.n, j / (co.length - 1));
+            const T = co[j].pts[(w * br.n + i) % (4 * br.n)];
+            dev = Math.max(dev, Math.hypot(P[0] - T[0], P[1] - T[1], P[2] - T[2]));
+          }
+      check(`stations ${want}: the loft passes through every kept ring`, dev, 0, 1e-9, "mm");
+    }
+    // a count that does NOT divide is snapped rather than obeyed
+    const odd = M.shellSections(cell0, row0, { t, wall, stations: Q - 1, snapMouth: false });
+    const oddGaps = new Set();
+    for (let i = 1; i < odd.length; i++) oddGaps.add(Math.round((odd[i].s - odd[i - 1].s) * Q));
+    check("a non-dividing count is snapped to one that divides", oddGaps.size, 1, 0, "gap sizes");
+  }
+
+  // ── the trim solids, and the recipe the file states ───────────────────────
+  {
+    const ext = 3;
+    const tr = M.throatTrimSections(th, map, { t, wall, ext });
+    const mo = M.mouthTrimSections(th, map, { t, wall, ext, jitter: 0.5 });
+    checkTrue("the throat trim is a slab below z = 0", tr && tr[tr.length - 1].pts.every((p) => Math.abs(p[2]) < 1e-12) && tr[0].pts.every((p) => p[2] < -ext),
+      tr ? `top at z = 0, bottom at z = ${tr[0].pts[0][2].toFixed(1)}` : "none");
+    // it has to cover the whole throat end, extended blanks included
+    let rB = 0;
+    for (const c of th.cells) {
+      const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, jitter: 0.5, snapMouth: false });
+      for (const p of b[0].pts) rB = Math.max(rB, Math.abs(p[0]), Math.abs(p[1]));
+    }
+    let half = 0;
+    for (const p of tr[0].pts) half = Math.max(half, Math.abs(p[0]), Math.abs(p[1]));
+    checkTrue("and it reaches past every blank at the throat", half > rB, `${half.toFixed(1)} mm against ${rB.toFixed(1)}`);
+    // the mouth trim's near face IS the aperture, not a chord across it
+    const grid = M.apertureCapGrid(mo[mo.length - 1].pts, ap);
+    let dev = 0;
+    for (const rw of grid) for (const p of rw) dev = Math.max(dev, Math.abs(ap.deviation(p)));
+    check("the mouth trim's cutting face lies on the aperture", dev, 0, 1e-9, "mm");
+    checkTrue("and it stands clear of the aperture on the far side", mo[0].pts.every((p, i) => p[2] > mo[mo.length - 1].pts[i][2] + 1),
+      `${(mo[0].pts[0][2] - mo[mo.length - 1].pts[0][2]).toFixed(0)} mm of stand-off`);
+
+    const out = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, name: "phase1" });
+    checkTrue("extended mode emits the blanks, the cutters and both trims",
+      out.mode === "extended" && out.cells === th.cells.length && out.trims === 2
+      && out.checks.ducts === 2 * th.cells.length + 2, `${out.checks.ducts} solids`);
+    // the recipe's own quotes are DOUBLED, because it lives in a STEP string
+    checkTrue("and states the union-then-subtract recipe",
+      /union the \d+ ''shell blank'' solids/.test(out.text)
+      && /subtract ''throat trim'' and ''mouth trim''/.test(out.text), "");
+    check("every surface passes through its samples", out.checks.residual, 0, 1e-9, "mm");
+    checkTrue("every solid's edges pair up", out.checks.edgePairing, "");
+    checkTrue("the file is referentially intact", M.stepIntegrity(out.text).ok, "");
+    // the two-cell test file: the smallest thing that can fail
+    const two = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, only: [th.cells[0].label, th.cells[1].label], name: "twocell" });
+    checkTrue("the two-cell test emits one adjacent pair and no trims",
+      two.cells === 2 && two.trims === 0 && two.checks.ducts === 4, `${two.checks.ducts} solids`);
+    // plain mode still available, ends still exact
+    const plain = M.buildShellSTEP(th, map, { t, wall, ext, extend: false, jitter: 0, stations: null, name: "plain" });
+    checkTrue("plain mode is unchanged: N blanks, N cutters, no trims, no unions",
+      plain.mode === "cells" && plain.trims === 0 && /no unions/.test(plain.text), "");
+  }
+
+  // ── the two ends are separable, and a plain throat stops exactly at z=0 ──
+  // The mouth trim cuts on the aperture surface; the throat trim cuts on the
+  // plane z = 0, which is the operation the owner measured failing as a plane
+  // split. A plain throat makes that face from the loft's own end ring, and
+  // the check that matters is that the WALL does not run past it — extended,
+  // it does, by tens of microns on the shortest-extension cells.
+  {
+    const ext = 3;
+    const cases = [
+      ["both ends", {}, 2, true, true],
+      ["mouth only", { extendThroat: false }, 1, false, true],
+      ["throat only", { extendMouth: false }, 1, true, false],
+      ["neither", { extend: false }, 0, false, false],
+      ["extend both, trim mouth", { trimThroat: false }, 1, true, true],
+    ];
+    for (const [tag, cfg, nTrim, eT, eM] of cases) {
+      const r = M.buildShellSTEP(th, map, { t, wall, ext, jitter: 0.5, stations: 32, ...cfg, name: tag });
+      const ok = r && r.trims === nTrim && r.ends.throat === eT && r.ends.mouth === eM
+        && r.checks.ducts === 2 * th.cells.length + nTrim
+        && M.stepIntegrity(r.text).ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+      checkTrue(`ends: ${tag}`, ok, r ? `${r.checks.ducts} solids, trims [${r.trimNames.join(", ") || "none"}]` : "null");
+    }
+    // a trim with no extension behind it would cut the real body: refused
+    const bad = M.buildShellSTEP(th, map, { t, wall, ext, jitter: 0.5, stations: 32,
+      extendThroat: false, trimThroat: true, name: "bad" });
+    checkTrue("a trim with no extension behind it is refused",
+      bad.trims === 1 && !bad.trimNames.includes("throat trim"),
+      `trims [${bad.trimNames.join(", ")}]`);
+
+    // the geometry that motivates the option: does the WALL pass its own cap?
+    const past = (eThroat) => {
+      let worst = 0;
+      for (const c of th.cells) {
+        const row = map.rows.find((r) => r.id === c.id);
+        const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: false });
+        const e = ext * (1 + 0.4 * M.cellPhase5(c.label));
+        const sec = M.extendSections(b, e, { throat: eThroat, mouth: true });
+        const br = M.ductBrep(sec);
+        const z0 = sec[0].pts[0][2];
+        let zmin = Infinity;
+        for (let j = 0; j <= 24; j++) for (const w of br.walls) for (let i = 0; i < br.n; i++)
+          zmin = Math.min(zmin, M.evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, (0.06 * j) / 24)[2]);
+        worst = Math.max(worst, z0 - zmin);
+      }
+      return worst;
+    };
+    // and the model reports it, with the ratio that explains it
+    const rep = M.shellCapOvershoot(th, map, { t, wall, jitter: 0.5, stations: 32, ext });
+    checkTrue("shellCapOvershoot finds it and names the cell",
+      rep.worst > 1e-3 && rep.at && rep.minRatio < 0.5 && rep.step > 1,
+      `${rep.worst.toFixed(4)} mm at ${rep.at}, ext/step ${rep.minRatio.toFixed(2)}, step ${rep.step.toFixed(1)} mm`);
+    // raising the extension past the threshold removes it
+    const big = M.shellCapOvershoot(th, map, { t, wall, jitter: 0.5, stations: 32, ext: 12 });
+    checkTrue("and a long enough extension removes it entirely",
+      big.worst <= 1e-9 && big.minRatio > 0.5, `${big.worst.toExponential(2)} mm at ext/step ${big.minRatio.toFixed(2)}`);
+    const withExt = past(true), noExt = past(false);
+    checkTrue("a plain throat: the wall stops exactly at its own end ring",
+      noExt <= 1e-9, `${noExt.toExponential(2)} mm past`);
+    checkTrue("and an extended one runs past its cap plane, measurably",
+      withExt > 1e-3, `${withExt.toFixed(4)} mm past — the uniform-parameterisation loft over a short first gap`);
+    // the plain throat ring is exactly planar in z = 0, which is the point
+    let flat = 0;
+    for (const c of th.cells) {
+      const row = map.rows.find((r) => r.id === c.id);
+      const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: false });
+      for (const p of b[0].pts) flat = Math.max(flat, Math.abs(p[2]));
+    }
+    check("and its end ring is planar in z = 0", flat, 0, 1e-9, "mm");
+  }
+
+  // ── the header must be a legal STEP string, and carry the settings ──────
+  // A string literal is delimited by apostrophes, so one INSIDE it has to be
+  // doubled. Every shell kit written before 2026-09-03 put bare quotes in its
+  // recipe, which made FILE_DESCRIPTION a syntax error. The check is a real
+  // tokeniser over the header, not a substring search.
+  {
+    const kit = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, jitter: 0.5, stations: 32,
+      params: "depth=320 note=o'brien back\\slash em—dash", name: "hdr" });
+    const head = kit.text.slice(0, kit.text.indexOf("ENDSEC;"));
+    // walk the header and count string literals, treating '' as an escape
+    const strings = [];
+    let i = 0, cur = null;
+    while (i < head.length) {
+      const ch = head[i];
+      if (cur === null) { if (ch === "'") { cur = ""; i++; continue; } i++; continue; }
+      if (ch === "'") {
+        if (head[i + 1] === "'") { cur += "'"; i += 2; continue; }
+        strings.push(cur); cur = null; i++; continue;
+      }
+      cur += ch; i++;
+    }
+    checkTrue("the header closes every string literal it opens", cur === null,
+      `${strings.length} literals parsed`);
+    // outside the literals the header must contain no bare apostrophe-free words
+    // where a string was meant: rebuild FILE_DESCRIPTION's argument list
+    const fd = /FILE_DESCRIPTION\(\(([\s\S]*?)\),'2;1'\);/.exec(head);
+    checkTrue("FILE_DESCRIPTION parses as a list of quoted strings only",
+      !!fd && /^\s*'(?:[^']|'')*'(?:\s*,\s*'(?:[^']|'')*')*\s*$/.test(fd[1]),
+      fd ? `${fd[1].length} chars` : "not found");
+    checkTrue("and the recipe's own quotes survive as doubled apostrophes",
+      /union the \d+ ''shell blank'' solids/.test(head), "");
+    checkTrue("the settings are stamped and their quotes escaped",
+      /depth=320/.test(head) && /o''brien/.test(head), "");
+    checkTrue("no character outside printable ASCII reaches the file",
+      !/[^\x09\x0a\x0d\x20-\x7e]/.test(kit.text), "");
+    // and the file still passes its own integrity check
+    checkTrue("the escaped file is still referentially intact", M.stepIntegrity(kit.text).ok, "");
+    // a shell export with no params supplied still stamps the shell settings
+    const auto = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, jitter: 0.5, stations: 32, name: "auto" });
+    checkTrue("an export with no params still carries the shell settings",
+      /wall=3/.test(auto.text) && /jitter=0.5/.test(auto.text), "");
+  }
+
+  // ── the wall against the cell width, which is what stacks the blanks ─────
+  // At the throat the cells tile, so a blank pushes `wall` into its neighbour
+  // across the whole shared face. Once 2·wall passes a cell's width the blanks
+  // on either side of that cell reach past each other. The closed form and the
+  // measured throat-plane stack must agree, and the mitre must be ruled OUT as
+  // the cause — clamping every corner to a full round leaves the stack alone.
+  {
+    const cw = M.throatCellWidth(th, map, { t });
+    checkTrue("the narrowest throat cell is measured on the duct ring",
+      cw.min > 3 && cw.min < cw.max && cw.max < 12,
+      `${cw.min.toFixed(2)}-${cw.max.toFixed(2)} mm, narrowest ${cw.narrowest}`);
+    const insideXY = (pt, poly) => {
+      let ins = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
+        if ((poly[i][1] > pt[1]) !== (poly[j][1] > pt[1])
+          && pt[0] < ((poly[j][0] - poly[i][0]) * (pt[1] - poly[i][1])) / (poly[j][1] - poly[i][1]) + poly[i][0]) ins = !ins;
+      return ins;
+    };
+    // how many blanks share throat material with a cell they are NOT adjacent
+    // to — the thing that can only happen by reaching across a whole cell
+    const farSharing = (w, cap = 0) => {
+      const B = new Map();
+      for (const c of th.cells) {
+        const row = map.rows.find((r) => r.id === c.id);
+        const b = M.shellSections(c, row, { t, wall: w, surf: map.mouthSurf, jitter: 0, stations: 32, snapMouth: false })[0].pts;
+        if (cap) {
+          const D = M.ductSections(c, row, { t })[0].pts, lim = cap * w;
+          for (let k = 0; k < b.length; k++) {
+            const o = D[k], v = [b[k][0] - o[0], b[k][1] - o[1], b[k][2] - o[2]];
+            const L = Math.hypot(v[0], v[1], v[2]);
+            if (L > lim) b[k] = [o[0] + (v[0] * lim) / L, o[1] + (v[1] * lim) / L, o[2] + (v[2] * lim) / L];
+          }
+        }
+        B.set(c.label, b);
+      }
+      const L = [...B.keys()];
+      let far = 0, stack = 0;
+      for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+        const [ci, ri] = L[i].split(",").map(Number), [cj, rj] = L[j].split(",").map(Number);
+        if (Math.abs(ci - cj) <= 1 && Math.abs(ri - rj) <= 1) continue;
+        const P = B.get(L[i]), Q = B.get(L[j]);
+        if (P.some((p) => insideXY(p, Q)) || Q.some((q) => insideXY(q, P))) far++;
+      }
+      for (let x = -26; x <= 26; x += 0.4) for (let y = -26; y <= 26; y += 0.4) {
+        let n = 0;
+        for (const [, P] of B) if (insideXY([x, y], P)) n++;
+        if (n > stack) stack = n;
+      }
+      return { far, stack };
+    };
+    const thick = farSharing(3), thin = farSharing(1.5);
+    checkTrue("a wall over half the narrowest cell reaches past a neighbour",
+      2 * 3 > cw.min && thick.far > 0 && thick.stack > 4,
+      `2x3 = 6.0 mm against ${cw.min.toFixed(2)} mm: ${thick.far} non-adjacent pairs share, stack ${thick.stack}`);
+    checkTrue("and a wall under it does not, down to the structural floor",
+      2 * 1.5 < cw.min && thin.far === 0 && thin.stack === 4,
+      `2x1.5 = 3.0 mm: ${thin.far} non-adjacent pairs, stack ${thin.stack} (four cells meet at a node)`);
+    // The mitre is NOT the cause, and this is the test that says so. Stated as
+    // a BOUND rather than an equality: clamping every corner to a full round
+    // does move the stack a little on some geometries (6 -> 6 at the tool's
+    // defaults, 6 -> 5 here), but it leaves the great majority of the reaching
+    // in place, where halving the wall removes ALL of it.
+    const round = farSharing(3, 1);
+    checkTrue("clamping every mitre to a full round does NOT fix it",
+      round.stack >= thick.stack - 1 && round.far > 0.8 * thick.far,
+      `stack ${thick.stack} -> ${round.stack}, non-adjacent pairs ${thick.far} -> ${round.far} — it is the face offset, not the corner`);
+  }
+
+  // ── symmetry regions: a half is a half, and the mirror is MEASURED ───────
+  // A region export rests on the horn being mirror-symmetric. That is a
+  // property of the built geometry, not of the intent — a world-axis bow
+  // breaks one mirror outright — so the check that matters is that the
+  // measurement can DETECT a broken mirror, not merely that it reads small on
+  // a good one.
+  {
+    const ext = 3;
+    const xp = M.symmetryRegion(th, { xSide: 1 }), xm = M.symmetryRegion(th, { xSide: -1 });
+    checkTrue("x+ and x- partition a 6x3 grid with nothing on the plane",
+      xp.labels.length === 9 && xm.labels.length === 9 && xp.onPlane.length === 0 &&
+      xp.labels.every((l) => !xm.labels.includes(l)),
+      `${xp.labels.length} + ${xm.labels.length} of ${th.cells.length}, even column count splits clean`);
+    const yp = M.symmetryRegion(th, { ySide: 1 }), ym = M.symmetryRegion(th, { ySide: -1 });
+    const shared = yp.labels.filter((l) => ym.labels.includes(l));
+    checkTrue("an ODD row count straddles, and the straddling row is reported",
+      yp.labels.length === 12 && yp.onPlane.length === 6 &&
+      shared.length === 6 && shared.every((l) => yp.onPlane.includes(l)),
+      `${yp.labels.length} cells, ${yp.onPlane.length} of them on y = 0 and in BOTH halves`);
+    const q = M.symmetryRegion(th, { xSide: 1, ySide: 1 });
+    checkTrue("a quarter is the intersection of the two halves",
+      q.labels.length === 6 && q.labels.every((l) => xp.labels.includes(l) && yp.labels.includes(l)),
+      `${q.labels.length} cells, ${q.onPlane.length} on a plane`);
+    // every cell appears in exactly one of the four quadrants, or on a plane
+    const quads = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([x, y]) => M.symmetryRegion(th, { xSide: x, ySide: y }));
+    const covered = th.cells.every((c) => quads.some((r) => r.labels.includes(c.label)));
+    checkTrue("the four quadrants cover every cell", covered, `${quads.map((r) => r.labels.length).join(" + ")}`);
+
+    const mir = M.mirrorSymmetry(th, map, { t });
+    checkTrue("both mirrors hold on the built ducts",
+      mir.x.worst < 1e-6 && mir.y.worst < 1e-6 && mir.x.paired === th.cells.length,
+      `x ${mir.x.worst.toExponential(2)} mm, y ${mir.y.worst.toExponential(2)} mm, ${mir.x.paired} pairs`);
+    // the detector has to fire, or it is measuring nothing
+    const broken = M.mapThroatToMouth(th, { ...opts, lengthen: { lobes: 1, dir: "y", uStart: 0, uEnd: 0.2 } });
+    const mb = M.mirrorSymmetry(th, broken, { t });
+    checkTrue("and a world-axis bow is CAUGHT breaking the y mirror only",
+      mb.y.worst > 1 && mb.x.worst < 1e-6,
+      `y ${mb.y.worst.toFixed(1)} mm broken, x ${mb.x.worst.toExponential(2)} mm intact`);
+
+    // the kit itself: a region ships the same trims and the same blanks
+    const full = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, name: "full" });
+    const half = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, xSide: 1, name: "half" });
+    checkTrue("a half kit is half the cells and still both trims",
+      half.cells === 9 && half.trims === 2 && half.checks.ducts === 2 * 9 + 2 && full.cells === 18,
+      `${half.checks.ducts} solids against the full kit's ${full.checks.ducts}`);
+    checkTrue("and it names exactly the region's cells",
+      half.region.labels.every((l) => half.text.includes(`shell blank ${l}`)) &&
+      M.symmetryRegion(th, { xSide: -1 }).labels.every((l) => !half.text.includes(`shell blank ${l}`)),
+      `${half.region.labels.join(" ")}`);
+    const hi = M.stepIntegrity(half.text);
+    checkTrue("a half kit passes the same self-checks as the whole",
+      hi.ok && half.checks.edgePairing && half.checks.residual < 1e-6,
+      `${hi.entities} entities, residual ${half.checks.residual.toExponential(1)} mm`);
+    // `only` is the two-cell test and must keep its no-trims behaviour
+    const both = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32,
+      only: [th.cells[0].label], xSide: 1, name: "both" });
+    checkTrue("`only` still wins over a region and ships no trims",
+      both.cells === 1 && both.trims === 0 && both.region === null, `${both.checks.ducts} solids`);
+    // the duct exports honour the same selection
+    const dsteps = M.buildSTEP(th, map, { t, only: half.region.labels, name: "ducts_half" });
+    checkTrue("the duct STEP honours the region too",
+      dsteps.checks.ducts === 9, `${dsteps.checks.ducts} duct solids`);
+  }
+
+  // ── orientation: ONE decision, and it must come out outward ──────────────
+  // A shell whose faces are oriented by a per-face radial proxy can disagree
+  // with itself; a hard-flaring solid is where that happened (two of four
+  // walls read backwards, their loops reversed and the shared vertical edges
+  // used twice in the SAME direction). The whole-shell divergence integral
+  // cannot disagree with itself, and its sign is the check.
+  {
+    const br = M.ductBrep(blank0, { capMouthPts: grid });
+    const o = M.brepShellOrientation(br);
+    checkTrue("a blank shell orients outward as assembled", o.outward,
+      `enclosed volume ${(o.volume / 1000).toFixed(1)} cm3`);
+    // Compare LIKE WITH LIKE. The mesh fans the mouth ring to its centroid;
+    // this brep closes it with the aperture surface, and on a curved cap the
+    // two fills enclose genuinely different volumes — the cap-fill finding at
+    // full strength, not an error. Closing the brep walls with the same fan
+    // removes the freedom, and then only the walls differ and they must agree.
+    const dm = M.ductMesh(blank0);
+    const vm = Math.abs(M.meshVolume(dm.verts, dm.tris));
+    const vFan = M.brepVolume(br, blank0, 12, 48, "fan");
+    checkTrue("fan-capped, the brep blank agrees with the meshed blank",
+      Math.abs(vFan - vm) / vm < 0.01,
+      `${(vFan / 1000).toFixed(2)} vs ${(vm / 1000).toFixed(2)} cm3, ${(100 * Math.abs(vFan - vm) / vm).toFixed(3)}%`);
+    checkTrue("and the aperture cap holds more than the fan, as a curved cap must",
+      o.volume > vm, `${(o.volume / 1000).toFixed(2)} vs ${(vm / 1000).toFixed(2)} cm3 — the cap-fill difference`);
+  }
+
+  // ── why the union is avoided: the blanks genuinely graze ─────────────────
+  // Blanks overlap near both ends (the ducts nearly tile there) and stand
+  // apart mid-path (the profile opens the gap), so every neighbouring pair
+  // crosses ZERO in between — exact tangential contact, the boolean's worst
+  // case. This is a property of the geometry, not of a tolerance.
+  {
+    const blankRows = (w) => map.rows.map((r) => {
+      const cell = th.cells.find((x) => x.id === r.id);
+      const sec = M.shellSections(cell, r, { t, wall: w, surf: map.mouthSurf });
+      return { ...r, sched: sec.map((x, q) => ({ ...r.sched[q], pts: x.pts })) };
+    });
+    const ps = M.ductClearance(blankRows(wall), {}).perStation;
+    let flips = 0;
+    for (let q = 2; q < ps.length - 1; q++) if (ps[q] * ps[q - 1] < 0) flips++;
+    checkTrue("bundle blanks cross from overlapping to apart mid-path", flips > 0,
+      `${flips} sign change(s) — the tangency the solid mode removes`);
+    const duct = M.ductClearance(map.rows, {});
+    checkTrue("and the wall that would avoid it is half the widest duct gap",
+      duct.max / 2 > wall, `widest duct gap ${duct.max.toFixed(1)} mm, so wall > ${(duct.max / 2).toFixed(1)} mm`);
+  }
 }
 
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);

@@ -3,3 +3,8 @@ dist/
 .DS_Store
 *.local
 .vite/
+
+# generated CAD samples, not source — every .step in this repo is written by
+# the tool (buildShellSTEP / buildSolidsSTEP) and sent to the owner, never
+# authored by hand, so the glob saves adding a line per experiment
+*.step

@@ -2498,6 +2498,13 @@ export function mapThroatToMouth(throat, opts) {
     // the number is there to deliver.
     profScaleMax: profileT != null ? Math.max(...rows.map((r) => r.profScaleMax)) : null,
     rows, surf, xs, ys, Lmax, Lmin, dL, lambda: lam,
+    // The BIRADIAL aperture ITSELF — the live object with its own point(),
+    // normal() and radii — not the legacy ellipsoid `surf` above and not the
+    // `biradial` summary below, which carries figures for the readouts and
+    // has no depth or evaluator on it. The shell needs the real surface:
+    // anything derived from a mouth ring by an offset leaves the aperture
+    // unless it is snapped back onto it.
+    mouthSurf: bi,
     dLfrac: dL / lam,
     band: dL <= lam / 8 ? "ok" : dL <= lam / 4 ? "warn" : "bad",
     twistMax: Math.max(...rows.map((r) => Math.abs(r.twistDeg))),
@@ -4833,35 +4840,159 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
   return out;
 }
 
-// ── HORN SHELL — blanks and cutters ────────────────────────────────────────
+// ── THE APERTURE AS A SURFACE THE SHELL CAN BE SNAPPED TO ──────────────────
+//
+// The duct mouth rings lie on the biradial aperture EXACTLY (measured 1e-13
+// mm) because they are built from its own parameters. Anything derived from
+// them by an offset does not: the offset happens in the ring's best-fit
+// plane, so it leaves the curved surface by the local slope times the offset
+// distance, and every cell fits its own plane so no two derived rings agree.
+// That is what put a 1.14 mm mismatched lip around each cell's mouth.
+//
+// The surface is a graph over (x, y) throughout its usable domain, and the
+// inversion is CLOSED FORM rather than a search:
+//
+//   y  = rV sin e                      ->  e = asin(y / rV)
+//   sg = rV (1 - cos e)                    the vertical sagitta at that e
+//   x  = (rH - sg) sin a               ->  a = asin(x / (rH - sg))
+//   z  = depth - rH (1 - cos a) - sg cos a
+//
+// so snapping moves a point in z alone and lands it on the surface to
+// round-off. Either radius may be infinite (a flat axis), which drops the
+// corresponding term. A point outside the domain (|sin| > 1) is returned
+// UNCHANGED and flagged, never clamped: clamping would silently fold
+// geometry onto the rim.
+export function apertureFrame(surf) {
+  const { rH, rV, depth } = surf;
+  const fH = isFinite(rH), fV = isFinite(rV);
+  const at = (a, e) => {
+    const sg = fV ? rV * (1 - Math.cos(e)) : 0;
+    return [
+      fH ? (rH - sg) * Math.sin(a) : a,
+      fV ? rV * Math.sin(e) : e,
+      depth - (fH ? rH * (1 - Math.cos(a)) : 0) - sg * (fH ? Math.cos(a) : 1),
+    ];
+  };
+  const param = (P) => {
+    let e = P[1], ok = true;
+    if (fV) {
+      const s = P[1] / rV;
+      if (Math.abs(s) > 1) ok = false; else e = Math.asin(s);
+    }
+    const sg = fV && ok ? rV * (1 - Math.cos(e)) : 0;
+    let a = P[0];
+    if (fH) {
+      const den = rH - sg;
+      const s = Math.abs(den) > 1e-12 ? P[0] / den : 2;
+      if (Math.abs(s) > 1) ok = false; else a = Math.asin(s);
+    }
+    return { a, e, ok };
+  };
+  const snap = (P) => {
+    const { a, e, ok } = param(P);
+    return ok ? at(a, e) : [P[0], P[1], P[2]];
+  };
+  // How far a point sits off the surface, measured along z. 0 means on it.
+  const deviation = (P) => {
+    const { ok } = param(P);
+    return ok ? P[2] - snap(P)[2] : NaN;
+  };
+  return { at, param, snap, deviation };
+}
+
+// A cap whose BOUNDARY is the given ring and whose INTERIOR lies on the
+// aperture surface. A Coons blend of the ring in 3-D would not: it
+// interpolates linearly between opposite boundary curves, and a chord across
+// a curved cap falls behind the surface — order 1 mm even a few millimetres
+// in from the rim on this aperture, which is exactly the band the mouth face
+// survives in after the passages are cut out. Blending in the surface's OWN
+// (a, e) parameters instead and then evaluating the surface puts every
+// interior point on it by construction, while reproducing the boundary
+// exactly because a transfinite blend always does.
+//
+// Returns an (n+1) x (n+1) data grid indexed [i][j]: i along side 0, j along
+// side 1, which is the indexing ductBrep's cap net uses.
+export function apertureCapGrid(ring, ap) {
+  const N = ring.length, n = N / 4;
+  if (!Number.isInteger(n)) return null;
+  const par = ring.map(ap.param);
+  if (par.some((p) => !p.ok)) return null;
+  const bot = [], top = [], left = [], right = [];
+  for (let i = 0; i <= n; i++) {
+    bot.push(par[i % N]);                  // side 0
+    top.push(par[(3 * n - i + N) % N]);    // side 2, reversed
+  }
+  for (let j = 0; j <= n; j++) {
+    right.push(par[(n + j) % N]);          // side 1
+    left.push(par[(4 * n - j) % N]);       // side 3, reversed
+  }
+  const grid = [];
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, row = [];
+    for (let j = 0; j <= n; j++) {
+      const v = j / n;
+      const a = (1 - v) * bot[i].a + v * top[i].a + (1 - u) * left[j].a + u * right[j].a
+        - ((1 - u) * (1 - v) * bot[0].a + u * (1 - v) * bot[n].a
+           + u * v * top[n].a + (1 - u) * v * top[0].a);
+      const e = (1 - v) * bot[i].e + v * top[i].e + (1 - u) * left[j].e + u * right[j].e
+        - ((1 - u) * (1 - v) * bot[0].e + u * (1 - v) * bot[n].e
+           + u * v * top[n].e + (1 - u) * v * top[0].e);
+      row.push(ap.at(a, e));
+    }
+    grid.push(row);
+  }
+  return grid;
+}
+
+// ── HORN SHELL — one blank and one cutter per cell ─────────────────────────
 //
 // The duct sections above are the AIR — the open passage the wave travels
-// through. The physical horn is the material AROUND that air, and no single
-// lofted solid can express it: near the throat the material is a connected
-// block threaded by 18 passages, mid-path it splits into separate tubes
-// (the classic multicell bundle), and at the mouth the walls taper to the
-// knife edges the coped joints make. That topology CHANGES along the path,
-// which is exactly what a CAD kernel's booleans exist to resolve and what a
-// loft cannot. So the shell export emits two solids per cell and states the
-// recipe: UNION the blanks, SUBTRACT the cutters, and the dividers, the
-// knife edges and the outer skin all fall out of the boolean.
+// through. The physical horn is the material around that air, and the export
+// gives it per cell: a BLANK is that cell's own duct rings pushed OUTWARD by
+// the wall on every side, and a CUTTER is the duct extended past both end
+// faces. The CAD work is eighteen independent SUBTRACTIONS, cutter i out of
+// blank i, and what comes back is eighteen cell shells of exactly `wall`
+// thickness all round. No unions, and nothing that has to be searched for.
 //
-// A BLANK is the duct's own station rings pushed OUTWARD — the same mitred
-// offset machinery as the divider inset, run with the opposite sign. Per
-// side the outset from the gross ring is:
-//   rim side      wall                     (the horn's outer skin)
-//   shared side   max(wall - t/2·taper, 0)
-// so blank outset + divider inset compose to max(wall, t/2·taper) of
-// material beyond the open passage on shared sides. The max() is the
-// guarantee that adjacent blanks always MEET through the divider region:
-// each blank reaches at least the gross (tiling) outline, and the union can
-// never be left with an internal sliver of missing material between two
-// walls. Where the profile separates the ducts mid-path the blanks separate
-// too, each carrying its own wall — that IS the multicell bundle — and
-// where the gap is under 2·wall they overlap and the union merges them into
-// one web. The wall between two PASSAGES is set by the layout t near the
-// throat and by the local duct gap elsewhere, never by 2·wall: the cutters
-// carve the passages back out of whatever the blanks put there.
+// WHY THIS AND NOT A ONE-PIECE BODY. Three constructions have now been
+// built and measured, and the two that produced an outer skin for the whole
+// horn both came out with visible surface texture while the ducts, written
+// by the same loft through the same writer, came out clean. The difference
+// is not the loft and not the station count:
+//
+//   A RING THAT IS EVALUATED FROM A SMOOTH MAP WITH FIXED POINT
+//   CORRESPONDENCE LOFTS CLEANLY. A RING THAT IS DERIVED PER STATION BY A
+//   DISCRETE SEARCH DOES NOT.
+//
+// A duct ring, and a blank ring, are the same map sampled at each station:
+// vertex k is the same material line the whole way down, and the only thing
+// that changes between stations is where that line has got to. The rejected
+// skins were found by search — a raster distance field traced by marching
+// squares, and a CONVEX HULL of the duct points offset with rounds. Both
+// decide something discrete at every station (which pixels are inside,
+// which points are on the hull), that decision changes abruptly along the
+// path, and the arc-length resample that follows slides every vertex to a
+// different feature. The cubic loft then interpolates a set of points whose
+// positions AND correspondence jitter by a few tenths of a millimetre, and
+// a few tenths of a millimetre at a 5 mm spacing is exactly the scale of a
+// visible crease. It is not a resolution problem and it does not refine
+// away: the noise is uncorrelated station to station, so a finer raster or
+// more stations changes the texture without removing it.
+//
+// The corollary is the rule for anything added here later: build a solid
+// from rings the model can EVALUATE, never from rings a search returns.
+//
+// A BLANK is the duct's own station rings offset outward by `wall` on all
+// four sides, through the same mitred-offset machinery as the divider inset
+// run with the opposite sign. Constant on every side is deliberate: it makes
+// the wall exactly `wall` measured from the passage wherever you cut, and it
+// removes the throat-rim EARS the earlier scheme threw (it offset rim sides
+// by `wall` and shared sides by `wall - t/2`, and a mitre between two
+// different offsets lands off both lines — 0.73 mm of overshoot at every
+// cell junction, one of the owner's first CAD reports). Adjacent blanks
+// therefore interpenetrate wherever the ducts run closer than 2·wall, which
+// is most of the throat half of the horn; that is reported, not hidden, by
+// `shellOverlap`, and it is what a multicell horn's shared walls ARE.
 //
 // A CUTTER is the duct sections EXTENDED a few mm past both end faces —
 // standard CAD practice for a boolean tool. Without the extension the
@@ -4875,32 +5006,161 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
 // difference between the blank's cap and the duct's (order 1 mm on these
 // mouths); the default of 3 mm clears it with margin.
 //
-// The blanks' throat faces are all planar in z = 0, so after the boolean
-// the driver mating face is flat and carries the t-thick dividers between
-// passages; at the mouth the passages tile (the inset has tapered to
-// nothing), so every shared wall is cut to a knife edge and only the rim
-// margin survives as the mouth's end face — the outer rim termination,
-// which is also the edge a CAD fillet would round over against diffraction.
-export function shellSections(cellRec, row, { t = 0, wall = 3 } = {}) {
-  const Q = row.sched.length - 1;
-  const rim = cellRec.rimSide || [false, false, false, false];
+// Both end faces are shared exactly with the duct's: the throat ring is
+// planar in z = 0 so the blank's is too, and the mouth ring is SNAPPED to
+// the aperture surface, so after the subtraction every cell's mouth face
+// lies on the one analytic surface the user's coverage arcs define.
+// Two adjacent cells share a grid line, so on the sides they do NOT share,
+// both blanks offset the SAME curve outward by the SAME distance — the
+// identical surface, computed twice, over a band exactly 2·wall wide. In
+// swept mode each cell fits its own plane, so the two copies land 0.4 um to
+// 50 um apart: measured 5-6.5 mm of arc per pair inside 10 um, 172 mm inside
+// 50 um, over 27 pairs. A kernel's linear tolerance is around 1 um, so that
+// is not a shape it can resolve — and it is invisible at any zoom, which is
+// why the owner could not find it. `jitter` breaks the tie by giving cells of
+// opposite grid parity different walls; any two orthogonally adjacent cells
+// then differ, so no face is ever a near-copy of another. The wall is only
+// ever ADDED to, never taken away, so `wall` stays the minimum.
+export function cellParity(label) {
+  const [col, row] = String(label).split(",").map(Number);
+  return Number.isFinite(col) && Number.isFinite(row) ? (col + row) % 2 : 0;
+}
+
+// A five-phase index that is guaranteed to DIFFER between any two
+// orthogonally adjacent cells (7 and 3 are both non-zero mod 5), used to
+// stagger the end-cap planes of the extended blanks. Two-phase parity is not
+// enough there: it would put half the caps on one plane and half on another,
+// and coplanar overlapping caps are the thing being removed.
+export function cellPhase5(label) {
+  const [col, row] = String(label).split(",").map(Number);
+  return Number.isFinite(col) && Number.isFinite(row) ? ((col * 7 + row * 3) % 5 + 5) % 5 : 0;
+}
+
+// The stations a shell is built on: `stations` of them, evenly spaced over
+// the map's own, both ends always kept. Fewer stations is fewer knots in the
+// loft's v direction, and surface-surface intersection of two nearly
+// parallel high-knot NURBS is where a kernel spends its conditioning budget:
+// 48 map stations put 51 control points in v on every wall face, 24 put 27.
+// The rings that ARE kept are the map's own, so the wall stays exact there.
+// FEWER KNOTS IS A MORE ROBUST BOOLEAN. Every wall face carries stations + 3
+// control points in v, and surface-surface intersection of two nearly
+// parallel high-knot NURBS is where a kernel spends its conditioning budget.
+// Halving is close to free: measured on a 64-station map, taking every
+// second ring moves the loft 0.105 mm, every fourth 0.414 mm, every eighth
+// 1.707 mm — monotone, and all of it at the mouth where the sections open
+// fastest.
+//
+// The count is snapped to a DIVISOR of the map's own, because the loft
+// interpolates with a UNIFORM parameterisation: unevenly spaced rings are
+// then told they are evenly spaced, and the surface leaves them. Measured at
+// 32 of 48 — gaps alternating 1 and 2 — the loft ran 4.6 mm from the very
+// rings it was built through, while every divisor lands them to 0.
+function stationIndices(Q, stations) {
+  if (!stations || stations >= Q) return Array.from({ length: Q + 1 }, (_, q) => q);
+  let step = Math.max(1, Math.round(Q / Math.max(3, stations)));
+  while (step < Q && Q % step !== 0) step++;
   const out = [];
-  for (let q = 0; q <= Q; q++) {
-    const st = row.sched[q];
-    if (!st.pts) return null;
-    const taper = 1 - st.s;
-    const d = rim.map((isRim) => -(isRim ? wall : Math.max(wall - (t / 2) * taper, 0)));
-    const pts = insetSection3(st.pts, d);
-    out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
+  for (let q = 0; q <= Q; q += step) out.push(q);
+  if (out[out.length - 1] !== Q) out.push(Q);
+  return out;
+}
+
+export function shellSections(cellRec, row, { t = 0, wall = 3, surf = null, jitter = 0, stations = null, snapMouth = true } = {}) {
+  const duct = ductSections(cellRec, row, { t });
+  if (!duct) return null;
+  const Q = duct.length - 1;
+  const ap = surf ? apertureFrame(surf) : null;
+  const w = wall + jitter * cellParity(cellRec.label);
+  const d = [-w, -w, -w, -w];
+  const out = [];
+  for (const q of stationIndices(Q, stations)) {
+    let pts = insetSection3(duct[q].pts, d);
+    // THE MOUTH RING BELONGS TO THE APERTURE SURFACE, NOT TO A BEST-FIT PLANE.
+    // insetSection3 offsets in the ring's own best-fit plane and keeps each
+    // point's off-plane component, so a point that moves 3 mm sideways stays
+    // at the height the ORIGINAL point had — and the aperture is curved, so
+    // that height is wrong by the surface's local slope times the offset.
+    // Measured 1.14 mm at the tool's defaults, in eighteen different
+    // directions because every cell fits its own plane: the lip around each
+    // cell's mouth left the aperture and no two lips agreed. Snapping puts
+    // every mouth ring back on the one analytic surface.
+    //
+    // The snap moves ONLY the last ring, so it leaves a one-ring
+    // discontinuity in the family for the loft to absorb. When the blank is
+    // EXTENDED the mouth face is cut by the mouth trim solid instead, so the
+    // snap has nothing to do: `snapMouth` turns it off, and the ring family
+    // runs smooth all the way to the end of the loft.
+    if (ap && snapMouth && q === Q) pts = pts.map(ap.snap);
+    out.push({ s: duct[q].s, area: polyArea3(pts), pts, origin: duct[q].origin });
   }
   return out;
+}
+
+// Where adjacent blanks interpenetrate, and by how much. Blanks are the
+// ducts grown by the wall on every side, so two of them overlap wherever
+// their ducts run closer than 2·wall — near the throat, where the ducts
+// tile, and again at the mouth. That is not a defect: it is the shared wall
+// between two cells, and the cutters carve the passages back out of it. It
+// is measured and reported so the number is visible rather than assumed.
+export function shellOverlap(throat, map, { t = 0, wall = 3 } = {}) {
+  const seg = (p, A, B) => {
+    const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+    let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+    u = Math.max(0, Math.min(1, u));
+    return Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u);
+  };
+  const gap = (P, Q) => {
+    let m = Infinity;
+    for (const p of P) for (let k = 0; k < Q.length; k++) m = Math.min(m, seg(p, Q[k], Q[(k + 1) % Q.length]));
+    for (const q of Q) for (let k = 0; k < P.length; k++) m = Math.min(m, seg(q, P[k], P[(k + 1) % P.length]));
+    return m;
+  };
+  const byLabel = new Map();
+  for (const c of throat.cells) {
+    const row = map.rows.find((r) => r.id === c.id);
+    if (!row) return null;
+    const d = ductSections(c, row, { t });
+    if (!d) return null;
+    byLabel.set(c.label, d);
+  }
+  const S = byLabel.values().next().value.length;
+  let pairs = 0, touching = 0, apartMin = Infinity, apartAt = null, deepest = 0, deepestAt = null;
+  const stationsTouching = new Array(S).fill(0);
+  for (const c of throat.cells) {
+    const [col, rw] = c.label.split(",").map(Number);
+    for (const [dc, dr] of [[1, 0], [0, 1]]) {
+      const nb = `${col + dc},${rw + dr}`;
+      if (!byLabel.has(nb)) continue;
+      pairs++;
+      const A = byLabel.get(c.label), B = byLabel.get(nb);
+      let anyTouch = false;
+      for (let q = 0; q < S; q++) {
+        const g = gap(A[q].pts, B[q].pts) - 2 * wall;   // blank-to-blank, signed
+        if (g < 0) { anyTouch = true; stationsTouching[q]++; if (-g > deepest) { deepest = -g; deepestAt = { pair: `${c.label}-${nb}`, q }; } }
+        else if (g < apartMin) { apartMin = g; apartAt = { pair: `${c.label}-${nb}`, q }; }
+      }
+      if (anyTouch) touching++;
+    }
+  }
+  const fracTouching = stationsTouching.filter((n) => n > 0).length / S;
+  return { pairs, touching, deepest, deepestAt, apartMin, apartAt, fracTouching, stationsTouching, S };
 }
 
 // Extend a duct's sections past both end faces by translating a copy of each
 // end ring along that ring's own outward vector-area normal. The added
 // volume is exactly |A_vec|·ext per end — a translated ring spans a prism —
 // which is what the test asserts.
-export function extendSections(sections, ext = 3) {
+// `ends` selects which end is extended. The two are separable because the two
+// ends are not the same problem: the mouth trim cuts on the APERTURE SURFACE
+// itself, a curved face the blanks cross transversally, while the throat trim
+// cuts on the PLANE z = 0 — and a plane cut at z = 0 is exactly the operation
+// the owner measured failing on individual blanks. Turning the throat
+// extension off makes that face by the loft's own end ring instead, which is
+// planar in z = 0 by construction, at the price of the coplanar overlapping
+// throat caps the extension was introduced to remove.
+export function extendSections(sections, ext = 3, { throat = true, mouth = true } = {}) {
+  if (!throat && !mouth) return sections;
   const Q = sections.length - 1;
   const cen = (pts) => {
     const c = [0, 0, 0];
@@ -4926,7 +5186,11 @@ export function extendSections(sections, ext = 3) {
   const nM = ringNormal(sections[Q].pts, [cQ[0] - cQ1[0], cQ[1] - cQ1[1], cQ[2] - cQ1[2]]);
   const shift = (pts, n) => pts.map((p) => [p[0] + n[0] * ext, p[1] + n[1] * ext, p[2] + n[2] * ext]);
   const clone = (sec, n) => ({ s: sec.s, area: sec.area, pts: shift(sec.pts, n), origin: sec.origin });
-  return [clone(sections[0], nT), ...sections, clone(sections[Q], nM)];
+  return [
+    ...(throat ? [clone(sections[0], nT)] : []),
+    ...sections,
+    ...(mouth ? [clone(sections[Q], nM)] : []),
+  ];
 }
 
 // Signed volume of a closed triangle soup, by the divergence theorem. Positive
@@ -5044,7 +5308,9 @@ export function buildSTL(meshes, note = "") {
 export function ductSolids(throat, map, opts = {}) {
   if (!map) return null;
   const out = [];
+  const sel = opts.only || null;
   for (const cellRec of throat.cells) {
+    if (sel && !sel.includes(cellRec.label)) continue;
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
     const sections = ductSections(cellRec, row, opts);
@@ -5325,7 +5591,7 @@ const greville = (knots, n) =>
 // corners, plus two Coons caps. Returns control nets and knot vectors with
 // the sharing structure explicit: corner columns appear once and both
 // adjacent walls reference them.
-export function ductBrep(sections) {
+export function ductBrep(sections, { capMouthPts = null } = {}) {
   const S = sections.length;            // stations, incl. both ends
   const N = sections[0].pts.length;     // points around the ring
   if (N % 4 !== 0) return null;
@@ -5380,11 +5646,30 @@ export function ductBrep(sections) {
     return net;
   };
 
+  // A cap built by interpolating a DATA GRID rather than blending the
+  // boundary. Its boundary control points come out identical to the walls'
+  // end rows — the same data through the same clamped system gives the same
+  // control points — and are then pinned outright, so the seam is shared by
+  // identity exactly as the Coons cap's is.
+  const gridCap = (data, j) => {
+    const rowsC = [];
+    for (let jj = 0; jj <= n; jj++)
+      rowsC.push(interpSolve3(sysU, Array.from({ length: n + 1 }, (_, i) => data[i][jj])));
+    const net = Array.from({ length: nu }, (_, i) =>
+      interpSolve3(sysU, Array.from({ length: n + 1 }, (_, jj) => rowsC[jj][i])));
+    const B = walls.map((netW) => netW.map((col) => col[j]));
+    const B0 = B[0], B1 = B[1], B2 = B[2].slice().reverse(), B3 = B[3].slice().reverse();
+    for (let i = 0; i < nu; i++) { net[i][0] = B0[i]; net[i][nu - 1] = B2[i]; }
+    for (let jj = 0; jj < nu; jj++) { net[0][jj] = B3[jj]; net[nu - 1][jj] = B1[jj]; }
+    return net;
+  };
+
   return {
     n, S, nu, nv,
     uKnots: sysU.knots, vKnots: sysV.knots,
     walls, cornerCols,
-    capThroat: coonsCap(0), capMouth: coonsCap(nv - 1),
+    capThroat: coonsCap(0),
+    capMouth: capMouthPts ? gridCap(capMouthPts, nv - 1) : coonsCap(nv - 1),
   };
 }
 
@@ -5489,6 +5774,53 @@ export function brepVolume(brep, sections, du = 12, dv = 48, caps = "coons") {
   return Math.abs(V);
 }
 
+// WHICH WAY THE SHELL FACES, DECIDED ONCE FOR THE WHOLE SOLID.
+//
+// The topology fixes the faces' orientations RELATIVE to each other: the four
+// walls share one state, the mouth cap goes with them, and the throat cap is
+// opposite (their natural u x v normals both point the same axial way, so one
+// of the two always has to be flipped — the cap-orientation finding). Only the
+// overall sense is free, and it is one bit for the solid.
+//
+// It used to be measured per face, against the ray from a mid-station centroid
+// to the patch centre. That is a proxy for "outward", and on a duct it is a
+// good one. On the HORN BODY it is wrong: the skin flares so hard that
+// mid-path it runs outward almost faster than it runs forward — measured
+// dv = (232, 0, -41) at the side wall, so the surface is nearly perpendicular
+// to the axis and its true outward normal is nearly -z while the radial ray
+// says +x. Two of the four walls then read the proxy backwards, their loops
+// were reversed and the others' were not, and the shared vertical edges came
+// out used twice in the SAME direction: an invalid shell that the edge-pairing
+// check caught.
+//
+// Integrating the divergence theorem over the whole shell replaces six guesses
+// with one measurement that cannot disagree with itself: positive means the
+// assumed sense already points outward.
+export function brepShellOrientation(brep, gu = 6, gv = 18) {
+  const { uKnots, vKnots, walls, capThroat, capMouth } = brep;
+  let V = 0;
+  const addFace = (net, uk, vk, nu2, nv2, sgn) => {
+    const grid = [];
+    for (let i = 0; i <= nu2; i++) {
+      const row = [];
+      for (let j = 0; j <= nv2; j++) row.push(evalBsplineSurf(net, uk, vk, i / nu2, j / nv2));
+      grid.push(row);
+    }
+    for (let i = 0; i < nu2; i++)
+      for (let j = 0; j < nv2; j++) {
+        const A = grid[i][j], B = grid[i + 1][j], C = grid[i + 1][j + 1], D = grid[i][j + 1];
+        for (const [P, Q, Rr] of [[A, B, C], [A, C, D]])
+          V += sgn * (P[0] * (Q[1] * Rr[2] - Rr[1] * Q[2])
+            - P[1] * (Q[0] * Rr[2] - Rr[0] * Q[2])
+            + P[2] * (Q[0] * Rr[1] - Rr[0] * Q[1])) / 6;
+      }
+  };
+  for (const w of walls) addFace(w, uKnots, vKnots, gu, gv, 1);
+  addFace(capMouth, uKnots, uKnots, gu, gu, 1);
+  addFace(capThroat, uKnots, uKnots, gu, gu, -1);
+  return { outward: V >= 0, volume: V };
+}
+
 // ── the AP214 writer ───────────────────────────────────────────────────────
 // A STEP real must carry a decimal point, and exponents are uppercase.
 function stepReal(x) {
@@ -5509,7 +5841,25 @@ function stepReal(x) {
 // null to skip that check. Returns { text, checks } — the checks are computed
 // on the same structures that were emitted, not re-derived. buildSTEP and
 // buildShellSTEP below are the two callers.
-function stepEmit({ name, desc, fileDesc, solidsSpec }) {
+// A STEP string literal is delimited by apostrophes, so an apostrophe INSIDE
+// one has to be doubled, and a backslash doubled too (it introduces the
+// control directives). Every shell kit shipped before 2026-09-03 wrote its
+// recipe with bare quotes — "union the 6 'shell blank' solids" — which makes
+// the FILE_DESCRIPTION a syntax error: the reader sees a string, then the bare
+// keywords `shell blank`, then another string. The DATA section was always
+// well-formed, so what a lenient importer did with it is unknown; a strict one
+// is entitled to reject the file. Every string that reaches the writer now
+// goes through here.
+// Non-ASCII is folded too: a STEP string is ISO 8859-1 with \X2\ escapes for
+// anything above it, and the recipes carry an em dash. Folding is simpler than
+// encoding and loses nothing a CAD reader cares about.
+const stepStr = (v) => String(v ?? "")
+  .replace(/[\u2010-\u2015]/g, "-")
+  .replace(/[^\x20-\x7e]/g, "?")
+  .replace(/\\/g, "\\\\")
+  .replace(/'/g, "''");
+
+function stepEmit({ name, desc, fileDesc, params, solidsSpec }) {
   const E = [];
   let nid = 0;
   const add = (txt) => { E.push(`#${++nid}=${txt};`); return nid; };
@@ -5519,7 +5869,7 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
   const appCtx = add(`APPLICATION_CONTEXT('automotive design')`);
   add(`APPLICATION_PROTOCOL_DEFINITION('draft international standard','automotive_design',1998,#${appCtx})`);
   const prodCtx = add(`PRODUCT_CONTEXT('',#${appCtx},'mechanical')`);
-  const prod = add(`PRODUCT('${name}','${desc}','',(#${prodCtx}))`);
+  const prod = add(`PRODUCT('${stepStr(name)}','${stepStr(desc)}','',(#${prodCtx}))`);
   add(`PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#${prod}))`);
   const pdf = add(`PRODUCT_DEFINITION_FORMATION('','',#${prod})`);
   const pdCtx = add(`PRODUCT_DEFINITION_CONTEXT('part definition',#${appCtx},'design')`);
@@ -5558,7 +5908,7 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
 
   for (const spec of solidsSpec) {
     const sections = spec.sections;
-    const brep = ductBrep(sections);
+    const brep = ductBrep(sections, { capMouthPts: spec.capMouthPts || null });
     if (!brep) return null;
     const { nu, nv, uKnots, vKnots, walls, cornerCols, capThroat, capMouth } = brep;
     checks.ducts++;
@@ -5603,32 +5953,18 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
     for (let s = 0; s < 4; s++)
       eMouth.push(mkEdge(vMouth[s], vMouth[(s + 1) % 4], wallIds[s].map((c) => c[nv - 1]), uKnots));
 
-    // outward references, for the orientation measurement
-    const ringCentroid = (q) => {
-      const c = [0, 0, 0];
-      for (const p of sections[q].pts) { c[0] += p[0] / sections[q].pts.length; c[1] += p[1] / sections[q].pts.length; c[2] += p[2] / sections[q].pts.length; }
-      return c;
-    };
-    const cMid = ringCentroid(Math.floor((nv - 3) / 2)), c0 = ringCentroid(0), c1 = ringCentroid(1);
-    const cQ = ringCentroid(brep.S - 1), cQ1 = ringCentroid(brep.S - 2);
-    const outwardOf = (kind) => {
-      if (kind === "throat") return [c0[0] - c1[0], c0[1] - c1[1], c0[2] - c1[2]];
-      if (kind === "mouth") return [cQ[0] - cQ1[0], cQ[1] - cQ1[1], cQ[2] - cQ1[2]];
-      return null; // wall: outward is measured per patch, from the mid centroid
-    };
+    // ORIENTATION IS ONE DECISION FOR THE SOLID, NOT SIX. The relative senses
+    // are fixed by the topology — four walls together, the mouth cap with
+    // them, the throat cap opposite — and brepShellOrientation settles the
+    // remaining bit by integrating the divergence theorem over the whole
+    // shell. Measuring each face separately against a radial "outward" proxy
+    // is what produced an invalid body shell; see the note on that function.
+    const shellOut = brepShellOrientation(brep).outward;
 
-    // one face from a whole patch: measure the normal, choose the flag and
-    // loop direction together so the loop is always CCW about the FACE normal
+    // one face from a whole patch: the flag and the loop direction move
+    // together, so the loop is always CCW about the FACE normal
     const faceFrom = (net, uk, vk, loop, kind) => {
-      const P = evalBsplineSurf(net, uk, vk, 0.5, 0.5);
-      const eps = 1e-4;
-      const Pu = evalBsplineSurf(net, uk, vk, 0.5 + eps, 0.5);
-      const Pv = evalBsplineSurf(net, uk, vk, 0.5, 0.5 + eps);
-      const du3 = [Pu[0] - P[0], Pu[1] - P[1], Pu[2] - P[2]];
-      const dv3 = [Pv[0] - P[0], Pv[1] - P[1], Pv[2] - P[2]];
-      const nrm = [du3[1] * dv3[2] - du3[2] * dv3[1], du3[2] * dv3[0] - du3[0] * dv3[2], du3[0] * dv3[1] - du3[1] * dv3[0]];
-      const outw = outwardOf(kind) || [P[0] - cMid[0], P[1] - cMid[1], P[2] - cMid[2]];
-      const same = nrm[0] * outw[0] + nrm[1] * outw[1] + nrm[2] * outw[2] >= 0;
+      const same = kind === "throat" ? !shellOut : shellOut;
       const useLoop = same ? loop : loop.slice().reverse().map(([e, f]) => [e, !f]);
       for (const [e, f] of useLoop) edges[e].uses.push(f);
       const oes = useLoop.map(([e, f]) => add(`ORIENTED_EDGE('',*,*,#${edges[e].id},${f ? ".T." : ".F."})`));
@@ -5652,7 +5988,7 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
       if (e.uses.length !== 2 || e.uses[0] === e.uses[1]) checks.edgePairing = false;
 
     const shell = add(`CLOSED_SHELL('',(${faces.map((i) => "#" + i).join(",")}))`);
-    solids.push(add(`MANIFOLD_SOLID_BREP('${spec.label}',#${shell})`));
+    solids.push(add(`MANIFOLD_SOLID_BREP('${stepStr(spec.label)}',#${shell})`));
   }
 
   const rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${place},${solids.map((i) => "#" + i).join(",")}),#${geoCtx})`);
@@ -5662,8 +5998,8 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
   const text = [
     "ISO-10303-21;",
     "HEADER;",
-    `FILE_DESCRIPTION(('${fileDesc}'),'2;1');`,
-    `FILE_NAME('${name}.step','${stamp}',(''),(''),'audiotools ginkgo','','');`,
+    `FILE_DESCRIPTION((${[fileDesc, params].filter(Boolean).map((x) => `'${stepStr(x)}'`).join(",")}),'2;1');`,
+    `FILE_NAME('${stepStr(name)}.step','${stamp}',(''),(''),'audiotools ginkgo','','');`,
     "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));",
     "ENDSEC;",
     "DATA;",
@@ -5676,10 +6012,11 @@ function stepEmit({ name, desc, fileDesc, solidsSpec }) {
 }
 
 // The air: every duct as one solid. What this file has always emitted.
-export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
+export function buildSTEP(throat, map, { t = 0, only = null, params = null, name = "ginkgo_ducts" } = {}) {
   if (!map) return null;
   const solidsSpec = [];
   for (const cellRec of throat.cells) {
+    if (only && !only.includes(cellRec.label)) continue;
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
     const sections = ductSections(cellRec, row, { t });
@@ -5687,35 +6024,472 @@ export function buildSTEP(throat, map, { t = 0, name = "ginkgo_ducts" } = {}) {
     solidsSpec.push({ label: `duct ${cellRec.label}`, sections, capZ: 0 });
   }
   return stepEmit({
-    name, solidsSpec,
+    name, solidsSpec, params,
     desc: "ginkgo multicell horn ducts",
     fileDesc: "ginkgo multicell horn ducts, lofted B-spline solids",
   });
 }
 
-// The material: two solids per cell — a shell BLANK (the duct rings pushed
-// outward by the wall) and a duct CUTTER (the duct extended past both end
-// faces). The recipe is stated in the shell-sections comment above: UNION
-// the blanks, SUBTRACT the cutters, and the boolean produces the dividers,
-// the knife edges and the outer skin. No single loft can carry that solid,
-// because its topology changes along the path.
-export function buildShellSTEP(throat, map, { t = 0, wall = 3, ext = 3, name = "ginkgo_horn_shell" } = {}) {
+// The narrowest width of each throat cell, as a rotating caliper on its own
+// outline. This is the number `wall` has to be read against: at the throat the
+// cells TILE, so a blank pushes `wall` into its neighbour's territory across
+// the whole shared face, and when 2·wall exceeds a cell's width the blanks on
+// either side of it reach past each other — two solids that share no edge at
+// all end up sharing material. Measured at the defaults: cells 4.47-7.25 mm
+// wide against 2·wall = 7.0 mm, and the blanks then stack SIX deep at the
+// throat. It is the FACE offset that does this, not the corner mitre: clamping
+// every mitre to a full round left the stack at 6 and the non-adjacent sharing
+// at 29 pairs of 153, while dropping the wall moved both at once (stack
+// 6/5/4 and non-adjacent 29/18/2 at wall 3/2.5/2, zero at 1.5).
+// Measured on the DUCT ring when a map is given — that is the outline the
+// blank is actually offset from — and on the layout polygon otherwise.
+export function throatCellWidth(throat, map = null, { t = 0 } = {}) {
+  const per = [];
+  for (const c of throat.cells) {
+    let poly = c.poly;
+    if (map) {
+      const row = map.rows.find((r) => r.id === c.id);
+      const d = row && ductSections(c, row, { t });
+      if (d) poly = d[0].pts;
+    }
+    if (!poly || poly.length < 3) continue;
+    let w = Infinity;
+    for (let a = 0; a < 180; a += 1) {
+      const ux = Math.cos((a * Math.PI) / 180), uy = Math.sin((a * Math.PI) / 180);
+      let lo = Infinity, hi = -Infinity;
+      for (const p of poly) { const s = p[0] * ux + p[1] * uy; if (s < lo) lo = s; if (s > hi) hi = s; }
+      if (hi - lo < w) w = hi - lo;
+    }
+    per.push({ label: c.label, w });
+  }
+  if (!per.length) return null;
+  const ws = per.map((x) => x.w);
+  const min = Math.min(...ws);
+  return { min, max: Math.max(...ws), per, narrowest: per.find((x) => x.w === min).label };
+}
+
+// Does the lofted WALL run past its own throat cap plane?
+//
+// `extendSections` prepends ONE ring at distance `ext`, and `ductBrep`
+// interpolates with a UNIFORM parameterisation — so a short first gap followed
+// by a full station step is told the two are equal, and the cubic overshoots
+// backwards. The blank's wall then pokes through the flat cap that is supposed
+// to close it: a self-intersecting solid, which no residual, edge-pairing or
+// integrity check can see. Measured against the station step on a 6x3 at
+// 32 shell stations (step 11.5 mm), sweeping ext:
+//   ext/step   0.09    0.17    0.26    0.43   0.69   0.96
+//   overshoot  0.94    0.40    0.033   0.000  0.000  0.000  mm
+// so the threshold is around 0.4 of a station step, and the shipped default
+// (ext 3 with the five-phase stagger, 3.0 to 7.8 mm) straddles it — the two
+// phase-0 cells sit at 0.26 and DO overshoot. Reported, not clamped: raising
+// `ext` or lowering `stations` both fix it, and which one the owner wants is
+// not this function's call.
+export function shellCapOvershoot(throat, map, { t = 0, wall = 3, jitter = 0.5, stations = 32, ext = 3, samples = 24 } = {}) {
   if (!map) return null;
-  const solidsSpec = [];
+  let worst = 0, at = null, minRatio = Infinity, stepSum = 0, nStep = 0;
   for (const cellRec of throat.cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
-    const blank = shellSections(cellRec, row, { t, wall });
+    const blank = shellSections(cellRec, row, { t, wall, surf: map.mouthSurf, jitter, stations, snapMouth: false });
+    if (!blank) return null;
+    let tot = 0;
+    for (let q = 1; q < blank.length; q++) {
+      let d = 0;
+      const A = blank[q - 1].pts, B = blank[q].pts;
+      for (let k = 0; k < A.length; k++) d += Math.hypot(B[k][0] - A[k][0], B[k][1] - A[k][1], B[k][2] - A[k][2]) / A.length;
+      tot += d;
+    }
+    const step = tot / Math.max(1, blank.length - 1);
+    stepSum += step; nStep++;
+    const e = ext * (1 + 0.4 * cellPhase5(cellRec.label));
+    minRatio = Math.min(minRatio, e / step);
+    const sec = extendSections(blank, e, { throat: true, mouth: true });
+    const br = ductBrep(sec);
+    if (!br) continue;
+    const z0 = sec[0].pts[0][2];
+    let zmin = Infinity;
+    for (let j = 0; j <= samples; j++) {
+      const v = (0.06 * j) / samples;
+      for (const w of br.walls) for (let i = 0; i < br.n; i++)
+        zmin = Math.min(zmin, evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, v)[2]);
+    }
+    if (z0 - zmin > worst) { worst = z0 - zmin; at = cellRec.label; }
+  }
+  return { worst, at, minRatio, step: nStep ? stepSum / nStep : 0 };
+}
+
+// ---------------------------------------------------------------------------
+// SYMMETRY REGIONS
+//
+// The horn is mirror-symmetric about x = 0 and about y = 0, so a half or a
+// quarter carries the whole design and the CAD work on it is a quarter of the
+// booleans. Both mirrors are properties of the BUILT geometry rather than of
+// the intent, though — a bow whose direction is a world axis breaks one of
+// them by construction (measured 20.5 mm on the y mirror for dir "y", against
+// 5.6e-11 mm for "radial") — so `mirrorSymmetry` measures the residual and the
+// caller is expected to show it beside the region rather than assume it.
+//
+// A cell is assigned by its THROAT centroid. A cell whose centroid sits ON a
+// plane is its OWN mirror image: it is INCLUDED in the region and reported
+// separately as `onPlane`, because mirroring the region in CAD would otherwise
+// drop a second copy of it exactly on the first. An odd row or column count is
+// exactly when that happens — 6x3 splits cleanly left/right and straddles
+// top/bottom, with the middle row on the plane.
+export function symmetryRegion(throat, { xSide = 0, ySide = 0, tol = 1e-6 } = {}) {
+  const keep = [], onPlane = [];
+  for (const c of throat.cells) {
+    const g = c.centroid || [0, 0];
+    const onX = Math.abs(g[0]) <= tol, onY = Math.abs(g[1]) <= tol;
+    if (xSide && !onX && Math.sign(g[0]) !== Math.sign(xSide)) continue;
+    if (ySide && !onY && Math.sign(g[1]) !== Math.sign(ySide)) continue;
+    keep.push(c.label);
+    if ((xSide && onX) || (ySide && onY)) onPlane.push(c.label);
+  }
+  return { labels: keep, onPlane, xSide, ySide, tol, dropped: throat.cells.length - keep.length };
+}
+
+// How well the built ducts actually mirror, per axis, in millimetres.
+//
+// Point CORRESPONDENCE is not assumed: a mirror reverses a ring's orientation,
+// so index k of one cell is not index k of its partner. Each mirrored point is
+// measured against the partner's ring as a POLYLINE, which is a one-sided
+// Hausdorff distance and needs no index map. A cell that is its own partner
+// (centroid on the plane) is measured against itself mirrored, which is the
+// check that matters for the cells a region export cannot split.
+export function mirrorSymmetry(throat, map, { t = 0, every = 2 } = {}) {
+  if (!map) return null;
+  const secs = new Map(), ctr = new Map();
+  for (const c of throat.cells) {
+    const row = map.rows.find((r) => r.id === c.id);
+    if (!row) return null;
+    const d = ductSections(c, row, { t });
+    if (!d) return null;
+    secs.set(c.label, d);
+    ctr.set(c.label, c.centroid || [0, 0]);
+  }
+  const seg = (p, A, B) => {
+    const ab = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+    let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+    u = Math.max(0, Math.min(1, u));
+    return Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u);
+  };
+  const toRing = (p, P) => {
+    let m = Infinity;
+    for (let k = 0; k < P.length; k++) m = Math.min(m, seg(p, P[k], P[(k + 1) % P.length]));
+    return m;
+  };
+  const out = {};
+  for (const [axis, ax] of [["x", 0], ["y", 1]]) {
+    let worst = 0, at = null, paired = 0, unpaired = 0;
+    for (const c of throat.cells) {
+      const g = ctr.get(c.label);
+      // the partner is the cell whose centroid is this one's mirror image
+      let best = null, bd = Infinity;
+      for (const o of throat.cells) {
+        const h = ctr.get(o.label);
+        const dx = (ax === 0 ? -g[0] : g[0]) - h[0], dy = (ax === 1 ? -g[1] : g[1]) - h[1];
+        const d = Math.hypot(dx, dy);
+        if (d < bd) { bd = d; best = o.label; }
+      }
+      if (!best || bd > 1e-3) { unpaired++; continue; }
+      paired++;
+      const A = secs.get(c.label), B = secs.get(best);
+      for (let q = 0; q < A.length; q += every) {
+        for (const p of A[q].pts) {
+          const m = [p[0], p[1], p[2]];
+          m[ax] = -m[ax];
+          const d = toRing(m, B[q].pts);
+          if (d > worst) { worst = d; at = { cell: c.label, partner: best, q }; }
+        }
+      }
+    }
+    out[axis] = { worst, at, paired, unpaired };
+  }
+  return out;
+}
+
+// The material, in two forms.
+//
+// ONE BLANK AND ONE CUTTER PER CELL. Two recipes, and which one is emitted
+// depends on whether the blanks are extended past their end faces:
+//
+//   plain (extend 0): N independent subtractions, cutter i out of blank i,
+//     giving N separate cell shells. Nothing is unioned, so nothing can fail
+//     — but the shells are separate parts.
+//   extended (the default): the blanks run past both end faces and two TRIM
+//     solids come with them. UNION the N blanks, SUBTRACT the two trims,
+//     SUBTRACT the N cutters. The union no longer touches either end plane,
+//     which is where 54 of the measured degeneracies lived (27 coplanar
+//     throat caps, 27 co-surface mouth caps), and the two cuts that restore
+//     those faces exactly are subtractions.
+//
+// The union of PLAIN blanks is ill-posed and is not offered: adjacent blanks
+// overlap near both ends and stand apart mid-path, so every neighbouring pair
+// passes through exact tangential contact twice (measured, all 27 pairs, at
+// u = 0.056-0.125, u ~ 0.30 and u = 0.970-0.976), and they carry near-copies
+// of each other's faces besides. `jitter` and `stations` are what make the
+// extended union tractable; see their comments above.
+export function buildShellSTEP(throat, map, {
+  t = 0, wall = 3, ext = 3, extend = true, jitter = 0.5, stations = 32,
+  extendThroat = null, extendMouth = null, trimThroat = null, trimMouth = null,
+  only = null, xSide = 0, ySide = 0, params = null, name = "ginkgo_horn_shell",
+} = {}) {
+  if (!map) return null;
+  // THE TWO ENDS ARE SEPARABLE, and they are not the same problem. `extend`
+  // still sets both at once; the four per-end flags override it.
+  //   MOUTH: the trim's cutting face is the APERTURE ITSELF, a curved surface
+  //     the blanks cross transversally. It has never been reported failing.
+  //   THROAT: the trim's cutting face is the PLANE z = 0 — and a plane split
+  //     at z = 0 is exactly the operation the owner measured failing on
+  //     individual blanks. Turning the throat extension off makes that face by
+  //     the loft's own end ring, which is planar in z = 0 by construction, and
+  //     asks the kernel for no cut there at all. The price is the coplanar
+  //     overlapping throat caps (27 of 27 adjacent pairs) that the extension
+  //     was introduced to remove.
+  // A trim with no extension behind it would cut into the real body, so it is
+  // refused rather than shipped: `trims` reports what was actually emitted.
+  const eT = extendThroat === null ? extend : !!extendThroat;
+  const eM = extendMouth === null ? extend : !!extendMouth;
+  const tT = (trimThroat === null ? eT : !!trimThroat) && eT;
+  const tM = (trimMouth === null ? eM : !!trimMouth) && eM;
+  const surf = map.mouthSurf || null;
+  const ap = surf ? apertureFrame(surf) : null;
+  const capOf = (sections) => (ap ? apertureCapGrid(sections[sections.length - 1].pts, ap) : null);
+  // `only` is the two-cell test and ships no trims; a symmetry REGION is a
+  // real export and keeps them, sized from the whole horn so the trims of a
+  // half and of the full kit are the same two solids.
+  const region = (xSide || ySide) && !only ? symmetryRegion(throat, { xSide, ySide }) : null;
+  const sel = only || (region ? region.labels : null);
+  const cells = sel ? throat.cells.filter((c) => sel.includes(c.label)) : throat.cells;
+  if (!cells.length) return null;
+  const solidsSpec = [];
+  for (const cellRec of cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
     const duct = ductSections(cellRec, row, { t });
-    if (!blank || !duct) return null;
-    solidsSpec.push({ label: `shell blank ${cellRec.label}`, sections: blank, capZ: 0 });
+    // the mouth ring is snapped onto the aperture only when the trim is not
+    // the thing that makes that face
+    const blank = shellSections(cellRec, row, { t, wall, surf, jitter, stations, snapMouth: !eM });
+    if (!duct || !blank) return null;
+    // staggered per cell so no two adjacent blanks end on the same plane
+    const e = ext * (1 + 0.4 * cellPhase5(cellRec.label));
+    const sections = eT || eM ? extendSections(blank, e, { throat: eT, mouth: eM }) : blank;
+    solidsSpec.push({
+      label: `shell blank ${cellRec.label}`,
+      sections,
+      capZ: eT ? -e : 0,
+      ...(eM ? {} : { capMouthPts: capOf(blank) }),
+    });
     solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, ext), capZ: -ext });
   }
-  return stepEmit({
+  const n = cells.length;
+  const trims = [];
+  if (!only && (tT || tM)) {
+    if (tT) {
+      const tr = throatTrimSections(throat, map, { t, wall, ext: ext * 3, per: 8 });
+      if (!tr) return null;
+      solidsSpec.push({ label: "throat trim", sections: tr, capZ: tr[0].pts[0][2] });
+      trims.push("throat trim");
+    }
+    if (tM) {
+      const mo = mouthTrimSections(throat, map, { t, wall, ext: ext * 3, jitter, per: 8 });
+      if (!mo) return null;
+      solidsSpec.push({ label: "mouth trim", sections: mo, capMouthPts: capOf(mo) });
+      trims.push("mouth trim");
+    }
+  }
+  const ends = eT && eM ? "both end faces" : eT ? "the throat face" : eM ? "the mouth face" : null;
+  const cutBack = trims.length ? `subtract ${trims.map((x) => `'${x}'`).join(" and ")}, then ` : "";
+  const recipe = ends
+    ? (only
+      ? `union the ${n} blanks (they are extended past ${ends}; a full export ships the trim solid(s) that cut them back)`
+      : `union the ${n} 'shell blank' solids (extended past ${ends}), then ${cutBack}subtract the ${n} 'duct cutter' solids`)
+    : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
+  const out = stepEmit({
     name, solidsSpec,
-    desc: "ginkgo multicell horn shell kit: union blanks, subtract cutters",
-    fileDesc: "ginkgo multicell horn shell kit, lofted B-spline solids; union the blanks and subtract the cutters",
+    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} jitter=${jitter} stations=${stations} xSide=${xSide} ySide=${ySide}`,
+    desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
+    fileDesc: `ginkgo multicell horn shell kit: ${recipe}`,
   });
+  if (out) {
+    out.mode = eT || eM ? "extended" : "cells";
+    out.cells = n;
+    out.trims = trims.length;
+    out.trimNames = trims;
+    out.ends = { throat: eT, mouth: eM };
+    out.region = region;
+  }
+  return out;
+}
+
+// How much of one blank's surface runs as a near-copy of its neighbour's.
+// Two adjacent cells share a grid line, so on their other sides both blanks
+// offset the SAME curve by the SAME distance: the identical surface computed
+// twice, differing only by the two cells' best-fit planes. Measured without
+// jitter: 37 mm of arc inside 10 um and 172 mm inside 50 um over 27 pairs,
+// with the two surfaces closing to 0.4 um. A kernel's linear tolerance is
+// around 1 um, so that is not a shape it can resolve, and it is invisible at
+// any zoom. `jitter` separates them — but WHICH value is clean depends on
+// the geometry (0.1 and 0.5 mm measure 17.5 and 0 mm of arc inside 50 um on
+// the tool's defaults, while 0.3 measures 85.5), so it is MEASURED and
+// reported rather than assumed. Sampled every `every` stations to stay cheap
+// enough to run on every export.
+export function shellCoincidence(throat, map, { t = 0, wall = 3, jitter = 0, stations = null, eps = 0.05, every = 4 } = {}) {
+  const surf = map.mouthSurf || null;
+  const B = new Map();
+  for (const c of throat.cells) {
+    const row = map.rows.find((r) => r.id === c.id);
+    if (!row) return null;
+    const b = shellSections(c, row, { t, wall, surf, jitter, stations, snapMouth: false });
+    if (!b) return null;
+    B.set(c.label, b);
+  }
+  const seg = (p, A, Bb) => {
+    const ab = [Bb[0] - A[0], Bb[1] - A[1], Bb[2] - A[2]];
+    const L2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2] || 1e-12;
+    let u = ((p[0] - A[0]) * ab[0] + (p[1] - A[1]) * ab[1] + (p[2] - A[2]) * ab[2]) / L2;
+    u = Math.max(0, Math.min(1, u));
+    return Math.hypot(p[0] - A[0] - ab[0] * u, p[1] - A[1] - ab[1] * u, p[2] - A[2] - ab[2] * u);
+  };
+  const toPoly = (p, P) => { let m = Infinity; for (let k = 0; k < P.length; k++) m = Math.min(m, seg(p, P[k], P[(k + 1) % P.length])); return m; };
+  const S = B.get(throat.cells[0].label).length;
+  let arc = 0, worst = 0, pairs = 0;
+  for (const c of throat.cells) {
+    const [col, rw] = c.label.split(",").map(Number);
+    for (const [dc, dr] of [[1, 0], [0, 1]]) {
+      const nb = `${col + dc},${rw + dr}`;
+      if (!B.has(nb)) continue;
+      pairs++;
+      const A = B.get(c.label), D = B.get(nb);
+      for (let q = 0; q < S; q += every) {
+        const P = A[q].pts, Q = D[q].pts;
+        let L = 0;
+        for (let k = 0; k < P.length; k++) {
+          const a = P[k], b = P[(k + 1) % P.length];
+          if (toPoly(a, Q) < eps && toPoly(b, Q) < eps) L += Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+        }
+        arc += L; worst = Math.max(worst, L);
+      }
+    }
+  }
+  return { arc, worst, pairs, eps, sampled: Math.ceil(S / every) };
+}
+
+// ── THE TRIM SOLIDS ────────────────────────────────────────────────────────
+//
+// Every blank's throat ring is planar in z = 0 and every mouth ring lies on
+// the one aperture, so adjacent blanks meet with COPLANAR and CO-SURFACE
+// OVERLAPPING end caps — measured 27 of 27 pairs at each end. Both are
+// properties the owner asked for and both are boolean-hostile. The fix is
+// not to give them up: build the blanks running PAST both ends, union them
+// where nothing is coincident, and cut the two end faces afterwards with a
+// subtraction — the operation that has never failed in the owner's CAD.
+//
+// The extension is a PREPENDED RING, not a face offset. That distinction is
+// measured: offsetting a blank's throat face by +1 mm succeeded in CAD and
+// +2 mm failed, because a face offset EXTRAPOLATES the four wall surfaces
+// past their parameter range and re-intersects them, and the corner identity
+// (adjacent walls sharing control-point columns) holds only INSIDE the
+// domain. `extendSections` adds real geometry to the loft instead, which is
+// why the cutters have never failed. Never ask CAD to offset our faces.
+//
+// The extension length is staggered per cell on the five-phase index, so the
+// extended caps do not simply move the coplanar problem from z = 0 to
+// z = -ext: any two orthogonally adjacent cells end on different planes.
+
+// A slab occupying everything below the throat plane, to cut the extended
+// blanks back to z = 0 exactly. Four stations so the loft's v-interpolation
+// is well posed; a rectangle wide enough to clear the throat end of the horn.
+export function throatTrimSections(throat, map, { t = 0, wall = 3, ext = 3, per = 8, pad = 10 } = {}) {
+  let rMax = 0;
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const d = ductSections(cellRec, row, { t });
+    if (!d) return null;
+    for (const p of d[0].pts) rMax = Math.max(rMax, Math.hypot(p[0], p[1]));
+  }
+  const h = rMax + wall + pad;
+  const ring = (z) => {
+    const corners = [[-h, -h], [h, -h], [h, h], [-h, h]];
+    const out = [];
+    for (let sd = 0; sd < 4; sd++) {
+      const a = corners[sd], b = corners[(sd + 1) % 4];
+      for (let k = 0; k < per; k++) out.push([a[0] + ((b[0] - a[0]) * k) / per, a[1] + ((b[1] - a[1]) * k) / per, z]);
+    }
+    return out;
+  };
+  const z0 = -(ext + pad);
+  const out = [];
+  for (let i = 0; i <= 3; i++) {
+    const z = z0 + ((0 - z0) * i) / 3, pts = ring(z);
+    out.push({ s: i / 3, area: polyArea3(pts), pts, origin: [0, 0, z] });
+  }
+  return out;
+}
+
+// A slab occupying everything beyond the aperture, to cut the extended
+// blanks back onto the aperture surface exactly. Its far face is the
+// aperture patch translated in +z; its near face is the aperture patch
+// ITSELF, emitted through `apertureCapGrid` so the cut lands on the analytic
+// surface rather than on a chord across it. The parametric domain is taken
+// from where the blanks actually reach, plus a margin.
+export function mouthTrimSections(throat, map, { t = 0, wall = 3, ext = 3, jitter = 0, per = 8, pad = 12, thick = 40 } = {}) {
+  const surf = map.mouthSurf;
+  if (!surf) return null;
+  const ap = apertureFrame(surf);
+  let aMax = 0, eMax = 0;
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const b = shellSections(cellRec, row, { t, wall, surf, jitter, snapMouth: false });
+    if (!b) return null;
+    for (const p of b[b.length - 1].pts) {
+      const pr = ap.param(p);
+      if (!pr.ok) return null;
+      aMax = Math.max(aMax, Math.abs(pr.a)); eMax = Math.max(eMax, Math.abs(pr.e));
+    }
+  }
+  // the margin is angular where the axis is curved and linear where it is
+  // flat (an infinite radius makes the parameter the coordinate itself)
+  const fH = isFinite(surf.rH), fV = isFinite(surf.rV);
+  const dA = fH ? (wall + ext + pad) / surf.rH : wall + ext + pad;
+  const dE = fV ? (wall + ext + pad) / surf.rV : wall + ext + pad;
+  const A = aMax + dA, E = eMax + dE;
+  const corners = [[-A, -E], [A, -E], [A, E], [-A, E]];
+  const ring = (dz) => {
+    const out = [];
+    for (let sd = 0; sd < 4; sd++) {
+      const c0 = corners[sd], c1 = corners[(sd + 1) % 4];
+      for (let k = 0; k < per; k++) {
+        const u = k / per;
+        const P = ap.at(c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u);
+        out.push([P[0], P[1], P[2] + dz]);
+      }
+    }
+    return out;
+  };
+  // ordered FAR first so the aperture patch is the last section, which is
+  // the one stepEmit caps with capMouthPts
+  const out = [];
+  for (let i = 0; i <= 3; i++) {
+    const dz = thick * (1 - i / 3), pts = ring(dz);
+    out.push({ s: i / 3, area: polyArea3(pts), pts, origin: [0, 0, dz] });
+  }
+  return out;
+}
+
+// Emit an arbitrary list of solids — the kit's own parts, or any subset of
+// them — so a test file of two tubes and their web can be written without
+// the rest of the horn.
+export function buildSolidsSTEP(solids, { name = "ginkgo_solids", desc = "ginkgo solids", surf = null } = {}) {
+  const ap = surf ? apertureFrame(surf) : null;
+  const solidsSpec = solids.map((sd) => ({
+    label: sd.label, sections: sd.sections, capZ: sd.capZ == null ? null : sd.capZ,
+    capMouthPts: sd.mouth && ap ? apertureCapGrid(sd.sections[sd.sections.length - 1].pts, ap) : null,
+  }));
+  return stepEmit({ name, solidsSpec, desc, fileDesc: desc });
 }
 
 // Referential integrity of an emitted file: every #id referenced in the DATA

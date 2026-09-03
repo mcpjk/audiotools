@@ -59,6 +59,437 @@ depth of 357 mm the same bow produces NO interpenetration at all in the
 exported solids, independently verified. See the corrected CLAUDE.md finding
 for the depth sweep and for why the crossing is not a clean threshold.
 
+## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
+
+`mapThroatToMouth` samples each centreline at `samples = 64` internal points
+and then places each station by **`idx = Math.round(u * M)`, taking
+`C = pts[idx]`** (src/hgrid-model.js, in the swept-section branch). The
+station's centre is therefore quantised to the nearest of 64 samples instead
+of being interpolated along the centreline.
+
+Consequence, measured: whenever `stations` does not divide 64, the ring
+spacing goes irregular. At **48 stations, every third step is exactly 2.00x
+its neighbours** — on all 18 cells, at stations 1, 4, 7, ... 46 (origin steps
+6.44, 6.62, **13.83**, 7.22 mm). At 24 it is a milder 3,2,3 pattern. At 64
+and 32 it is exact. Because the loft interpolates with a UNIFORM
+parameterisation, unevenly spaced rings are told they are evenly spaced and
+the surface leaves them — this is the same mechanism that made a
+non-dividing shell station count run 4.6 mm off its own rings.
+
+**The tool's UI default is 64 stations, which divides exactly, so the
+shipped default export is clean.** That is why this has never shown up. It
+bites at 48, 40, 36 and any other non-dividing count, and it affects the
+DUCTS as well as the shell.
+
+The fix is to interpolate `C` (and the frame) between samples rather than
+snapping, which is a small change with a wide blast radius: every duct
+moves slightly, and every measurement recorded in CLAUDE.md was taken on the
+snapped geometry. It deserves its own session and its own re-verification.
+Until then, **use station counts that divide 64**.
+
+## Phase 1 shipped (2026-09-03) — making the union tractable
+
+Three switches, each justified by the number it moves; see the CLAUDE.md
+finding for the full audit. `jitter` 0.5 mm (near-copy surface 148 mm to 0),
+`extend` on with two trim solids (coplanar throat caps 27/27 to 0/27), and
+`stations` 32 (control points in v halved for 0.105 mm). Plus a **two-cell
+test export** — one adjacent pair, four solids — which is the repro to run
+before exporting a full kit.
+
+**Owner-side result (2026-09-03): pairs union, row-runs of three union,
+merging two merged bodies FAILS, and unioning one cell at a time WORKS.**
+The discriminator is how many blanks cover the same volume at the throat —
+2 or 3 succeeds, 6 fails — and six happens because the corner mitres reach up
+to 8.49 mm where the throat cells are 4.47-7.25 mm wide, so a corner crosses
+a whole neighbouring cell. See the CLAUDE.md finding for the measurements.
+**The standing CAD recipe is therefore: union the blanks ONE CELL AT A TIME,
+never tree-merge merged bodies, and cut only after the union is complete.**
+
+**THE MITRE CAP WAS MEASURED AND WITHDRAWN (2026-09-03).** A full round left
+the throat stack at 6 on the defaults and at 5 on the test geometry, with 24
+of 28 non-adjacent pairs still sharing material. It is the FACE offset that
+stacks the blanks, not the corner. The suite asserts that negative so the
+idea cannot come back by memory.
+
+**What the measurement points at instead, in order of how much it moves:**
+  1. `wall` under half the narrowest throat cell — 2·wall + jitter must clear
+     `throatCellWidth().min` (4.47 mm at the defaults, so under ~2.0 mm).
+     That takes the throat stack to its structural floor of 4 and the
+     non-adjacent sharing to 0. Free to try today: it is one field, the
+     passages are unchanged (the cutters do not move), and the note now
+     prints both numbers on every export.
+  2. Phase 2 below — one evaluated envelope over the throat region, minus the
+     cutters, so the region that stacks 6 deep is never unioned at all. This
+     is the structural answer and the reason Phase 2 is still the plan.
+
+**THE IMPORT SETTINGS ARE RULED OUT (2026-09-03, owner's test).** Same kit
+imported with the four healing options off and again with Shapr3D's standard
+"quality" defaults: identical results on both the throat-plane splits and the
+unions. The hypothesis below was wrong.
+
+**THE THROAT CAP OVERSHOOT IS THE ONE REAL DEFECT FOUND (2026-09-03), and it
+is not the split cause.** The lofted wall runs past its own throat cap plane —
+up to 0.66 mm on the test geometry — because `extendSections` prepends one
+ring at `ext` and the loft parameterises uniformly. Threshold measured at
+about 0.4 of a station step; the default `ext` 3 with the phase stagger
+straddles it. `shellCapOvershoot` now measures it on every export and the note
+warns. **Decide whether to raise `ext`, scale it from the station step, or
+default the throat to plain** — all three fix it and the choice is the
+owner's. Ruled out as the split cause: the two overshooting cells are the two
+that split successfully.
+
+**THE OPEN QUESTION IS STILL A ONE-BODY ONE, and it is now harder.**
+The split-failing set CHANGED between exports ({2,1 3,1 3,2} then {1,2 3,1}),
+so it is not a fixed per-cell property. On the reproduced geometry, ruled out:
+ring self-intersection at any station, concave radius under the wall, minimum
+caliper, and a genuine 3-D fold. Next candidates: evaluate the blank's four
+wall surfaces against EACH OTHER away from their shared edges (a surface-level
+self-intersection the ring test cannot see), and check the throat cap's Coons
+patch against the walls it closes.
+
+**Superseded, kept for the record:** Three of six blanks (2,1 / 3,1 /
+3,2) fail a plane split at the throat. No union, no second solid — a property
+of the single blank. It does not predict the union results. To reproduce it
+here the export's settings are needed, which is why every export now stamps
+them into the STEP header; the failing file predates that. **Next round: ask
+for a fresh export of the same geometry, read the settings out of the header,
+rebuild those six blanks in the model and look for a per-body property that
+separates {2,1 3,1 3,2} from {1,1 1,2 2,2}.** Candidates not yet tested:
+ring self-intersection at some station, the loft overshooting its own end cap
+through the short first gap of the extension (ext is 3.0 to 7.8 mm against a
+~11 mm station step, under a UNIFORM parameterisation), and a near-degenerate
+patch where a mitred corner runs short.
+
+**Superseded, kept for the record:** The
+shipped bodies audit topologically perfect — F-E+V = 2, every edge used once
+each way, every edge curve's control points ARE control points of both
+adjoining surfaces — so Shapr3D's default-ON Simplify Geometry, Advanced
+Healing, Healing (HOOPS) and Accurate Edge Computation have nothing to repair
+and can only subtract. Owner to re-import the SAME file with those four off
+(Sewing left on) and repeat both the throat-plane splits and the 13 pair
+unions. Same file, so any difference is import processing alone.
+This is also the best explanation for the per-body unpredictability: healing
+damage is decided per solid at import, which is invisible in what we ship.
+The owner reporting some blanks failing a plane SPLIT — one body, no union —
+is the observation that cannot be a pair effect. **Ask which blanks fail the
+split**; if that set is the set appearing in the union failures, it is the
+bodies, not the pairs.
+
+**Pair-hunting is over.** On the owner's own quarter export, 5 of 13 pair
+unions failed and no measured property of a pair predicted which — two
+near-twin pairs landed on opposite sides. See the CLAUDE.md finding for the
+five discriminators that came out flat. Every pair overlaps millimetres deep
+and touches within 40 um somewhere; the configuration is uniformly marginal.
+
+## Region exports shipped (2026-09-03)
+
+`xSide` / `ySide` on `buildShellSTEP`, `only` on `buildSTEP` and
+`ductSolids`, driven by a `region` row in the export panel. Applies to the
+STL, the duct STEP and the shell kit; the filename carries the side. The
+trims are still sized from the whole horn, so a half's two trims are the
+full kit's two trims.
+Two properties are measured rather than assumed, both surfaced in the note:
+`mirrorSymmetry` reports the residual of the mirror the region rests on
+(2.2e-9 mm at the defaults, 15-54 mm if a world-axis bow is on), and
+`symmetryRegion` reports the cells sitting ON a plane, which are their own
+mirror image and must not be duplicated. **A mirrored shell half cannot be
+unioned to itself** — the jitter is keyed to grid parity, so the seam gets
+equal walls; export the opposite side instead.
+
+**Phase 2, planned and not built — the envelope solid.** One simple
+evaluated solid minus N cutters, zero unions. `envelopeSections(throat, map,
+{ wall, qEnd, monotone })`: a superellipse per station, `|x/a|^n + |y/b|^n =
+1`, axes and exponent SOLVED CONTINUOUSLY (a trial that sampled n from a
+discrete list jumped 5 times over 49 stations — exactly the discrete-decision
+smell that produced the texture), evaluated at fixed angles into four runs so
+`ductBrep` gets its shared corner columns. `qEnd` gives the throat block or
+the whole horn from one code path. Measured costs from the trial: **4.13 L of
+material against at most 1.85 L** for the per-cell shells, and the honest
+envelope **pinches at z ~ 63 mm** (area 78.3 to 63.0 cm2) because the Hypex
+profile pulls the ducts inward there — hence the `monotone` option, whose
+cost is not yet measured. Symmetry comes free from the superellipse; no need
+to build quadrants. Checks it must pass: 3-D clearance >= wall from every
+duct point, a and b smooth in station (second difference bounded), throat
+face the exact circle R + wall planar in z = 0, mouth face on the aperture,
+both mirrors.
+
+**Not built, and candidates if Phase 1 is not enough:** round the mitre
+corners instead of mitring them (kills the 7.28 mm spikes and the 4- and
+5-way crossing blades, and would likely have made the owner's +2 mm face
+offset work); emit analytic surfaces where the geometry is analytic, since
+Parasolid booleans on planes and cones are far more robust than on NURBS.
+
+## THE SHELL: WHAT FAILED, AND THE RULE THAT COMES OUT OF IT
+
+Read this before proposing any shell construction. Three were built and
+measured in one day; two were rejected on sight for surface texture, and
+they failed for the SAME reason even though they look unrelated:
+
+| construction | how its rings were found | outcome |
+|---|---|---|
+| per-cell blanks | duct rings offset by the wall — EVALUATED | clean; this is what ships |
+| one wrapped body (`hornBodySections`) | raster distance field, marching-squares iso-line, arc-length resample — SEARCHED | rippled, rejected |
+| blocks + tubes + webs (`bandedShell`) | blocks = convex hull of duct points — SEARCHED; tubes = offset duct rings — EVALUATED | blocks rippled, tubes clean, rejected |
+
+**The rule: a solid must be lofted through rings the model can EVALUATE from
+a smooth map with fixed point correspondence, never through rings a discrete
+search returns.** A search decides something combinatorial at each station
+(which pixels are inside, which points are on the hull); that decision jumps
+along the path, the arc-length resample then slides every vertex onto a
+different feature, and the cubic loft turns a few tenths of a millimetre of
+uncorrelated jitter into visible creases. It does NOT refine away. The
+banded render is the proof in one picture: tubes smooth, blocks rippled.
+
+Corollaries worth keeping:
+- If a shape genuinely needs a search (a union outline, a morphological
+  closing), that is a **kernel's** job. This tool should hand CAD exact
+  solids and let it do the offsetting and merging it is built for.
+- Measuring well is not the same as being right. The wrapped body passed
+  every number the tool could compute (min wall 2.92 mm, spline within
+  0.12 mm of the loft, ends exact) and was still wrong. When a construction
+  is new, get a render in front of the owner before polishing the metrics.
+- Three CAD round trips were spent on constructions the owner had already
+  described. "Rewind to the thing that was closest" was the right call and
+  should have come sooner.
+
+## Where the shell stands now (2026-09-02, fourth construction)
+
+`buildShellSTEP` emits **one blank and one cutter per cell** and nothing
+else. Blank = that cell's duct rings offset outward by `wall` on all four
+sides; cutter = the duct extended 3 mm past both end faces. CAD: N
+independent subtractions, no unions. Measured over all 18 cells and all
+stations at the defaults, wall 3: the wall is **exactly 3.000 mm** on every
+face (max 0.35 um over, the polyline's own mitre at a 0.9 deg turn), mouth
+rings on the aperture to 0, throat rings planar in z = 0 to 0. 36 solids,
+12.3 MB, suite at 431.
+
+**Known and stated, not hidden:**
+- A **mitred corner** reaches wall/sin(half-angle): 7.28 mm at the sharpest
+  cell corner, and 1.03 mm beyond R + wall at the throat rim. That is what a
+  mitre IS, but it is also the "wall-extension artifact along the outer rim"
+  the owner reported early. **First candidate fix**: on rim sides, square the
+  join instead of mitring it (place the corner point on the rim side's own
+  offset line), so the throat rim reaches exactly R + wall. One-line change
+  in `insetPolygon`, but it changes the shape, so make it deliberately and
+  measure the notch it leaves between adjacent blanks (irrelevant at the
+  throat, where they already overlap by 2·wall − t = 5.6 mm).
+- The **mouth lip** measures 2.74 mm rather than 3.00 because it is snapped
+  onto the curved aperture — the one ring that is not exactly `wall`. That
+  is the price of co-surface mouths, which the owner asked for explicitly.
+- **Adjacent blanks share material** wherever the ducts run closer than
+  2·wall: 27/27 pairs, 35% of stations, deepest exactly 2·wall at the mouth
+  where the ducts tile. `shellOverlap` reports it.
+
+**Owner's stated next intentions**, in their words: build from these 18
+solids; webs are wanted as **subtractive slot cutters** that open the
+inter-cell gaps back up (NOT additive plates — that was a misreading);
+mating features (flanges, glue joints, locating pins) come later. The
+3-part print is throat region first, mouth side split down the vertical
+centreline.
+
+**When webs come back**, they are a cutter per adjacent pair: a curved box
+between the two facing sides, run 0 = A's facing side offset outward by the
+wall, run 2 = B's reversed, runs 1 and 3 the connectors — `ductBrep` already
+writes that shape, and `webSections` in the git history is 90% of it. Two
+rules from this session apply: the slot must end in a **blunt transverse
+face** (taper it to nothing and you have re-created a tangency, this time
+between cutter and solid), and its width is bounded by the duct gap minus
+2·wall (gaps peak near 20 mm, so up to 14 mm of slot at wall 3).
+
+## Done in the 2026-09-02 third construction — blocks, tubes and webs
+
+The wrapped one-piece skin was rejected on sight (surface texture: an
+outline found by a raster search at every station lofts its uncorrelated
+noise into ripples). The owner asked for a conceptually clean rewind to
+per-cell shells. Measured why the union of those failed — every adjacent
+pair grazes twice, at u ≈ 0.06-0.13 / 0.30 and 0.97, and a bow makes the
+crossing slower — and built the kit that avoids grazing by construction:
+**mode `"bands"`, now the default.** `shellBands` measures the minimum
+adjacent-pair gap per station; where it clears 2·wall + 2 mm each duct is
+a TUBE (its own rings offset by the wall, exact) and neighbours are tied by
+WEB plates buried 1 mm inside the tube walls; everywhere else the material
+is a BLOCK (convex hull of all duct points, offset with rounds); the blocks
+reach two stations into the tube band. 2 + 18 + 27 positives, then 18
+cutters. Every join is a transversal overlap; the kit measures tube-tube
+clearance, web width and 3-D block wall before writing. Numbers and rules
+in the CLAUDE.md shell finding. Two sample files went to the owner:
+`ginkgo_two_tubes_web_sample.step` (two tubes + one web — the two-solid
+union test) and `ginkgo_shell_bow_sample.step` (the full kit, default bow).
+Both gitignored.
+
+**Owner-side next (in this order):** (1) union the two-solid file — if
+that fails, nothing else matters and the report is what to bring back;
+(2) union all 47 positives of the full kit in one operation, subtract the
+18 cutters; (3) section it: the block-to-tube boundary faces should be
+flat, the tubes clear of each other, each web a plate over the middle half
+of the facing walls; (4) re-try an outward 3 mm shell on a fresh DUCT
+export — the earlier failure on the ten one-rim-side cells predates the
+orientation fix and the tubes in this kit are the tool's own outward
+offset of exactly those cells.
+
+**Known limits, stated:** the block wall reads 2.4 mm against 3 where the
+default bow starts (cubic loft over a fast-changing hull) — a minimum, as
+agreed; a geometry whose pairs never clear the threshold gets one block
+and may report a thin wall where a duct runs along the stations; the mouth
+block is short (u > 0.95) and its webs/tubes end buried in it. Mating
+features (pins/sockets on the band faces and the x = 0 split) are the
+natural next build once the boolean is confirmed: tool computes positions,
+kernel does the booleans, same division of labour.
+
+## Done in the 2026-09-02 rebuild — the skin is wrapped round the ducts
+
+The push-and-hull skin went through four CAD round trips (protruding duct,
+wrinkles, a second hill, knuckles, then thick outer walls mid-path) and the
+owner asked for a clean rebuild: "radius = wall, skin follows ducts". That
+is what ships now, and `hornBodySections` is a different construction:
+stations are the FLOW'S LEVEL SETS (fitted, saturated beyond the envelope),
+every duct is cut by every sheet along its vertex lines, each cut is grown
+into a SLEEVE by the wall measured perpendicular to the duct (flank offsets
+by 1/|e·n|, elliptical corners), the sleeves are closed by a ROLLING BALL of
+the smallest radius that keeps each station in one piece, and the ring is
+traced off a distance field. Nothing is pushed, hulled or fitted
+afterwards. The skin has its own station count (max(48, 2 x map), cap 96).
+Measured at the defaults: min 3-D outer wall 2.92 plain / 2.74 default bow
+/ 3.00 bulge + short bow, flanks 3.0-3.9 mm, spline within 0.12 mm of the
+loft, 8-12 s per export. The export note now prints the fairing radius and
+the skin station count beside the min wall. Full rules and the numbers
+that drove each are in the CLAUDE.md shell finding (five numbered rules).
+
+**Owner-side next:** export a solved horn and run the boolean. What to look
+at in the section views: ONE smooth sleeve over a bowed duct (no knuckles,
+no second hill), the outer wall reading ~3 mm along the sides mid-path
+(not 18-35), concave fillets of the reported fairing radius between rows,
+and the throat face still the exact circle. The fairing radius is the
+number to question if the body looks fat: it is the smallest that joins
+the rows at the widest station, so a geometry whose rows stand far apart
+mid-path gets a big radius everywhere.
+
+**Knobs not yet exposed:** the fairing radius (`fair`) can be passed to
+`hornBodySections` to override the automatic one — a fixed radius is
+refused rather than raised if it leaves a station in pieces; the ring
+resolution (`per`, 48 per run). Neither has a UI control yet.
+
+## Done in the 2026-09-02 second CAD round trip — the skin over a bow
+
+The owner exported a fully solved horn and found the bowed duct PROTRUDING
+from the body and the skin WRINKLED around the bulge. Both confirmed by a
+true 3-D measurement (which the tool did not have: its containment check
+compared ring q with duct ring q in a projection and read +2.96 mm on a
+duct 20.6 mm outside) and both fixed by a different construction: the skin
+grows a slope-limited, rounded hill wherever a duct comes within the wall,
+grown only from measured 3-D deficits against the exported B-spline
+surface, fed back exactly (both bracketing rings, flank cosine). The owner
+relaxed the constraint to a MINIMUM wall at these features, smoothly, and
+that is what ships: 2.82-2.87 mm against 3 at the defaults, hills 1-65 mm
+as the bows demand, skin within 1.4 mm of the straight loft. A THIRD round
+trip caught a second, unjustified hill ahead of the bow — material was
+being placed at the nearest skin point, which on a flaring horn is forward
+of the duct; it now goes radially over the duct on both bracketing rings,
+and the section shows one hump. A FOURTH round trip caught knuckles: two
+ridges over one duct, at its two outer corners. Every push is now a
+convex-hull fill in the ring's plane, seeded from the bowed ducts' own
+sleeves, so the bump IS the duct's outline faired into the skin; zero
+concave vertices measured on the throat-side rings. See the rewritten
+containment paragraph in the CLAUDE.md shell finding for the five lessons. Cost: ~5 s per export at 64 stations, and the export note
+says so while it runs. Suite at 436.
+
+**Owner context worth keeping:** the horn is to be printed in THREE parts —
+the throat region first, and the mouth side split down the vertical
+centreline into two. With even n_cols a divider runs down that centreline
+(the column-parity finding), so the x = 0 split plane passes through a
+wall, not a passage; radial bows are mirror-symmetric, so the two mouth
+halves are mirror images. Planning the split cuts is a natural next build
+after Task F (a planar cutter at a chosen z, and the x = 0 plane).
+
+## NEXT: Task F — "webs" shell export (owner approved 2026-09-02)
+
+The owner confirmed the solid-mode boolean SUCCEEDS in CAD and asked
+whether the export would carry the classic inter-cell gaps. It does not
+and cannot — the gaps are exactly the tangency that killed the union (a
+block that splits into tubes has a crotch, whichever way it is built).
+Measured what the gaps are worth at 6x3 / 90x40 / 480 mm / wall 3: the
+solid body is 2.7 L (depth 150) to 3.7 L (depth 320) of material, ~3.4-4.5
+kg in PLA, and the inter-cell gaps would remove only 11-22% of it; the mass
+is eighteen tube walls, so the lever is the wall itself and infill.
+
+The owner wants the multicell look anyway, so the agreed build is a
+**third shell mode, "webs"**: the solid body plus one SLOT CUTTER per
+neighbouring pair, over the station range where that pair's duct gap
+exceeds 2·wall + web, ending in flat TRANSVERSE faces rather than a
+crotch. All subtractions, no tangency, and each slot is a curved box the
+existing `ductBrep` writer already handles (run 0 = A's facing side offset
+by the wall, run 1 = the straight connector, run 2 = B's facing side
+reversed, run 3 = the other connector). Adjacent slots should OVERLAP
+rather than touch at the 4-duct corner diamonds — overlapping tools are
+robust, coincident tool faces are not — or cut the diamonds as their own
+4-sided cutters. Result: tubes joined by corner webs and blunt-ended slots,
+a multicell with webs instead of solder crotches. Read the CLAUDE.md shell
+findings (tangency, orientation, containment push) first; the facing-side
+identification comes from the grid adjacency `ductClearance` already walks.
+
+**Before that**: the owner is testing a FULLY SOLVED horn (depth solve,
+bows, separation, bulge) through the solid-mode boolean. The skin now
+follows the ducts (see the shell-CAD session below), so that test is
+meaningful; if it fails, that report comes first.
+
+## Done in the 2026-09-02 shell-CAD session (owner's first round trip)
+
+**Boolean confirmed working by the owner** on the solid-mode sample. After
+that, one more fix landed before merging: the body's skin now CONTAINS THE
+DUCTS AS BUILT. The tiling envelope left the corner cells under the wall
+near the throat (0.9-1.4 mm against 3) and a radial bow burst 25 mm through
+it; the skin is now pushed out to the ducts, direction by direction, before
+the wall is added, and the minimum outer wall reads 2.95 mm in every case
+tried. Six more checks; suite at 424. The export note prints the minimum
+outer wall and how far the skin had to follow.
+
+The owner took the shell kit into CAD and reported four things. All four are
+now answered, three of them by a change of construction.
+
+- **"The mouth plane is not fully coplanar — the wall extensions do not
+  follow the curve."** CONFIRMED and FIXED. Measured 1.14 mm off the
+  aperture, in eighteen different directions, because the offset happens in
+  each ring's own best-fit plane. **Answer to the owner's question — "can
+  all mouths' outward-facing planes be defined by the same surface
+  geometry?" — is YES, and they now are.** `apertureFrame` inverts the
+  biradial surface in closed form, every shell mouth ring is snapped onto
+  it (6e-14 mm), and the mouth CAP is built by blending in the surface's own
+  (a, e) rather than as a Coons patch — a chord across a curved cap falls
+  5.6 mm behind the surface, which would have re-created the same artifact
+  one band inward.
+- **"Similar artifacts along the outer rim of the throat plane."**
+  CONFIRMED (0.73 mm ears at every cell junction, where a rim side's offset
+  line mitres against a shared side's) and FIXED in solid mode: the body's
+  throat face is now the exact circle R + wall, planar in z = 0. In bundle
+  mode the ears remain — they are a property of offsetting each cell
+  independently.
+- **"Union booleans fail."** DIAGNOSED, and it is not a tolerance or a
+  complexity limit — it is the construction. Blanks overlap near both ends
+  and stand apart mid-path, so every neighbouring pair passes through EXACT
+  TANGENTIAL CONTACT in between; measured two sign changes in the
+  per-station gap at the defaults. **So the union is gone**: the default
+  export mode is now `"solid"` — ONE horn body plus one cutter per duct,
+  and the CAD work is subtractions only. The body's skin is the horn's own
+  tiling envelope offset by the wall, chained exactly from a flow-mode map
+  (5.7e-10 mm at the joints, closure 0). Full reasoning and numbers in
+  CLAUDE.md under the three new shell findings.
+- **"Throat plane is coplanar."** Confirmed — unchanged, and now asserted at
+  1e-12 for the body as well.
+
+A latent bug surfaced while building the body: face orientation was measured
+PER FACE against a radial proxy, and on a shape that flares as hard as the
+body two of four walls read it backwards, producing an invalid shell. It is
+now ONE divergence-theorem decision for the whole solid
+(`brepShellOrientation`). The edge-pairing check caught it; the ducts were
+never affected but were riding on the same fragile proxy.
+
+Suite at 419 checks. **Still owner-side:** run the boolean on the solid-mode
+file — subtract the 18 cutters from the body, union nothing — and confirm
+(1) it succeeds, (2) the throat face is flat with t-thick dividers between
+passages, (3) the mouth is one continuous surface with a wall-wide rim
+margin, (4) no internal voids on a section. `ginkgo_shell_sample.step` in
+the repo root is a ready-made 6x3 / depth 320 / wall 3 file to test on.
+
 ## Done in the 2026-09-02 refinements session
 
 - **The "horn — shell blanks" 3-D VIEW IS REMOVED** (owner's call: it adds
@@ -69,9 +500,9 @@ for the depth sweep and for why the crossing is not a clean threshold.
   matters. **The shell STEP kit EXPORT is untouched**: `buildShellSTEP`,
   `shellSections`, the shell-wall input, the export button and all 18 of
   their checks stand. Only the viewport toggle, the `solidsMode` state and
-  the `shellSections` render path went. **Owner CAD validation of the kit is
-  still outstanding — see the shell session below; it did not depend on the
-  view.**
+  the `shellSections` render path went. Owner CAD validation of the kit has since SUCCEEDED on the solid-mode
+  form — see the shell-CAD session above. A one-piece-body view built in
+  that parallel session was dropped in the merge to honour this call.
 - **"SOLVE THE BOW" AND THE LOBE LOCK ARE REMOVED FROM THE UI** (owner's
   call). The solve ranked on wallSpread, which measures the length each wall
   fibre has run BY THE MOUTH, so a bow that distorts the wavefront mid-path
@@ -460,10 +891,9 @@ Decisions the owner has made and that should not be relitigated:
 
 ## The plan, in order
 
-1. **Owner validation**: the coped joints and the separation solver in the
-   browser, a bulged STEP file through CAD (boolean union should yield
-   the knife edges), and the SHELL KIT through CAD (union blanks, subtract
-   cutters — the checklist in the shell-session section above).
+1. **Owner validation**: a FULLY SOLVED horn (depth, bows, separation,
+   bulge) through the solid-mode boolean — the plain case is confirmed.
+   Then Task F, the webs mode, per the section at the top.
 1b. **Task E decision** (owner): whether the rim roundover is a CAD fillet
    on the shell kit's rim edge (available now) or an in-tool parametric
    flare (a build). The assessment above says what each buys.

@@ -503,6 +503,34 @@ export default function GinkgoHorn() {
   // 2x this number. EXPORT ONLY: the blanks are not drawn, see the 3-D
   // preview note below.
   const [shellWall, setShellWall] = useState(3);
+  // THE TWO ENDS ARE SET SEPARATELY, because they are not the same problem.
+  // Each is "trim" (extend past the face and ship the trim solid that cuts it
+  // back), "extend" (extend, ship no trim, cut it yourself) or "plain" (the
+  // loft's own end ring makes the face, no cut at all). The MOUTH trim cuts on
+  // the aperture surface itself and has never been reported failing; the
+  // THROAT trim cuts on the plane z = 0, which is exactly the operation the
+  // owner measured failing as a plane split on individual blanks.
+  const [throatEnd, setThroatEnd] = useState("trim");
+  const [mouthEnd, setMouthEnd] = useState("trim");
+  const endCfg = (v) => ({ extend: v !== "plain", trim: v === "trim" });
+  const [wallJitter, setWallJitter] = useState(0.5);
+  const [shellStations, setShellStations] = useState(32);
+  // WHICH SIDE OF EACH MIRROR TO EXPORT. 0 keeps both. The horn is symmetric
+  // about x = 0 and y = 0, so a half or a quarter carries the whole design
+  // and quarters the boolean work — but the two halves are NOT mirror copies
+  // of each other in the SHELL, because the wall jitter is keyed to grid
+  // parity; mirroring a half puts equal walls on both sides of the seam,
+  // which is the near-copy case the jitter exists to break. Export the other
+  // side here instead of mirroring this one.
+  const [regX, setRegX] = useState(0);
+  const [regY, setRegY] = useState(0);
+  // HOW THE SHELL IS DELIVERED. "solid" is one horn body plus one cutter per
+  // duct, so the CAD work is subtractions only — no unions at all. "bundle"
+  // is a blank per cell, the literal multicell form, and it needs the union
+  // that grazes: adjacent blanks overlap at both ends and stand apart
+  // mid-path, so every pair passes through exact tangential contact on the
+  // way. Solid is the default because that tangency is geometry, not a
+  // tolerance, and no kernel setting makes it well posed.
   // The live mapping at 64 stations cost ~136 ms per slider tick (~7 fps on
   // a drag); at 24 it is ~60 ms, and every readout that matters on a drag —
   // path lengths, dL, fc — comes from the centreline sampling, which is a
@@ -950,6 +978,33 @@ export default function GinkgoHorn() {
     : map);
   const [stepNote, setStepNote] = useState(null);
 
+  // EVERY EXPORT CARRIES THE SETTINGS THAT MADE IT, in the STEP header's
+  // FILE_DESCRIPTION. A file the owner sends back from CAD is otherwise not
+  // reproducible here — a whole session was spent inferring wall, ext and the
+  // extension phases from the geometry, and depth and the arcs could not be
+  // recovered at all. The writer escapes this, so it may contain anything.
+  const exportParams = () => {
+    const o = mapOpts;
+    const n = (v) => (typeof v === "number" ? +v.toFixed(4) : v);
+    const g = [
+      `nc=${o.nc}`, `nr=${o.nr}`, `m=${shapeOrder}`, `symmetric=${symmetric}`,
+      `R=${o.R}`, `t=${o.t}`, `seed=${seed}`,
+      `c=${n(o.c)}`, `exitHalfAngle=${o.exitHalfAngle}`,
+      `mouthMode=${o.mouthMode}`, `thetaH=${o.thetaH}`, `thetaV=${o.thetaV}`,
+      `arcH=${o.arcH}`, `arcV=${o.arcV}`, `depth=${n(depth)}`, `profileT=${n(profileT)}`,
+      `profileArea=${o.profileArea}`, `sectionMode=${o.sectionMode}`,
+      `divergeLen=${o.divergeLen}`, `arriveLen=${o.arriveLen}`, `tight=${o.tight}`,
+      `mapStations=${stations}`,
+      `lengthen=${o.lengthen ? `${o.lengthen.lobes}lobe/${o.lengthen.dir}/[${o.lengthen.uStart},${o.lengthen.uEnd}]` : "off"}`,
+      `bulge=${o.bulge ? o.bulge.amp : "off"}`,
+      `separate=${o.separate ? `${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]` : "off"}`,
+      `wall=${shellWall}`, `jitter=${wallJitter}`, `shellStations=${shellStations}`,
+      `throatEnd=${throatEnd}`, `mouthEnd=${mouthEnd}`,
+      `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
+    ];
+    return g.join(" ");
+  };
+
   const buildDXF = (map) => {
     const L = [];
     const put = (k, v) => { L.push(String(k)); L.push(String(v)); };
@@ -1391,6 +1446,11 @@ export default function GinkgoHorn() {
   const hoverRow = hover != null && map ? map.rows.find((x) => x.id === hover) : null;
   const presets = [["1″", 25.4], ["1.4″", 35.5], ["1.5″", 38.1], ["2″", 50.8]];
   const expBtn = { ...btn(false, C.series2), color: C.series2, borderColor: C.border, fontSize: 11, padding: "4px 10px" };
+  // The exported region, and the tag that keeps a half's filename apart from
+  // the whole horn's. A cell whose centroid sits ON a plane is its own mirror
+  // image and is kept whole — `onPlane` is what says so.
+  const regSel = throat && (regX || regY) ? G.symmetryRegion(throat, { xSide: regX, ySide: regY }) : null;
+  const regTag = `${regX ? (regX > 0 ? "_x+" : "_x-") : ""}${regY ? (regY > 0 ? "_y+" : "_y-") : ""}`;
 
   // ── layout chrome ──────────────────────────────────────────────────────────
   const vGroup = { fontSize: 10, fontWeight: 600, color: C.inkDim, textTransform: "uppercase", letterSpacing: "0.08em", margin: "10px 2px 6px" };
@@ -1937,11 +1997,11 @@ export default function GinkgoHorn() {
           <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(exportMap()), "text/csv")}>CSV · per cell</button>
           <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(exportMap()), "text/csv")}>ΣA(x) CSV</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            const solids = G.ductSolids(throat, exportMap(), { t: thickness });
-            if (solids) dlBin(`${stem}_ducts.stl`, G.buildSTL(solids, stem), "model/stl");
+            const solids = G.ductSolids(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null });
+            if (solids) dlBin(`${stem}_ducts${regTag}.stl`, G.buildSTL(solids, stem), "model/stl");
           }}>STL · cell ducts</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            const r = G.buildSTEP(throat, exportMap(), { t: thickness, name: stem });
+            const r = G.buildSTEP(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null, params: exportParams(), name: stem });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
@@ -1950,23 +2010,131 @@ export default function GinkgoHorn() {
               msg: `${r.checks.ducts} solids · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
-            if (ok) dl(`${stem}.step`, r.text, "application/step");
+            if (ok) dl(`${stem}${regTag}.step`, r.text, "application/step");
           }}>STEP · B-spline solids</button>
           <button style={expBtn} disabled={!map} onClick={() => {
-            const r = G.buildShellSTEP(throat, exportMap(), { t: thickness, wall: shellWall, name: `${stem}_shell` });
+            // the blanks are an offset of the ducts' own rings, so this is
+            // fast, but the file is large enough to be worth a word first
+            setStepNote({ ok: true, msg: "building the shell — offsetting each duct outwards…" });
+            setTimeout(() => {
+            const em = exportMap();
+            const cfg = {
+              t: thickness, wall: shellWall, jitter: wallJitter, stations: shellStations,
+              extendThroat: endCfg(throatEnd).extend, trimThroat: endCfg(throatEnd).trim,
+              extendMouth: endCfg(mouthEnd).extend, trimMouth: endCfg(mouthEnd).trim,
+            };
+            const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell` });
+            if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
+            const integ = G.stepIntegrity(r.text);
+            const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
+            const co = G.shellCoincidence(throat, em, cfg);
+            const sov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
+            // The number `wall` has to be read against. At the throat the cells
+            // TILE, so each blank pushes `wall` into its neighbour across the
+            // whole shared face; once 2·wall passes a cell's width, the blanks
+            // on either side of that cell reach past each other and solids that
+            // share no edge at all share material.
+            // Does the loft run past its own throat cap? Only meaningful when
+            // the throat is extended — a plain throat stops at its end ring.
+            const ov = endCfg(throatEnd).extend
+              ? G.shellCapOvershoot(throat, em, { t: thickness, wall: shellWall, jitter: wallJitter, stations: shellStations })
+              : null;
+            const cw = G.throatCellWidth(throat, em, { t: thickness });
+            const span = 2 * shellWall + wallJitter;
+            const reaches = cw && span > cw.min;
+            // A region export rests on a mirror, so the mirror is MEASURED
+            // rather than assumed — a world-axis bow breaks one of them.
+            const mir = r.region ? G.mirrorSymmetry(throat, em, { t: thickness }) : null;
+            const axes = r.region ? [regX && "x", regY && "y"].filter(Boolean) : [];
+            const mirWorst = mir ? Math.max(...axes.map((k) => mir[k].worst)) : 0;
+            const ends = [r.ends.throat && "throat", r.ends.mouth && "mouth"].filter(Boolean);
+            const recipe = ends.length
+              ? `${r.cells} blanks + ${r.cells} cutters${r.trims ? ` + ${r.trims} trim${r.trims > 1 ? "s" : ""}` : ""} — union the blanks (extended past the ${ends.join(" and ")}${ends.length > 1 ? " faces" : " face"})${
+                r.trimNames.length ? `, subtract ${r.trimNames.join(" and ")}` : ""}, subtract the cutters`
+              : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`;
+            setStepNote({
+              ok,
+              msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
+                co ? ` · near-copy surface ${fmt(co.arc, 1)} mm${co.arc > 1 ? " — RAISE THE JITTER" : ""}` : ""}${
+                sov ? ` · blanks share material over ${fmt(sov.fracTouching * 100, 0)}% of the path` : ""}${
+                ov ? ` · throat cap overshoot ${fmt(ov.worst, 3)} mm${
+                  ov.worst > 1e-3 ? ` at cell ${ov.at} — the extension is ${fmt(ov.minRatio, 2)}x the station step, RAISE IT ABOVE 0.5x OR USE A PLAIN THROAT` : ""}` : ""}${
+                cw ? ` · throat cells ${fmt(cw.min, 1)}-${fmt(cw.max, 1)} mm wide against 2x wall ${fmt(span, 1)} mm${
+                  reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt((cw.min - wallJitter) / 2, 2)} mm to stop it` : ""}` : ""}${
+                r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
+                  mirWorst > 1e-3 ? " — MIRROR BROKEN, this region is not the whole horn" : ""}${
+                  r.region.onPlane.length ? `, ${r.region.onPlane.length} cell(s) on the plane (${r.region.onPlane.join(" ")}) — do not duplicate them` : ""}` : ""} · ${
+                ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
+            });
+            if (ok) dl(`${stem}_shell${regTag}.step`, r.text, "application/step");
+            }, 30);
+          }}>STEP · horn shell</button>
+          <button style={expBtn} disabled={!map} onClick={() => {
+            // the smallest thing that can fail: one adjacent pair, same
+            // settings. If the union of two blanks fails, nothing about the
+            // other sixteen matters, and the repro is two solids instead of 38.
+            const em = exportMap();
+            // the first ORTHOGONALLY ADJACENT pair — two cells that do not
+            // share a grid line have none of the near-copy surface the test
+            // is for
+            let lab = null;
+            for (const c of throat.cells) {
+              const [col, rw] = c.label.split(",").map(Number);
+              for (const [dc, dr] of [[1, 0], [0, 1]]) {
+                const nb = `${col + dc},${rw + dr}`;
+                if (!lab && throat.cells.some((x) => x.label === nb)) lab = [c.label, nb];
+              }
+            }
+            const r = lab && G.buildShellSTEP(throat, em, {
+              t: thickness, wall: shellWall, jitter: wallJitter,
+              extendThroat: endCfg(throatEnd).extend, extendMouth: endCfg(mouthEnd).extend,
+              stations: shellStations, only: lab, params: exportParams(), name: `${stem}_twocell`,
+            });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
             setStepNote({
               ok,
-              msg: `shell kit: ${r.checks.ducts} solids (${r.checks.ducts / 2} blanks + ${r.checks.ducts / 2} cutters) · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
+              msg: `cells ${lab.join(" and ")}: ${r.cells} blanks + ${r.cells} cutters · ${integ.entities} entities · union the two blanks first — if that fails, the full kit cannot · ${
                 ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
             });
-            if (ok) dl(`${stem}_shell.step`, r.text, "application/step");
-          }}>STEP · horn shell kit</button>
+            if (ok) dl(`${stem}_twocell.step`, r.text, "application/step");
+          }}>STEP · two-cell test</button>
+          {[["throat", throatEnd, setThroatEnd], ["mouth", mouthEnd, setMouthEnd]].map(([lab, val, set]) => (
+            <div key={lab} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, width: 40 }}>{lab}</span>
+              {[["trim", "extend + trim"], ["extend", "extend only"], ["plain", "plain"]].map(([v, l]) => (
+                <button key={v} onClick={() => set(v)} style={btn(val === v, C.series2)}>{l}</button>
+              ))}
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>region</span>
+            {[[0, "both"], [1, "+x"], [-1, "\u2212x"]].map(([v, l]) => (
+              <button key={`x${v}`} onClick={() => setRegX(v)} style={btn(regX === v, C.series3)}>{l}</button>
+            ))}
+            {[[0, "both"], [1, "+y"], [-1, "\u2212y"]].map(([v, l]) => (
+              <button key={`y${v}`} onClick={() => setRegY(v)} style={btn(regY === v, C.series3)}>{l}</button>
+            ))}
+            {regSel && (
+              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>
+                {regSel.labels.length} of {throat.N} cells{regSel.onPlane.length ? ` · ${regSel.onPlane.length} on the plane` : ""}
+              </span>
+            )}
+          </div>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             shell wall (mm)
             <input type="number" value={shellWall} min={0.5} max={20} step={0.5} onChange={(e) => setShellWall(Math.max(0.5, Math.min(20, parseFloat(e.target.value) || 3)))}
+              style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
+          </label>
+          <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
+            wall jitter (mm)
+            <input type="number" value={wallJitter} min={0} max={2} step={0.1} onChange={(e) => setWallJitter(Math.max(0, Math.min(2, parseFloat(e.target.value) || 0)))}
+              style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
+          </label>
+          <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
+            shell stations
+            <input type="number" value={shellStations} min={4} max={64} step={4} onChange={(e) => setShellStations(Math.max(4, Math.min(64, parseInt(e.target.value) || 32)))}
               style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
           </label>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
@@ -1982,14 +2150,56 @@ export default function GinkgoHorn() {
         )}
         <div style={{ ...hintStyle, marginTop: 6 }}>
           The STL carries the {throat.N} ducts as faceted closed solids; the <strong style={{ color: C.inkDim }}>STEP</strong> carries the
-          same ducts as lofted B-spline solids — the file for CAD when the ducts need filleting, offsetting or joint cuts. The{" "}
-          <strong style={{ color: C.inkDim }}>shell kit</strong> is the physical horn: per cell, a shell <em>blank</em> (the duct pushed
-          outward by the shell wall) and a duct <em>cutter</em> (the passage, extended past both end faces). In CAD: union the blanks,
-          subtract the cutters — the boolean produces the throat dividers, the coped knife edges and the outer skin, because the material's
-          topology changes along the path and no single loft can carry it. Dividers between passages keep the layout's{" "}
-          {fmt(thickness, 1)} mm wall near the throat; the shell wall sets the outer skin and the mid-path tubes. The mouth's outer rim edge
-          on the boolean result is the edge to round over (fillet) against edge diffraction. DXF is 2-D per plane, so only the throat layer
-          imports as a sketch.
+          same ducts as lofted B-spline solids — the file for CAD when the ducts need filleting, offsetting or joint cuts.
+          <br />
+          The <strong style={{ color: C.inkDim }}>horn shell</strong> is the material around that air, and it ships as{" "}
+          <strong style={{ color: C.inkDim }}>one blank and one cutter per cell</strong>: the blank is that cell's duct offset outwards by{" "}
+          {fmt(shellWall, 1)} mm on every side, the cutter is the duct extended past both end faces. In CAD you{" "}
+          <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell — {throat.N} independent subtractions,
+          no unions</strong>, and what comes back is {throat.N} cell shells of exactly {fmt(shellWall, 1)} mm wall.
+          {" "}Adjacent blanks share material wherever their ducts run closer than {fmt(2 * shellWall, 0)} mm — most of the throat half of
+          the horn — which is what a multicell's shared walls are.
+          {" "}<strong style={{ color: C.inkDim }}>The two ends are set separately, because they are not the same problem.</strong>
+          {" "}<em>Extend + trim</em> runs the blanks past that face (staggered per cell, so no two adjacent ones end on the same plane)
+          and ships the trim solid that cuts them back, so the union never touches that plane — where 54 of the measured degeneracies
+          lived, 27 pairs of coplanar throat caps and 27 of co-surface mouth caps. <em>Extend only</em> ships the overlength blanks and
+          leaves the cut to you. <em>Plain</em> makes the face from the loft's own end ring and asks for no cut there at all.
+          {" "}<strong style={{ color: C.inkDim }}>The mouth trim cuts on the aperture surface itself</strong>, a curved face the blanks
+          cross transversally, and it has never been reported failing. <strong style={{ color: C.inkDim }}>The throat trim cuts on the
+          plane z = 0</strong> — the same operation as a plane split at the throat, which has been measured failing on individual blanks.
+          On a <em>plain</em> throat the end ring is planar in z = 0 by construction and the wall stops exactly there; extended, the loft
+          runs up to 0.016 mm past its own cap plane on the shortest-extension cells, measured. The price of a plain throat is the
+          coplanar overlapping caps coming back, so it is a trade, not a fix.
+          {" "}The <em>wall jitter</em> gives cells of opposite grid parity different walls: without it two adjacent blanks each offset
+          the same shared grid line by the same amount, so millimetres of their surfaces are the same surface computed twice, landing
+          under a micron apart — invisible, and below what a kernel can resolve. The note measures how much near-copy surface is left;
+          raise the jitter if it is not zero.
+          {" "}<strong style={{ color: C.inkDim }}>The wall has to be read against the throat cell width.</strong> The cells tile
+          there, so each blank pushes the wall into its neighbour across the whole shared face; once 2x the wall passes a cell's width,
+          the blanks on either side of that cell reach past each other and solids that share no edge at all share material. Measured at
+          the defaults, that stacks the blanks SIX deep at the throat, and it is the FACE offset that does it, not the corner mitre —
+          clamping every mitre to a full round left the stack at six. Dropping the wall moves it: stack 6 / 5 / 4 and non-adjacent
+          sharing 29 / 18 / 2 pairs at wall 3 / 2.5 / 2, and zero at 1.5. The note prints both numbers on every export.
+          {" "}<strong style={{ color: C.inkDim }}>Region</strong> exports one side of each mirror \u2014 a half, or a quarter \u2014 so the CAD
+          work is a quarter of the booleans. It applies to all three solid exports and the filename carries the side.
+          {regSel && regSel.onPlane.length ? <> On this grid the {regX && regY ? "quarter" : "half"} straddles a plane:{" "}
+            <strong style={{ color: C.inkDim }}>{regSel.onPlane.length} cell(s) sit ON it</strong> ({regSel.onPlane.join(", ")}) and are
+            their own mirror image, so they are exported whole and must not be duplicated when the region is mirrored back.</> : null}
+          {" "}The note measures the mirror it rests on rather than assuming it \u2014 a bow whose direction is a world axis breaks one of
+          them outright, and the region would then be a different horn from the side it is meant to stand for.
+          {" "}<strong style={{ color: C.inkDim }}>Do not mirror a shell half and union it to itself</strong>: the wall jitter is keyed to
+          grid parity, so a mirrored copy carries the SAME wall as the cell it now sits beside, which is exactly the near-copy surface the
+          jitter exists to break. Export the opposite side here instead \u2014 the passages are mirror images either way, it is only the
+          blanks' walls that differ.
+          {" "}<em>Shell stations</em> trades knots for fidelity: halving them measured 0.105 mm of departure from the full-station loft,
+          and fewer knots is a better-conditioned boolean. Never offset one of our faces in CAD — that extrapolates the wall surfaces past
+          their range and the corner identity breaks (a +1 mm throat offset succeeded and +2 mm failed); ask for the extension here instead,
+          where it is built into the loft.
+          {" "}The mouth end faces of every solid lie on the aperture surface the coverage arcs define, so the mouths are co-surface and
+          that outer rim edge is the one to fillet against edge diffraction. The wall is exactly {fmt(shellWall, 1)} mm on every face at
+          every station — the blank is an offset of the duct's own rings, not a shape fitted to them — with two stated exceptions: a mitred
+          corner reaches further than the wall by construction (1/sin of the half-angle), and the mouth lip measures about 0.26 mm under
+          because it is snapped onto the curved aperture. DXF is 2-D per plane, so only the throat layer imports as a sketch.
         </div>
       </Stage>
 
