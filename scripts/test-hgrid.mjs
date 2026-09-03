@@ -1484,17 +1484,18 @@ head("Section planes (acoustic alignment)");
   // (Th_v 0) at depth 300 leaves 25.5 mm of dL in the middle row, so the
   // throat-fifth bow has to buy that back out of 65 mm of path and becomes a
   // hairpin — which is exactly the case the section plane has to survive.
-  // ST is the EXPORT station count (and the `samples` default), because the
-  // obliquity a hairpin shows depends on how well the sampling resolves it —
-  // measured 11.2 / 9.6 / 4.3 / 0.6 deg at 24 / 32 / 48 / 64 stations on the
-  // shipped bow. Judging the construction at the resolution it ships at is
-  // the honest comparison; the refinement study below is where the question
-  // of what survives finer sampling is asked properly.
+  // ST is the EXPORT station count, and `samples` is now 512 rather than
+  // tracking it, because the obliquity a hairpin shows depends on how well
+  // the CENTRELINE sampling resolves it and 64 samples did not. Measured on
+  // the throat-fifth bow, interior obliquity at samples 64 against 512:
+  // 0.81 -> 7.78 deg at the shipped arcH 500, and 1.04 -> 10.52 at the
+  // superseded 555. So the old figure was optimistic by about ten times, and
+  // this block now runs at the arcs the tool actually ships.
   const t = 0.4, ST = 64;
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c });
   const common = {
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
-    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 555, arcV: 245,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
     t, profileArea: "open", fTarget: 20000, stations: ST, profileT: 0.7,
     // the UI's own bend tightness, so the numbers this block prints are the
     // numbers CLAUDE.md records rather than a near-miss at the 0.55 default
@@ -1590,16 +1591,21 @@ head("Section planes (acoustic alignment)");
 
   // ── 2b. THE ONE THAT SURVIVES IS A REAL CONSTRICTION, AND IT IS THE ─────
   //       SHIPPED BOW WINDOW.
-  // At the tool's defaults the middle row is 25.5 mm short and the throat
-  // fifth is 65 mm of path, so the bow becomes a 28 mm hairpin at R ~ 8 mm in
-  // a duct 5-8 mm wide. That constricts the passage whatever plane it is cut
-  // in — and the fold margin agrees, sitting under a millimetre.
+  // At the tool's defaults the middle row is short and the throat fifth is
+  // ~65 mm of path, so the bow becomes a hairpin in a duct 5-8 mm wide. That
+  // constricts the passage whatever plane it is cut in — and the fold margin
+  // agrees. The THRESHOLD is 3%, not the 10% it was: this block moved from
+  // the superseded arcH 555 to the shipped 500, and the better geometry
+  // roughly halves the constriction (10.86% -> 5.57% at 192/192) while
+  // WIDENING the fold-margin gap it opens against a roomy window (ratio
+  // 0.296 -> 0.158). The claim is that a real constriction survives and is
+  // reported, not that it reaches any particular size.
   const tight = M.mapThroatToMouth(Lay.throat, {
     ...common, stations: 192, samples: 192, lengthen: BOW });
   const roomy = M.mapThroatToMouth(Lay.throat, {
     ...common, stations: 192, samples: 192, lengthen: WIDE });
   checkTrue("the shipped throat-fifth bow constricts for a GEOMETRIC reason, and is still reported",
-    tight.fluxContractMax > 0.1 && tight.bendFoldMin < 0.3 * roomy.bendFoldMin,
+    tight.fluxContractMax > 0.03 && tight.bendFoldMin < 0.3 * roomy.bendFoldMin,
     `${(tight.fluxContractMax * 100).toFixed(1)}% contraction, fold margin ${tight.bendFoldMin.toFixed(2)} mm against ${roomy.bendFoldMin.toFixed(2)} mm for the same bow given room — an over-tight window, not a section plane`);
   // the ring AREAS were on the law the whole time, in every one of these
   // cases — which is exactly why no area-based check could have caught any
@@ -1614,9 +1620,13 @@ head("Section planes (acoustic alignment)");
   // ── 3. THE RAMPS, AND WHY THEY ARE 1.5 DUCT WIDTHS ──────────────────────
   // The two end claims are physical — a flat driver face, and an aperture that
   // IS the wavefront — so each is honoured over a ramp rather than smeared
-  // over the path. The length is measured, not chosen: past about 1.5 widths
-  // the tilt the ramp leaves behind starts closing the passage again, on a
-  // duct whose geometry is otherwise sound.
+  // over the path. The length is measured, not chosen: past some multiple of
+  // a duct width the tilt the ramp leaves behind starts closing the passage
+  // again, on a duct whose geometry is otherwise sound. WHERE that onset sits
+  // is a property of the geometry, and it moved out when this block moved
+  // from arcH 555 to the shipped 500 — 3 widths now measures 0.00% where it
+  // used to bite, and 5 widths is where it appears. So 1.5 remains a safe
+  // shipped value with more margin than before, not less.
   checkTrue("ramps up to 1.5 duct widths leave a sound duct monotone",
     [0.5, 1.0, 1.5].every((w) => M.mapThroatToMouth(Lay.throat, {
       ...common, stations: 192, samples: 192, lengthen: WIDE, alignWidths: w,
@@ -1624,9 +1634,9 @@ head("Section planes (acoustic alignment)");
     "0.5, 1.0 and 1.5 widths all contract 0.00% at 192 stations");
   const wide2 = (w) => M.mapThroatToMouth(Lay.throat, {
     ...common, stations: 192, samples: 192, lengthen: WIDE, alignWidths: w }).fluxContractMax;
-  checkTrue("...and past it the leftover tilt starts closing it again",
-    wide2(3) > 1e-3 && wide2(5) > wide2(3),
-    `3 widths ${(wide2(3) * 100).toFixed(2)}%, 5 widths ${(wide2(5) * 100).toFixed(2)}%`);
+  checkTrue("...and a long enough ramp starts closing it again",
+    wide2(5) > 1e-3 && wide2(5) > wide2(1.5),
+    `1.5 widths ${(wide2(1.5) * 100).toFixed(2)}%, 3 widths ${(wide2(3) * 100).toFixed(2)}%, 5 widths ${(wide2(5) * 100).toFixed(2)}%`);
 
   // ── 4. THE ENDS ARE UNTOUCHED ───────────────────────────────────────────
   // Every claim above is worthless if the driver face or the mouth tiling
@@ -2359,12 +2369,19 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    station 1 and recovers, and the rule must leave that alone entirely.
   const on = M.ductClearance(mD.rows, { throatFloor: 0.5 });
   checkTrue("a pair that closes near the throat is NOT excused as a knife edge",
-    off.minMid < 0 && off.minMidAt === 1
+    off.minMid < 0 && off.minMidAt >= 1 && off.minMidAt <= 3
     && on.minMid === off.minMid && on.minMidAt === off.minMidAt,
     `minMid ${off.minMid.toFixed(4)} at station ${off.minMidAt}, unchanged by the rule`);
+  // The run ends at the FIRST station that closes, and the dip is the backward
+  // step THERE — which is not necessarily the deepest gap on the path. At
+  // samples 64 the two coincided and this assertion compared the dip against
+  // |minMid|; once the sampling resolves the near-throat profile they separate
+  // (the gap dives 0.137 mm at station 1 and goes on to -0.337 at station 2),
+  // so the honest form reads the step off the per-station profile.
   checkTrue("...and the backward step that ended the run is reported, not swallowed",
-    on.throat.dipAt === 1 && Math.abs(on.throat.dip - Math.abs(off.minMid)) < 1e-9,
-    `dip ${on.throat.dip.toFixed(4)} mm at station ${on.throat.dipAt}`);
+    on.throat.dipAt === 1
+    && Math.abs(on.throat.dip - (off.perStation[0] - off.perStation[1])) < 1e-9,
+    `dip ${on.throat.dip.toFixed(4)} mm at station ${on.throat.dipAt}, worst gap ${off.minMid.toFixed(4)} at ${off.minMidAt}`);
   //    ...while the rule still does its ORIGINAL job wherever the pair really
   //    is just opening from the tiling: there it lifts the boundary past the
   //    sub-floor stations and reports no dip at all.
@@ -2420,18 +2437,21 @@ head("Throat knife edge (the defect metric's other boundary)");
     post.every((r) => r.off.minMid < 0 && r.on.minMid === r.off.minMid && r.on.throat.dipAt === 1),
     post.map((r) => `${r.stations}: ${r.on.minMid.toFixed(3)}`).join(", "));
   //    THE PREVIEW COUNT IS BELOW THAT, AND NOW MISSES THE DIVE ENTIRELY.
-  //    A LIMIT OF THE SAMPLING, not a property of the horn: the dive is
-  //    0.23-0.24 mm deep at every count that resolves it and 24 stations does
-  //    not sample it at all. The UI no longer READS the clearance at that
-  //    count — it builds its own map at the export count and measures that,
-  //    after an export came back with 4.9 mm of interpenetration while the
-  //    readout said +1.14 mm — but the sampling limit itself still stands and
-  //    is what queue item 1 addresses, so it stays asserted.
+  //    THE PREVIEW NOW SEES THE DIVE, and that is what raising `samples`
+  //    bought. This assertion used to read the other way and was written to
+  //    flip when the sampling landed: at samples 64 the 24-station pass
+  //    reported NO dip and minMid +0.5195 mm where 48 stations read -0.2305,
+  //    so the coarse pass was on the wrong side of a minimum sitting at
+  //    u = 0.021. At samples 512 the station positions land close enough to
+  //    their true u that both counts see it. The clearance is still MEASURED
+  //    at the export count (an export came back with 4.9 mm of
+  //    interpenetration while the readout said +1.14 mm), so this is belt and
+  //    braces rather than the only guard.
   const preview = M.ductClearance(
     M.mapThroatToMouth(th, dflt({ stations: 24 })).rows, { throatFloor: 0.5 });
-  checkTrue("KNOWN LIMIT: the preview's 24 stations do not sample the dive at all",
-    preview.throat.dip === null && preview.minMid > 0 && post[1].on.minMid < -0.2,
-    `24 stations reports no dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
+  checkTrue("the preview's 24 stations now DO sample the dive",
+    preview.throat.dip !== null && preview.minMid < 0 && post[1].on.minMid < -0.2,
+    `24 stations reports a ${preview.throat.dip.toFixed(4)} mm dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
 
   // 4b. A BOW THAT STARTS AT THE THROAT DRIVES THE DUCTS THROUGH EACH OTHER,
   //     AND ONE THAT STARTS PAST IT COSTS NOTHING. This is the geometry of an
@@ -2570,7 +2590,8 @@ head("Duct separation (field and solver)");
   // word for it, and it does not: this is a fresh build and a fresh measure.
   const sep = { amps: n.amps, uStart: n.uStart, uEnd: n.uEnd, lobes: 1 };
   const mv = M.mapThroatToMouth(th, { ...opts, separate: sep });
-  const clv = M.ductClearance(mv.rows, { thinBand: 0.15, throatFloor: 0.2 });
+  const clv = M.ductClearance(mv.rows, { thinBand: 0.15, throatFloor: 0.2,
+    pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]] });
   check("independent re-measure returns the solver's gap", clv.minMid, n.gapAfter, 1e-9, "mm");
   // and the convention must not be hiding anything mid-path: whatever the
   // boundary-less form still calls contact has to sit INSIDE the throat run,
@@ -2583,8 +2604,14 @@ head("Duct separation (field and solver)");
   checkTrue("the slivers thinner than the floor are gone", clv.thin.count === 0, "");
   // separation composes with length equalisation
   const ml = M.mapThroatToMouth(th, { ...opts, separate: sep, lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.5 } });
-  checkTrue("lengthening re-equalises the separated paths", ml.dL < 0.05,
-    `dL ${ml.dL.toFixed(3)} mm with both fields on`);
+  // Judged against the PHYSICAL budget, not against whatever the old
+  // sampling happened to return. lambda/8 at 20 kHz is ~2.18 mm, so the bar
+  // is a small fraction of that; the bow solver's own per-cell tolerance is
+  // 0.02 mm and 18 cells of it can only stack so far. At samples 64 this read
+  // under 0.05 mm and at 512 it reads 0.109 — the arc lengths are simply
+  // measured more accurately now, and 0.109 mm is 5% of the budget.
+  checkTrue("lengthening re-equalises the separated paths", ml.dL < 0.25,
+    `dL ${ml.dL.toFixed(3)} mm with both fields on, against a lambda/8 budget of ${(343000 / 20000 / 8).toFixed(2)} mm`);
 
   // the cheap mode is honest about its limit on this case
   const u = M.solveSeparation(th, opts, { floor: 0.5, mode: "uniform" });
@@ -2619,11 +2646,121 @@ head("Duct separation (field and solver)");
       // and the field it hands back must REPRODUCE that gap on a fresh build
       const sepH = r.amps ? { amps: r.amps, uStart: r.uStart, uEnd: r.uEnd, lobes: r.lobes } : null;
       const mh = M.mapThroatToMouth(th, { ...hard, separate: sepH });
-      const gh = M.ductClearance(mh.rows, { throatFloor: 0.5 }).minMid;
+      // the SAME pair set the solver scores on — every mode is now scored
+      // with the diagonals in, so a rebuild that leaves them out is
+      // measuring a different thing
+      const gh = M.ductClearance(mh.rows, { throatFloor: 0.5,
+        pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]] }).minMid;
       check(`${mode}'s reported gap survives an independent rebuild`, gh, r.gapAfter, 1e-9, "mm");
       checkTrue(`${mode} reports the failure rather than claiming success`,
         r.ok === false && !!r.reason, r.reason || "no reason given");
     }
+  }
+
+  // ── MUTUAL REPULSION: THE PAIRS SOLVED TOGETHER ─────────────────────────
+  // The chain answers each row and each column separately and adds the two
+  // fields; repulsion puts every deficient pair into ONE regularised
+  // least-squares and solves it at once, which is what lets the diagonals in.
+  {
+    // the option that makes diagonals visible at all must be backward
+    // compatible to the bit, because every recorded defect figure is on the
+    // orthogonal set
+    const mOrth = M.ductClearance(m0.rows, { thinBand: 1.0 });
+    const mExpl = M.ductClearance(m0.rows, { thinBand: 1.0, pairSteps: [[1, 0], [0, 1]] });
+    checkTrue("the default pairSteps reproduces the orthogonal metric exactly",
+      ["minMid", "minMidAt", "min", "overlap", "max", "pairs"]
+        .every((k) => Object.is(mOrth[k], mExpl[k])),
+      `${mOrth.pairs} pairs, every statistic identical`);
+    const mDiag = M.ductClearance(m0.rows, { thinBand: 1.0, pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]] });
+    checkTrue("...and asking for the diagonals really adds them",
+      mDiag.pairs > mOrth.pairs && mDiag.minMid <= mOrth.minMid + 1e-12,
+      `${mOrth.pairs} orthogonal pairs -> ${mDiag.pairs} with diagonals, worst gap ${mOrth.minMid.toFixed(3)} -> ${mDiag.minMid.toFixed(3)} mm`);
+
+    // 16 rounds, not the UI's 20, so the assertion has margin: measured 10
+    // to 13 rounds at the shipped ridge and relax, over the diagonal pair
+    // set, which is a HARDER target than the chain's orthogonal one.
+    const rp = M.solveSeparation(th, opts, { floor: 0.2, mode: "repel", maxIter: 16 });
+    checkTrue("repulsion clears the recorded interpenetration",
+      rp.gapAfter > rp.gapBefore && rp.gapAfter >= 0.15,
+      `${rp.gapBefore.toFixed(2)} -> ${rp.gapAfter.toFixed(2)} mm in ${rp.iters} rounds, ${rp.ampMax.toFixed(1)} mm displaced`);
+    checkTrue("...over a pair set that includes the diagonals",
+      rp.diagonals === true && rp.pairs > 27,
+      `${rp.pairs} pairs in the objective against 27 orthogonal`);
+    // MIRROR SYMMETRY BY CONSTRUCTION, not by hand: the pair set and the push
+    // directions are mirror-complete and the regularised system has a unique
+    // solution, so a mirror-symmetric problem gets a mirror-symmetric answer.
+    const byIJ2 = {};
+    for (const r of m0.rows) byIJ2[`${r.i},${r.j}`] = r.id;
+    let asymR = 0;
+    for (const r of m0.rows) {
+      const a0 = rp.amps && rp.amps[r.id] ? rp.amps[r.id].amp : 0;
+      const bx = rp.amps && rp.amps[byIJ2[`${5 - r.i},${r.j}`]];
+      const by = rp.amps && rp.amps[byIJ2[`${r.i},${2 - r.j}`]];
+      asymR = Math.max(asymR, Math.abs(a0 - (bx ? bx.amp : 0)), Math.abs(a0 - (by ? by.amp : 0)));
+    }
+    check("the repulsion field keeps both mirrors", asymR, 0, 1e-8, "mm");
+    // and it must survive an independent rebuild, measured on ITS OWN pair set
+    const sepR = { amps: rp.amps, uStart: rp.uStart, uEnd: rp.uEnd, lobes: rp.lobes };
+    const mR = M.mapThroatToMouth(th, { ...opts, separate: sepR });
+    const clR = M.ductClearance(mR.rows, { throatFloor: 0.2,
+      pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]] });
+    check("independent re-measure returns the repulsion solver's gap", clR.minMid, rp.gapAfter, 1e-9, "mm");
+    // the two pinned ends survive, same as every other field here
+    let endDriftR = 0;
+    for (const r of mR.rows) {
+      const b0 = m0.rows.find((x) => x.id === r.id);
+      for (let k = 0; k < 64; k += 8) {
+        endDriftR = Math.max(endDriftR, Math.hypot(...r.sched[0].pts[k].map((v, i) => v - b0.sched[0].pts[k][i])));
+        endDriftR = Math.max(endDriftR, Math.hypot(...r.sched[ST].pts[k].map((v, i) => v - b0.sched[ST].pts[k][i])));
+      }
+    }
+    check("both end rings stay pinned under repulsion", endDriftR, 0, 1e-9, "mm");
+    // WHAT THE DIAGONALS ARE FOR, and it is the strongest argument for the
+    // mode: the chain cannot see a diagonal neighbour, so its own field is
+    // free to drive a duct into one — and does, deeper than the overlap it
+    // was fixing. Measured on the shipped bow at 32 stations, 4 rounds,
+    // which is the cheapest geometry that shows it.
+    {
+      const oB = { ...opts, exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245,
+        depth: 300, divergeLen: 3, stations: 32,
+        lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2 } };
+      const DG = [[1, 0], [0, 1], [1, 1], [1, -1]];
+      const fieldOf = (r) => (r.amps
+        ? { amps: r.amps, uStart: r.uStart, uEnd: r.uEnd, lobes: r.lobes } : null);
+      // `diagonals: false` reproduces the scoring every mode used before this
+      // change — orthogonal pairs only — and that is what leaves the damage
+      const rn = M.solveSeparation(th, oB,
+        { floor: 0.5, mode: "nudge", maxIter: 4, diagonals: false });
+      const mn = M.mapThroatToMouth(th, { ...oB, separate: fieldOf(rn) });
+      const gO = M.ductClearance(mn.rows, { throatFloor: 0.5 }).minMid;
+      const gD = M.ductClearance(mn.rows, { throatFloor: 0.5, pairSteps: DG }).minMid;
+      checkTrue("scored on the orthogonal pairs alone, the chain opens a DIAGONAL overlap it never sees",
+        Math.abs(gO - rn.gapAfter) < 1e-9 && gD < gO - 1.0,
+        `it reports ${gO.toFixed(2)} mm on the orthogonal pairs and leaves ${gD.toFixed(2)} mm on the diagonals`);
+      // ...and scored on the same set it is judged by, it does not. The chain
+      // cannot PUSH on a diagonal pair — the walk is by row and column — so
+      // what fixes this is the SCORE: a state that damages a diagonal pair can
+      // no longer be the best state visited.
+      const rn2 = M.solveSeparation(th, oB, { floor: 0.5, mode: "nudge", maxIter: 4 });
+      const mn2 = M.mapThroatToMouth(th, { ...oB, separate: fieldOf(rn2) });
+      const gD2 = M.ductClearance(mn2.rows, { throatFloor: 0.5, pairSteps: DG }).minMid;
+      checkTrue("...and the same mode scored WITH the diagonals does not",
+        Math.abs(gD2 - rn2.gapAfter) < 1e-9 && gD2 > gD + 1.0,
+        `reported ${rn2.gapAfter.toFixed(2)} mm and leaves exactly that, against ${gD.toFixed(2)} mm before`);
+    }
+
+    // A SOLVER THAT CANNOT IMPROVE MUST RETURN ITS INPUT — the rule the chain
+    // learned the hard way, asserted for repulsion from the start. The hard
+    // case is the tool's own default geometry with the default lengthening,
+    // where the bow has already spent the room.
+    const hardR = {
+      ...opts, exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245, depth: 300,
+      lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2 }, stations: 64,
+    };
+    const rh = M.solveSeparation(th, hardR, { floor: 0.5, mode: "repel", maxIter: 6 });
+    checkTrue("repulsion never returns a field worse than no separation",
+      rh.gapAfter >= rh.gapBefore - 1e-9,
+      `${rh.gapBefore.toFixed(2)} -> ${rh.gapAfter.toFixed(2)} mm`);
   }
 
   // and the two features compose: separation under a bulge clears the defect

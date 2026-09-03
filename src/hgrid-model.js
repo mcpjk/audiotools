@@ -647,7 +647,25 @@ export function mapThroatToMouth(throat, opts) {
     // Which area the expansion law is written on. "open" is the acoustically
     // meaningful one — see the note at the profile block.
     profileArea = "open",
-    stations = 24, samples = 64, keepGeometry = false,
+    // THE CENTRELINE SAMPLE COUNT, AND IT IS A SAFETY NUMBER, not a
+    // smoothness one. `bendFold` reads the worst curvature over the samples
+    // each station stands for, so a bow feature short against `samples` has
+    // its peak missed and the reported fold margin comes back OPTIMISTIC.
+    // Measured on the shipped throat-fifth bow at stations 64, against the
+    // converged value of 2.8529 mm:
+    //   samples     64     128     256     512    1024    2048
+    //   foldMin   4.455   3.980   3.349   3.034   2.871   2.853  mm
+    //   optimistic +56%    +40%    +17%   +6.3%   +0.6%    0.0%
+    //   preview    49      46      41      49      68     113   ms
+    //   export    119      95      92      98     131     167   ms
+    // The cost is FLAT to 512 and only starts rising at 1024, so 512 buys
+    // almost all of the accuracy for nothing. The residual +6.3% is a known
+    // ONE-SIDED bias — the metric can only be optimistic, never pessimistic —
+    // and 1024 is the value to reach for if a fold margin is ever marginal.
+    // Nothing else moves: over the same 64 -> 512 step, dL, Lmin, Lmax, mouth
+    // area, wallSpread, fc and kMax are unchanged to four digits or better,
+    // sectionObliq moves 0.9% and turnMax 2.2%.
+    stations = 24, samples = 512, keepGeometry = false,
     // The signed clearance costs ~5x the rest of the mapping put together, so
     // a caller that wants a responsive readout can skip it here and run
     // ductClearance(rows) on its own schedule. Defaults ON: skipping a safety
@@ -933,8 +951,16 @@ export function mapThroatToMouth(throat, opts) {
     const T1dir = nWave; // aim the duct at the apparent apex, not at the surface
     const centreTraj = buildTrajectory(P0, T0dir, P1, T1dir, pathOpts);
 
-    // sample the centreline
-    const M = samples, pts = [], tans = [];
+    // sample the centreline.
+    // STATIONS ABOVE SAMPLES ALIAS OUTRIGHT — `idx = Math.round(u * M)` below
+    // makes consecutive rings share a centreline point and frame — so the
+    // sample count is never allowed below the station count. Measured on the
+    // shipped bow, stations 192: the aliased read (samples 64) reports
+    // fluxContract 0.18% and obliquity 35.47 deg against 0.06% and 32.50 for
+    // the honest one, i.e. aliasing INVENTS about three quarters of a
+    // contraction reading. The guard makes that unreachable rather than
+    // documented.
+    const M = Math.max(samples, stations), pts = [], tans = [];
     for (let q = 0; q <= M; q++) {
       const s = q / M;
       pts.push(centreTraj(s));
@@ -1985,7 +2011,16 @@ export function mapThroatToMouth(throat, opts) {
 //     `throat.dip` reports the backward step that ENDED the longest run and
 //     where. 0 (the default) turns the whole rule off, and every statistic
 //     reduces exactly to the form that has no throat boundary at all.
-export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFloor = 0 } = {}) {
+export function ductClearance(rows, {
+  jointAware = false, thinBand = 0, throatFloor = 0,
+  // WHICH PAIRS COUNT AS NEIGHBOURS. The default is the orthogonal grid
+  // adjacency this metric has always used, and every recorded number is on
+  // it. `[[1,0],[0,1],[1,1],[1,-1]]` adds the diagonals, which the shell
+  // audit showed can overlap millimetres deep two columns apart while no
+  // metric here was looking at them. Kept as an option rather than a change
+  // so the defect statistics stay comparable to everything already measured.
+  pairSteps = [[1, 0], [0, 1]],
+} = {}) {
   if (!rows.length || !rows[0].sched[0].pts) return null;
   const stations = rows[0].sched.length - 1;
   // neighbouring pairs straight from the (i, j) index — grid adjacency is the
@@ -1993,7 +2028,7 @@ export function ductClearance(rows, { jointAware = false, thinBand = 0, throatFl
   const byIdx = new Map(rows.map((r) => [`${r.i},${r.j}`, r]));
   const pairs = [];
   for (const A of rows)
-    for (const [da, db] of [[1, 0], [0, 1]]) {
+    for (const [da, db] of pairSteps) {
       const B = byIdx.get(`${A.i + da},${A.j + db}`);
       if (B) pairs.push([A, B]);
     }
@@ -2279,8 +2314,46 @@ export function solveSeparation(throat, opts, cfg = {}) {
     floor = 0.5, mode = "uniform", maxIter = 16, ampCap = 40, lobes = 1, tol = 0.05,
     // under-relaxation: a full-deficit push overshoots, because every push
     // steals room from the pair behind it — measured oscillating between
-    // -5 and -1.3 mm at relax 1 on the very first case tried
-    relax = 0.5,
+    // -5 and -1.3 mm at relax 1 on the very first case tried.
+    // "repel" DOES NOT NEED IT, and that is a consequence of the argument
+    // below rather than a tuning result: the diffusion under-relaxation
+    // exists to damp is Jacobi's, and it comes from answering each pair in
+    // ignorance of the others. One joint solve cannot diffuse. Measured on
+    // the recorded 6x3/d320 case, relax 0.5 / 0.8 / 1.0 all land on the
+    // same gap (+0.273 / +0.290 / +0.267 mm) in 17 / 15 / 10 rounds, so
+    // the only thing damping buys is rounds — and the UI's round budget is
+    // what decides whether the solve finishes.
+    relax = mode === "repel" ? 1 : 0.5,
+    // `ridge` is "repel" only: the Tikhonov weight that makes the normal
+    // equations positive definite and expresses "move as little as possible"
+    // — a cell no constraint touches gets exactly zero rather than an
+    // arbitrary null-space vector.
+    // `diagonals` PUTS THE DIAGONAL NEIGHBOURS INTO THE SCORE FOR EVERY
+    // MODE, and into the force set for the one mode that can push on them.
+    // It costs nothing on an unseparated horn — measured identical minMid,
+    // minMidAt and thin-band counts at the defaults with and without the
+    // bow and at the dL-solved depth, because an ordered grid always has an
+    // orthogonal pair closer than any diagonal one — and it is the ONLY
+    // thing that sees what a separation field does: the chain's own field
+    // slides a duct diagonally, and measured on the shipped bow at 32
+    // stations it reports -3.28 mm on the orthogonal pairs while leaving
+    // -5.52 mm on the diagonals. So the base numbers do not move and a
+    // solver can no longer claim success on a defect it created.
+    // `ridge` IS RELATIVE TO THE CONSTRAINT BLOCK'S MEAN DIAGONAL, so it
+    // means the same thing whether three pairs are pushing or all 47 — see
+    // the note at the solve. Measured on the recorded 6x3/d320 case at
+    // floor 0.2, relax 1, 20 rounds:
+    //   ridge     0.02    0.05     0.1     0.25     0.5      1
+    //   gap     +0.270  +0.267  +0.254   ...     (0.25 and up need more
+    //   rounds: 26 at 0.25, and 0.5 and 1 do not finish in 20)
+    // and on the shipped-bow default depth — the case this file already
+    // records as unfixable — the gap is FLAT in the ridge (-4.31 to -4.32
+    // over 0.02 to 0.25, against the chain's -4.81), because there every
+    // pair is deficient and the displacement caps out whatever the weight.
+    // So the ridge is chosen on the case that can be solved, and 0.05 is
+    // the largest value that still finishes inside the UI's 20 rounds with
+    // margin.
+    ridge = 0.05, diagonals = true,
   } = cfg;
   const build = (separate) => mapThroatToMouth(throat, {
     ...opts, separate, keepGeometry: true, computeClearance: false,
@@ -2293,7 +2366,14 @@ export function solveSeparation(throat, opts, cfg = {}) {
   // ducts have not yet opened to it, so asking for it there is asking for
   // room the geometry has had no path length to make. One number sets both,
   // which is what keeps "minimum gap" meaning one thing.
-  const measure = (m) => ductClearance(m.rows, { jointAware, throatFloor: floor });
+  // EVERY MODE IS SCORED ON THE SAME PAIR SET, diagonals included, because a
+  // solver that is not scored on a defect will happily create it. Only
+  // "repel" can PUSH on a diagonal pair — the chain walk is by row and
+  // column and simply ignores the extra pairs — but all three now report
+  // what they leave rather than what they were looking at.
+  const STEPS = diagonals
+    ? [[1, 0], [0, 1], [1, 1], [1, -1]] : [[1, 0], [0, 1]];
+  const measure = (m) => ductClearance(m.rows, { jointAware, throatFloor: floor, pairSteps: STEPS });
   const clBase = measure(base);
   const gapOf = (cl) => cl.minMid;   // defect-scoped signed worst gap
   const gap0 = gapOf(clBase);
@@ -2357,7 +2437,145 @@ export function solveSeparation(throat, opts, cfg = {}) {
       gapBefore: gap0, gapAfter: bestU.g, ampMax: bestU.a,
       dL: bestU.m.dL, dLBefore: base.dL, evals, trace,
       reason: okU ? null
-        : `the best one-knob spread (${bestU.a.toFixed(1)} mm) leaves the worst gap at ${bestU.g.toFixed(2)} mm — try "nudge"`,
+        : `the best one-knob spread (${bestU.a.toFixed(1)} mm) leaves the worst gap at ${bestU.g.toFixed(2)} mm — try "nudge" or "repel"`,
+    };
+  }
+
+  // ── mode "repel" — EVERY PAIR PUSHES, AND THE PUSHES ARE SOLVED TOGETHER ──
+  // The owner's proposal, and it answers three structural limits of the chain
+  // rather than tuning it. The chain is exact for a 1-D contact problem and
+  // that is why it beat naive pairwise pushes — but the geometry is not 1-D:
+  //   (1) it walks each ROW and each COLUMN independently and ADDS the two
+  //       fields, so a cell pushed along its row lands somewhere its column
+  //       chain never accounted for;
+  //   (2) only ORTHOGONAL neighbours are chained at all — 27 pairs at 6x3 —
+  //       while the shell audit measured non-adjacent blanks overlapping
+  //       millimetres deep two columns apart;
+  //   (3) a pair's push is taken at that pair's single worst station.
+  // Here every deficient pair contributes ONE linear constraint,
+  // (x_b - x_a) . e_p = d_p, and the whole set is solved at once as the
+  // regularised least-squares
+  //     min_x  sum_p ((x_b - x_a).e_p - d_p)^2  +  ridge * |x|^2
+  // through the normal equations and the same LU the B-spline writer uses.
+  // That removes (1) outright — rows, columns and diagonals are one system,
+  // not three added together — and (2) by including the diagonal steps in
+  // both the force set and the objective. It does NOT address (3): the field
+  // is still one vector per cell times one window, so this can slide a duct
+  // but not re-route it. That is the next thing, and it needs a per-station
+  // field rather than a per-cell one.
+  // WHY LEAST-SQUARES AND NOT A RELAXATION: the diffusion the chain was built
+  // to escape is Jacobi's, and it comes from answering each pair in ignorance
+  // of the others. Solving the pairs jointly cannot diffuse — it is one solve
+  // — so the chain's decomposition is not needed to avoid it. `ridge` both
+  // makes the system positive definite (a cell no constraint touches must get
+  // exactly zero, not an arbitrary null-space vector) and states the
+  // preference for the smallest displacement that clears the floor.
+  // MIRROR SYMMETRY IS BY CONSTRUCTION, not by hand: the pair set and the
+  // directions e_p are mirror-complete and the regularised system has a
+  // unique solution, so a mirror-symmetric problem has a mirror-symmetric
+  // answer. It is asserted rather than assumed.
+  if (mode === "repel") {
+    const ids = throat.cells.map((cc) => cc.id);
+    const slot = new Map(ids.map((id, k) => [id, k]));
+    const N = ids.length, n2 = 2 * N;
+    const span = uEnd - uStart;
+    const winAt = (u) => {
+      if (u < uStart || u > uEnd) return 0;
+      return Math.sin(lobes * Math.PI * ((u - uStart) / span)) ** 2;
+    };
+    const acc = {};
+    for (const id of ids) acc[id] = [0, 0];
+    const ampsFromAcc = () => {
+      const amps = {};
+      for (const id in acc) {
+        const n = Math.hypot(acc[id][0], acc[id][1]);
+        if (n > 1e-9) amps[id] = { dx: acc[id][0] / n, dy: acc[id][1] / n, amp: n };
+      }
+      return amps;
+    };
+    let m = base, cl = clBase, iters = 0;
+    let best = { gap: gap0, acc: null, dL: base.dL };
+    for (let it = 0; it < maxIter; it++) {
+      // one constraint per pair that is under the floor, at that pair's own
+      // worst station, divided by the window there so the amplitude asked for
+      // delivers the deficit where the deficit is
+      const cons = [];
+      for (const pw of cl.pairWorst) {
+        if (!(pw.gap < floor) || pw.at == null) continue;
+        const A = m.rows.find((r) => r.id === pw.a), B = m.rows.find((r) => r.id === pw.b);
+        if (!A || !B) continue;
+        const ca = A.sched[pw.at].centroid, cb = B.sched[pw.at].centroid;
+        const ex = cb[0] - ca[0], ey = cb[1] - ca[1];
+        const en = Math.hypot(ex, ey);
+        if (!(en > 1e-9)) continue;
+        const w = Math.max(winAt(pw.at / (A.sched.length - 1)), 0.33);
+        cons.push({ a: slot.get(A.id), b: slot.get(B.id),
+                    e: [ex / en, ey / en], d: (floor - pw.gap) / w });
+      }
+      if (!cons.length) break;
+      const Amat = Array.from({ length: n2 }, () => new Array(n2).fill(0));
+      const bvec = new Array(n2).fill(0);
+      for (const { a, b, e, d } of cons) {
+        const idx = [2 * a, 2 * a + 1, 2 * b, 2 * b + 1];
+        const sg = [-e[0], -e[1], e[0], e[1]];
+        for (let p = 0; p < 4; p++) {
+          bvec[idx[p]] += sg[p] * d;
+          for (let q = 0; q < 4; q++) Amat[idx[p]][idx[q]] += sg[p] * sg[q];
+        }
+      }
+      // THE RIDGE IS RELATIVE TO THE CONSTRAINT BLOCK, NOT ABSOLUTE. An
+      // absolute Tikhonov weight is not scale free here: the constraint
+      // block's diagonal grows with how many pairs are pushing, so one
+      // number is heavy damping on a horn with a few deficient pairs and
+      // almost none on a horn where every pair is deficient. Measured on
+      // the recorded 6x3/d320 case (15 of 47 pairs deficient) an absolute
+      // ridge of 8 moved 0.45 mm in 12 rounds and the iteration turned
+      // round; the same weight on the shipped-bow default (every pair
+      // deficient) was the knee. Normalising by the mean diagonal makes the
+      // knob mean the same thing on both.
+      let dbar = 0;
+      for (let i = 0; i < n2; i++) dbar += Amat[i][i];
+      dbar = Math.max(dbar / n2, 1e-9);
+      for (let i = 0; i < n2; i++) Amat[i][i] += ridge * dbar;
+      const lu = luFactor(Amat);
+      if (!lu) break;
+      const x = luSolve(lu, bvec);
+      if (!x) break;
+      for (let k = 0; k < N; k++) {
+        acc[ids[k]][0] += relax * x[2 * k];
+        acc[ids[k]][1] += relax * x[2 * k + 1];
+      }
+      for (const id in acc) {
+        const n = Math.hypot(acc[id][0], acc[id][1]);
+        if (n > ampCap) { acc[id][0] *= ampCap / n; acc[id][1] *= ampCap / n; }
+      }
+      evals++; iters++;
+      m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
+      cl = measure(m);
+      trace.push({ iter: iters, gap: +gapOf(cl).toFixed(4), cons: cons.length });
+      if (gapOf(cl) > best.gap)
+        best = { gap: gapOf(cl), dL: m.dL,
+                 acc: Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, v.slice()])) };
+      if (gapOf(cl) >= floor - tol) break;
+    }
+    // a solver that cannot improve on its input returns its input — the rule
+    // the chain mode learned the hard way, applied here from the start
+    if (best.gap > gapOf(cl)) {
+      if (best.acc) for (const id in best.acc) acc[id] = best.acc[id];
+      else for (const id in acc) acc[id] = [0, 0];
+      m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
+      cl = measure(m);
+    }
+    const ampsR = ampsFromAcc();
+    const gR = gapOf(cl);
+    return {
+      ok: gR >= floor - tol, mode, amps: Object.keys(ampsR).length ? ampsR : null,
+      uStart, uEnd, lobes, gapBefore: gap0, gapAfter: gR,
+      ampMax: Math.max(0, ...Object.values(ampsR).map((e) => e.amp)),
+      iters, dL: m.dL, dLBefore: base.dL, evals, trace,
+      pairs: cl.pairs, diagonals: STEPS.length > 2,
+      reason: gR >= floor - tol ? null
+        : `after ${iters} rounds the worst gap is still ${gR.toFixed(2)} mm`,
     };
   }
 
