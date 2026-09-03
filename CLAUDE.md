@@ -919,22 +919,41 @@ exists.
   Higher floors saturate honestly: floor 1.0 reaches +0.73 at the 40 mm
   amplitude cap with dL 10.6 — the throat region genuinely runs out of
   room, and the report says so instead of pretending.
-- **THE THROAT-FIFTH BOW AND THE SEPARATION SOLVE FIGHT OVER THE SAME ROOM,
-  AND THE THROAT FIFTH IS WHERE THERE IS NONE.** The owner's standing choice
-  of bow region since the solve was removed is [0, 0.2]; the recorded signed
-  gap profile is negative or near zero until about u = 0.31 and only peaks
-  near u = 0.78. So the bow is placed exactly where the clearance budget is
-  already spent. Measured on the 2026-09-02 defaults with lengthening at
-  throat fifth, 1 lobe, radial: the worst gap is -5.10 mm before any
-  separation, the independent point-in-solid test on the EXPORTED (inset)
-  mesh confirms 4.44 mm of real interpenetration at u = 0.083, and NEITHER
-  separation mode can fix it — uniform reaches -2.39 mm at 30.8 mm of
-  spread, nudge cannot improve on the input at all. Both report `ok: false`
-  with a reason, so the tool is not lying; but the geometry the owner most
-  often builds is not manufacturable as it stands, and no amount of
-  separation solving will make it so. The levers that CAN work are upstream:
-  a wider bow region, more lobes (amplitude falls as 1/n), a lower T, or
-  more depth.
+- **THE THROAT-FIFTH BOW BREAKS THROUGH AT THE DEFAULT DEPTH AND NOT AT THE
+  dL-SOLVED ONE, and the depth is the whole difference.** An earlier version
+  of this bullet said the throat fifth was unmanufacturable full stop; that
+  was measured at depth 300 only and the owner was right to doubt it. Depth
+  300 is the tool's DEFAULT, not the dL optimum, so it leaves dL 24.08 mm to
+  correct and the bow has to be enormous. `solveDepthForMinDL` puts this
+  mouth at 357.2 mm for dL 10.82, and there the same bow is less than half
+  the correction. Measured, EXPORTED (inset) outlines, throat fifth / 1 lobe
+  / radial:
+    depth  dL before  bow amp   worst gap   merged stations
+    300    24.08 mm   28.3 mm   -4.78 mm    6 of 47
+    340    12.97      20.8      -3.21       5
+    350    10.99      20.1      -2.38       3
+    357    10.82      20.1      +0.29       0
+    370    12.67      21.9      +0.24       0
+  The independent point-in-solid test agrees at both ends: 4.437 mm of real
+  interpenetration at depth 300, NONE anywhere at 357.
+  **It is not amplitude alone** — depth 370 carries a BIGGER bow (21.9 mm)
+  and stays clear — so do not read this as an amplitude budget. And the
+  crossing is NOT a clean threshold: sampled at 2 mm steps the gap reads
+  -0.47 / +0.29 / -0.24 / +0.19 mm at depth 356 / 357 / 358 / 360, i.e. it
+  hovers about zero and flips sign. Near the optimum the honest statement is
+  that the interpenetration collapses from ~4.8 mm to a few TENTHS of a
+  millimetre, at which scale the resolution limits recorded above (24
+  stations under-reads a sharp near-throat dip) are the same size as the
+  answer.
+  What survives from the original bullet: the gap profile IS negative or
+  near zero until about u = 0.31 and only peaks near u = 0.78, so the throat
+  fifth is still the tightest place to put a bow, and at depth 300 neither
+  separation mode can fix what it does — uniform reaches -2.39 mm at 30.8 mm
+  of spread, nudge cannot improve on the input at all, and both report
+  `ok: false`. The lesson is the one already recorded for `solveBow`: SOLVE
+  THE DEPTH FIRST and the bow becomes a small correction rather than a
+  fight. Stage 5's own hint says exactly that, and this is the measurement
+  behind it.
 - **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
   the trivial-return path through `finish()` before `let it` was initialised
   — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now

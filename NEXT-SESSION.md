@@ -52,9 +52,12 @@ declined, "min gap" is still the gap between the AIR columns, not the printed
 wall, which is 0.4(1-s) mm thicker.
 
 **The owner also declined steering away from the throat-fifth bow region**,
-on the grounds that the solver's `ok: false` is enough. That geometry carries
-4.4 mm of confirmed interpenetration that no separation field can fix; it is
-a known and accepted limit, not an open bug.
+on the grounds that the solver's `ok: false` is enough — and on re-measuring,
+that call looks right. The 4.4 mm of confirmed interpenetration is a property
+of DEPTH 300, the tool's default, not of the throat fifth: at the dL-solved
+depth of 357 mm the same bow produces NO interpenetration at all in the
+exported solids, independently verified. See the corrected CLAUDE.md finding
+for the depth sweep and for why the crossing is not a clean threshold.
 
 ## Done in the 2026-09-02 refinements session
 
