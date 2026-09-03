@@ -1970,6 +1970,14 @@ export default function GinkgoHorn() {
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
             const co = G.shellCoincidence(throat, em, cfg);
             const ov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
+            // The number `wall` has to be read against. At the throat the cells
+            // TILE, so each blank pushes `wall` into its neighbour across the
+            // whole shared face; once 2·wall passes a cell's width, the blanks
+            // on either side of that cell reach past each other and solids that
+            // share no edge at all share material.
+            const cw = G.throatCellWidth(throat, em, { t: thickness });
+            const span = 2 * shellWall + wallJitter;
+            const reaches = cw && span > cw.min;
             // A region export rests on a mirror, so the mirror is MEASURED
             // rather than assumed — a world-axis bow breaks one of them.
             const mir = r.region ? G.mirrorSymmetry(throat, em, { t: thickness }) : null;
@@ -1983,6 +1991,8 @@ export default function GinkgoHorn() {
               msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
                 co ? ` · near-copy surface ${fmt(co.arc, 1)} mm${co.arc > 1 ? " — RAISE THE JITTER" : ""}` : ""}${
                 ov ? ` · blanks share material over ${fmt(ov.fracTouching * 100, 0)}% of the path` : ""}${
+                cw ? ` · throat cells ${fmt(cw.min, 1)}-${fmt(cw.max, 1)} mm wide against 2x wall ${fmt(span, 1)} mm${
+                  reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt((cw.min - wallJitter) / 2, 2)} mm to stop it` : ""}` : ""}${
                 r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
                   mirWorst > 1e-3 ? " — MIRROR BROKEN, this region is not the whole horn" : ""}${
                   r.region.onPlane.length ? `, ${r.region.onPlane.length} cell(s) on the plane (${r.region.onPlane.join(" ")}) — do not duplicate them` : ""}` : ""} · ${
@@ -2091,6 +2101,12 @@ export default function GinkgoHorn() {
             <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell</strong>, {throat.N} independent
             subtractions giving {throat.N} separate cell shells. Merging them into one horn is then a modelling decision to make in CAD.
           </>}
+          {" "}<strong style={{ color: C.inkDim }}>The wall has to be read against the throat cell width.</strong> The cells tile
+          there, so each blank pushes the wall into its neighbour across the whole shared face; once 2x the wall passes a cell's width,
+          the blanks on either side of that cell reach past each other and solids that share no edge at all share material. Measured at
+          the defaults, that stacks the blanks SIX deep at the throat, and it is the FACE offset that does it, not the corner mitre —
+          clamping every mitre to a full round left the stack at six. Dropping the wall moves it: stack 6 / 5 / 4 and non-adjacent
+          sharing 29 / 18 / 2 pairs at wall 3 / 2.5 / 2, and zero at 1.5. The note prints both numbers on every export.
           {" "}<strong style={{ color: C.inkDim }}>Region</strong> exports one side of each mirror \u2014 a half, or a quarter \u2014 so the CAD
           work is a quarter of the booleans. It applies to all three solid exports and the filename carries the side.
           {regSel && regSel.onPlane.length ? <> On this grid the {regX && regY ? "quarter" : "half"} straddles a plane:{" "}

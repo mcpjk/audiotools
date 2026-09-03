@@ -46,18 +46,28 @@ a whole neighbouring cell. See the CLAUDE.md finding for the measurements.
 **The standing CAD recipe is therefore: union the blanks ONE CELL AT A TIME,
 never tree-merge merged bodies, and cut only after the union is complete.**
 
-**The mitre cap is now the highest-value unbuilt item**, because it attacks
-the cause rather than the symptom. Two shapes, and the choice is the owner's
-because the costs differ in kind:
-  · ROUND at radius = wall — wall stays exactly `wall` everywhere, but a
-    corner stops being one vertex, so the shared corner-column identity that
-    makes `ductBrep`'s seams measure exactly 0 has to be redesigned (each
-    wall face would carry half of each adjacent arc).
-  · CLAMP the mitre vertex to c x wall — topology untouched, one-line change,
-    but the perpendicular wall at the corner falls to c x wall x sin(half
-    angle): about 1.5 mm at the sharpest 48.7 deg corner for c = 1.2.
-Measure first what a cap does to the throat stack depth; if it drops the
-6-deep region to 4 or less, it is the whole fix.
+**THE MITRE CAP WAS MEASURED AND WITHDRAWN (2026-09-03).** A full round left
+the throat stack at 6 on the defaults and at 5 on the test geometry, with 24
+of 28 non-adjacent pairs still sharing material. It is the FACE offset that
+stacks the blanks, not the corner. The suite asserts that negative so the
+idea cannot come back by memory.
+
+**What the measurement points at instead, in order of how much it moves:**
+  1. `wall` under half the narrowest throat cell — 2·wall + jitter must clear
+     `throatCellWidth().min` (4.47 mm at the defaults, so under ~2.0 mm).
+     That takes the throat stack to its structural floor of 4 and the
+     non-adjacent sharing to 0. Free to try today: it is one field, the
+     passages are unchanged (the cutters do not move), and the note now
+     prints both numbers on every export.
+  2. Phase 2 below — one evaluated envelope over the throat region, minus the
+     cutters, so the region that stacks 6 deep is never unioned at all. This
+     is the structural answer and the reason Phase 2 is still the plan.
+
+**Pair-hunting is over.** On the owner's own quarter export, 5 of 13 pair
+unions failed and no measured property of a pair predicted which — two
+near-twin pairs landed on opposite sides. See the CLAUDE.md finding for the
+five discriminators that came out flat. Every pair overlaps millimetres deep
+and touches within 40 um somewhere; the configuration is uniformly marginal.
 
 ## Region exports shipped (2026-09-03)
 
