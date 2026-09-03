@@ -731,18 +731,35 @@ export default function GinkgoHorn() {
   const [clr, setClr] = useState(null);
   useEffect(() => {
     if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setClr(null); return; }
-    const id = setTimeout(() => setClr({
-      of: map,
-      // `sepFloor` is the one minimum-gap number: it is the thin-wall band,
-      // the separation target, AND the throat knife-edge boundary — the run
-      // over which the ducts have not yet opened to it is not a defect.
-      value: G.ductClearance(map.rows, {
-        jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
-      }),
-    }), 30);
+    const id = setTimeout(() => {
+      // MEASURE THE GEOMETRY THAT GETS EXPORTED, not the preview's.
+      // The preview map is built at PREVIEW_STATIONS so the sliders stay
+      // live, and that count is far too coarse to see what a bow does near
+      // the throat: measured on the owner's own returned export, the SAME
+      // geometry reads -0.61 mm at 24 stations and -5.53 mm at 64, and the
+      // separation solve then reported +1.14 mm on a horn whose ducts pass
+      // 4.9 mm through each other in the STEP. So the clearance builds its
+      // own map at the EXPORT count. It is already deferred off the render
+      // pass, and the extra map costs ~90 ms against a ~300 ms measurement.
+      const rows = (stations !== PREVIEW_STATIONS
+        ? G.mapThroatToMouth(throat, {
+            ...mapOpts, depth, profileT, keepGeometry: true,
+            computeClearance: false, stations,
+          })
+        : map).rows;
+      setClr({
+        of: map, at: stations,
+        // `sepFloor` is the one minimum-gap number: it is the thin-wall band,
+        // the separation target, AND the throat knife-edge boundary — the run
+        // over which the ducts have not yet opened to it is not a defect.
+        value: G.ductClearance(rows, {
+          jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
+        }),
+      });
+    }, 30);
     return () => clearTimeout(id);
-  }, [map, sepFloor]);
-  const clearance = clr && clr.of === map ? clr.value : null;
+  }, [map, sepFloor, stations, throat, mapOpts, depth, profileT]);
+  const clearance = clr && clr.of === map && clr.at === stations ? clr.value : null;
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -928,11 +945,16 @@ export default function GinkgoHorn() {
     // times — once here, once as "the narrowest gap", once as the dip.
     const dipOwns = clearance && clearance.throat && clearance.throat.dip != null
       && clearance.minMidAt === clearance.throat.dipAt;
-    if (map && clearance && clearance.overlap > 1e-3 && !dipOwns)
+    // Same principle as `dipOwns`: when the bow is what put the overlap there,
+    // the bow warning below says so AND names the fix, so the two generic
+    // "the ducts touch" warnings would only repeat it with less information.
+    const bowOwns = clearance && lengthenOn && clearance.minMid < 0 && map && map.lengthen
+      && clearance.minMidAt / (clearance.throat ? clearance.throat.stations : stations) <= bowTo;
+    if (map && clearance && clearance.overlap > 1e-3 && !dipOwns && !bowOwns)
       w.push(`Swept sections interpenetrate ${fmt(clearance.overlap, 3)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s). This is the trade the mode makes on purpose — the ends stay shared, the interior does not — but it is not yet resolved: lower T pulls the sections further inward, and centreline manipulation is the stronger lever that is not built. Note the section scale reads k = ${fmt(map.profScaleMax, 4)} ≤ 1, which proves non-overlap ONLY for flowed sections; here it says nothing.`);
     if (map && map.profScaleMax != null && map.profScaleMax > 1 + 1e-6)
       w.push(`The expansion profile asks for more area than the tiling configuration has: section scale reaches k = ${fmt(map.profScaleMax, 4)} against a ceiling of 1. Scaling a section about its centroid by k ≤ 1 can only move it AWAY from its neighbours, so k > 1 is the one way this construction pushes ducts into each other — verified by ray cast to produce real interpenetration at exactly the stations where it exceeds 1. Lower T (toward cosh) to stay inside the tiling, or lengthen the path so the profile has room to reach the mouth area more gently.${clearance && clearance.overlap > 0 ? ` The geometry measurement agrees independently and says how deep: the ducts interpenetrate ${fmt(clearance.overlap, 4)} mm at station ${clearance.overlapAt}, over ${clearance.overlapStations} station(s).` : ""}`);
-    if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6) && !dipOwns)
+    if (map && clearance && profileT != null && clearance.minMid < 1e-3 && !(map.profScaleMax > 1 + 1e-6) && !dipOwns && !bowOwns)
       w.push(`The narrowest duct-to-duct gap is ${fmt(clearance.minMid, 4)} mm at station ${clearance.minMidAt} — the ducts are touching even though the section scale stayed within k ≤ 1. Read the narrowest gap, not the widest: the widest is ${fmt(clearance.max, 2)} mm here and says nothing about whether the ducts are separate.`);
     // The cells TILE the aperture, so any bulge at all makes every mouth ring
     // overlap its neighbour — measured at exactly 2x the amplitude, since both
@@ -950,7 +972,15 @@ export default function GinkgoHorn() {
         w.push(`The coped joints meet at the aperture on all ${clearance.joint.pairs} neighbour pairs — the cells tile, so any bulge overlaps them — but the shallowest cope runs only ${fmt(clearance.joint.depthMin, 1)} mm back, against ${fmt(stationMm, 1)} mm between stations at the export setting. A joint thinner than one station cannot be lofted and exports as a lip. Raise the bulge amplitude, or raise the export station count.`);
     }
     if (map && clearance && clearance.throat && clearance.throat.dip != null)
-      w.push(`The duct gap stops opening at station ${clearance.throat.dipAt} of ${clearance.throat.stations} and closes by ${fmt(clearance.throat.dip, 3)} mm before the ducts ever reach the ${fmt(sepFloor, 1)} mm minimum. Near the throat the cells tile, so no absolute clearance is asked for there — only that the wall never gets THINNER than it already is, and here it does. That is a defect at any magnitude, and it is not a knife edge. Note the depth quoted is a LOWER BOUND: the dip is sharp, the preview samples ${PREVIEW_STATIONS} stations, and the same geometry measured at 48 reads several times deeper.`);
+      w.push(`The duct gap stops opening at station ${clearance.throat.dipAt} of ${clearance.throat.stations} and closes by ${fmt(clearance.throat.dip, 3)} mm before the ducts ever reach the ${fmt(sepFloor, 1)} mm minimum. Near the throat the cells tile, so no absolute clearance is asked for there — only that the wall never gets THINNER than it already is, and here it does. That is a defect at any magnitude, and it is not a knife edge. This is measured on the geometry the exports build, at ${stations} stations, not on the ${PREVIEW_STATIONS}-station preview.`);
+    // THE BOW IS THE USUAL CAUSE, and it is worth naming rather than
+    // leaving the reader to infer it from a gap number. Measured on the
+    // owner's returned export: with the bow off this horn's worst gap is
+    // -0.09 mm, and with a 1-lobe bow over [0, 0.25] it is -5.53 mm at
+    // u = 0.047. Every bow region starting at u >= 0.10 measured -0.11 mm,
+    // i.e. the bow contributed nothing at all.
+    if (bowOwns)
+      w.push(`The worst duct overlap (${fmt(clearance.minMid, 2)} mm at ${fmt(100 * clearance.minMidAt / (clearance.throat ? clearance.throat.stations : stations), 1)}% of the path) sits INSIDE the bow region [${fmt(bowFrom, 2)}, ${fmt(bowTo, 2)}] — the lengthening is what puts it there. Near the throat the cells still tile, so a bow that starts there turns the ducts into each other before they have opened at all: measured on one returned export, the same horn reads −0.09 mm with the bow off and −5.53 mm with a 1-lobe bow over [0, 0.25], while every region starting at u ≥ 0.10 left the gap unchanged at −0.11 mm. Move the START of the region off the throat before reaching for the separation solve — it is the lever that costs nothing.`);
     if (map && clearance && clearance.throat && clearance.throat.saturated > 0)
       w.push(`${clearance.throat.saturated} of ${clearance.throat.pairs} neighbour pairs never open to the ${fmt(sepFloor, 1)} mm minimum anywhere along the path, so the throat knife-edge run would have swallowed the whole duct — it is capped, and the gap reported is the best those pairs actually have. Lower the minimum, or give the profile more room (lower T, or more depth).`);
     if (map && clearance && clearance.thin && clearance.thin.count > 0 && !(clearance.overlap > 1e-3))
@@ -1899,7 +1929,7 @@ export default function GinkgoHorn() {
           <button disabled={sepBusy} onClick={() => {
             setSepBusy(true);
             setTimeout(() => {
-              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
+              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
                 { floor: sepFloor, mode: "uniform" });
               setSepSolve(r);
               setSepBusy(false);
@@ -1909,7 +1939,7 @@ export default function GinkgoHorn() {
           <button disabled={sepBusy} onClick={() => {
             setSepBusy(true);
             setTimeout(() => {
-              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null },
+              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
                 { floor: sepFloor, mode: "nudge", maxIter: 20 });
               setSepSolve(r);
               setSepBusy(false);
@@ -1967,10 +1997,10 @@ export default function GinkgoHorn() {
           the weakest requirement that still refuses to call closing ducts a joint. One consequence worth knowing: the minimum no longer
           decides whether a dive is forgiven, only how far the knife-edge run reaches.
           <br />
-          <strong style={{ color: C.inkDim }}>The verdict is resolution-independent; the depth is not.</strong> The dip is a sharp minimum
-          very close to the throat, and the preview samples {PREVIEW_STATIONS} stations, so it can step straight over the worst of it — on the
-          default horn the same defect reads −0.002 mm here and −0.24 mm at 48 stations, confirmed against an independent point-in-solid test.
-          Treat a reported dip as real and its depth as a lower bound.
+          <strong style={{ color: C.inkDim }}>Everything here is measured on the geometry the exports build</strong> — its own map at the
+          export's {stations} stations, not the {PREVIEW_STATIONS}-station preview the sliders run on. That is not a refinement: the preview
+          count steps straight over what a bow does near the throat, and an export came back with its ducts 4.9 mm through each other while
+          this readout said +1.14 mm. The measurement is deferred, so it lands a beat after the sliders settle.
         </div>
       </Stage>
 
@@ -2424,7 +2454,7 @@ export default function GinkgoHorn() {
                   : `narrowest gap at station ${clearance.minMidAt} · widest ${fmt(clearance.max, 1)} mm`
                     + (clearance.throat && clearance.throat.runs
                       ? (clearance.throat.dip != null
-                          ? ` · the gap STOPS OPENING at station ${clearance.throat.dipAt}, closing ${fmt(clearance.throat.dip, 3)} mm — depth is a lower bound at ${PREVIEW_STATIONS} stations`
+                          ? ` · the gap STOPS OPENING at station ${clearance.throat.dipAt}, closing ${fmt(clearance.throat.dip, 3)} mm — measured at the export's ${stations} stations`
                           : ` · measured past the throat knife edge, ${clearance.throat.knifeMax} of ${clearance.throat.stations} stations in`)
                       : "")}
               color={!clearance ? C.inkMuted : clearance.overlap > 0 || clearance.minMid < 1e-3 ? C.series5 : C.series4} />
