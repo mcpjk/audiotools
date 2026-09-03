@@ -715,6 +715,83 @@ exists.
   rings the model can EVALUATE, never through rings a search returns.** If a
   shape genuinely needs a search — a union outline, a morphological closing —
   that is a kernel's job, not this tool's.
+- **WHAT ACTUALLY BREAKS THE UNION OF THE BLANKS IS DUPLICATED SURFACE, NOT
+  THE TANGENCY CROSSINGS — and the owner could not have seen it.** The
+  tangency finding below is real but is one mechanism among several, and on
+  the throat region it is not the dominant one. Audited on the shipped
+  export at the defaults, wall 3, with the default bow:
+    - **NEAR-COPY LATERAL FACES.** Two adjacent cells share a grid line, so
+      on the sides they do NOT share, both blanks offset the SAME curve by
+      the SAME distance — the identical surface computed twice, over a band
+      exactly 2·wall wide. In swept mode each cell fits its own best-fit
+      plane, so the two copies land **0.4 um to 50 um apart**: measured
+      5-6.5 mm of arc per pair inside 10 um, 148-172 mm total inside 50 um
+      over 27 pairs, closing to 0.43 um at worst. A kernel's linear
+      tolerance is around 1 um. That is not a shape it can resolve, and it
+      is invisible at any zoom.
+    - **COPLANAR OVERLAPPING END CAPS, 27 of 27 pairs at EACH end.** Every
+      throat ring is planar in z = 0 and every mouth ring lies on the one
+      aperture — both properties the owner asked for, both boolean-hostile.
+    - Up to **5 blanks covering one point** near the throat (the H-grid's
+      4-way nodes plus the wall), and 7.28 mm mitre spikes at the sharpest
+      corners.
+    - RULED OUT by the same audit: self-intersecting rings (0), near-
+      degenerate patches (smallest station step 3.47 mm), and blank fold —
+      margin +4.6 mm, with R_curv down to 11 mm near the throat, so **the
+      blank folds somewhere above wall ~7.6 mm on this geometry.**
+  This explains the owner's three observations better than tangency does.
+  WHY THE THROAT: that is where the cells tile and share grid lines. WHY
+  SOMETIMES: whether a stretch falls inside or outside tolerance shifts with
+  every parameter. WHY SUBTRACTION NEVER FAILS: a subtraction never has to
+  decide whether two faces are the same face.
+  **CUT AFTER THE UNION, NEVER BEFORE.** Cutting all N blanks at a common
+  plane and then unioning the pieces adds N coplanar OVERLAPPING cut faces
+  on top of everything above — the owner made the region harder by isolating
+  it.
+- **NEVER ASK CAD TO OFFSET ONE OF OUR FACES; ASK THE TOOL TO BUILD THE
+  EXTENSION.** Offsetting a blank's throat face by +1 mm succeeded in the
+  owner's CAD and +2 mm failed. A face offset EXTRAPOLATES the four wall
+  surfaces past their parameter range and re-intersects them, and the corner
+  identity — adjacent walls sharing control-point columns — holds only
+  INSIDE the domain, so the corner has to be healed and the discrepancy
+  grows with distance. `extendSections` prepends a REAL ring instead, so the
+  extension is part of the loft. That is why the cutters have never failed.
+- **THREE SWITCHES MAKE THE UNION TRACTABLE, and each is justified by the
+  number it moves.** All three leave the passages untouched — the cutters
+  are unchanged — and all three are measured on every export.
+  (1) `jitter` (default 0.5 mm): cells of opposite grid parity get different
+  walls, so no face is ever a near-copy of another. Orthogonal neighbours
+  always differ in parity, so the guarantee is structural. Measured
+  near-copy arc inside 50 um: **148 mm at jitter 0, 1.8 mm at 0.2, 0 at
+  0.4 and above**. WHICH value is clean is geometry-dependent (0.3 measured
+  85 mm on one map where 0.1 measured 17), so `shellCoincidence` MEASURES it
+  on every export and the note says to raise the jitter if anything is left.
+  The jitter only ever ADDS, so `wall` stays the minimum.
+  (2) `extend` (default on): the blanks run past both end faces, staggered
+  per cell on a five-phase index that is guaranteed to differ between
+  orthogonal neighbours, and two TRIM solids come with them — a slab below
+  z = 0, and a slab beyond the aperture whose cutting face is the aperture
+  ITSELF through `apertureCapGrid`, not a chord across it. Coplanar
+  overlapping throat caps go **27/27 to 0/27**. The recipe becomes: union
+  the N blanks, subtract both trims, subtract the N cutters — so the union
+  never touches an end plane and the two faces that must be exact are made
+  by subtraction. `snapMouth` is off when extending: the trim makes that
+  face, so the one-ring snap discontinuity is not needed.
+  (3) `stations` (default 32): the shell gets its own count, subsampled from
+  the map's. Every wall face carries stations + 3 control points in v, and
+  SSI of two nearly parallel high-knot NURBS is where a kernel spends its
+  conditioning budget. Halving is nearly free — measured **0.105 mm** of
+  departure from the full-station loft, 0.414 mm at a quarter, 1.707 mm at
+  an eighth, monotone. The count is snapped to a DIVISOR of the map's,
+  because the loft interpolates with a UNIFORM parameterisation: at 32 of 48
+  (gaps alternating 1 and 2) it ran 4.6 mm from the very rings it was built
+  through.
+  A `two-cell test` export emits ONE orthogonally adjacent pair under the
+  same settings — the smallest thing that can fail, two solids instead of
+  38, and the repro to reach for before exporting a full kit.
+  **What none of this removes is the tangency crossings**: every pair still
+  passes from overlap to clearance twice, and that is inherent to per-cell
+  blanks at any wall under half the widest duct gap.
 - **THE HORN SHELL IS EXPORTED AS ONE BLANK AND ONE CUTTER PER CELL, and the
   CAD work is N independent SUBTRACTIONS with no unions at all.** A blank is
   that cell's duct rings offset outward by `wall` on all four sides through
