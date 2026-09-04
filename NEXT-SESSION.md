@@ -114,70 +114,105 @@ end-pinning guarantees have to be re-established per station.
 
 In priority order. Each rests on a measurement, named.
 
-### 0. The new bow default carries a 1.77 mm fold margin — read it before shipping a print
+### DEPTH 300 IS SETTLED — do not re-propose the move
 
-Shipped 2026-09-04 at the owner's numbers, [0.02, 0.22] grade 0.15. It is a
-47% improvement on the [0, 0.20] grade 0 it replaced (worst gap −7.44 →
-−3.97 mm) and the grade is doing most of that, exactly as the graded-region
-finding predicts. The price is the fold margin: 2.99 → 1.77 mm, because a
-narrowed window is a steeper turn. Not folded, but thinner than any shipped
-default has been.
+Asked and answered 2026-09-04. **300 stays, and it is deliberate: it is the
+reference the "solve depth for ΔL" button is read against.** The owner always
+initiates that solve manually, so a default already sitting on the optimum
+would leave the button with nothing to say. The measurements below are what it
+reports, not a case for changing the default.
 
-**THE DEPTH FIXES BOTH AT ONCE, AND THIS IS THE STRONGEST CASE THE FILE HAS
-CARRIED FOR MOVING IT.** Same bow, same grade, sweeping only the axial depth,
-64 stations, diagonals included:
+Five separate routes have now pointed at 319.5 mm and been declined for this
+reason. **The sixth should not be written.** What the numbers are for is
+reading the button's output: same bow, same grade, sweeping only depth —
 
-| depth | ΔL | bow amp | foldMin | worst gap | contraction |
-|---|---|---|---|---|---|
-| 300 (shipped) | 0.00 | 21.3 | **1.77** | **−3.967** | 0.00% |
-| 310 | 0.00 | 21.2 | 3.07 | −2.665 | 0.00% |
-| 319.5 (dL optimum) | 0.00 | 21.0 | **4.51** | **−0.169** | 0.00% |
-| 330 | 0.00 | 22.4 | 5.10 | −0.004 | 0.00% |
-| 357 | 0.00 | 26.1 | 4.94 | **+1.517** | 0.00% |
+| depth | ΔL | bow amp | foldMin | worst gap |
+|---|---|---|---|---|
+| 300 (shipped) | 0.00 | 21.3 | 1.77 | −3.967 |
+| 319.5 (ΔL optimum) | 0.00 | 21.0 | 4.51 | −0.169 |
+| 357 | 0.00 | 26.1 | 4.94 | +1.517 |
 
-At the dL optimum the fold margin is back to 4.51 mm and the interpenetration
-collapses from 3.97 mm to 0.17 — with the bow the owner wants, in the window
-the owner wants, at zero cost in ΔL. By depth 330 the gap is −0.004 mm, and by
-357 it CLEARS the new 1.5 mm floor outright. Moving the bow region instead is
-not the cheaper fix here: [0.10, 0.30] measures −2.40 mm but takes the fold
-margin to 0.30 mm, worse than doing nothing.
-
-Same conclusion the file has reached three times by different routes: **solve
-the depth first and the bow becomes a small correction.** The only argument
-for 300 was that it is a round number. Owner's call — task 3 below is the same
-decision, and this is a fourth measurement pointing at it.
+The live consequence to keep in view: **at the shipped default the fold margin
+is 1.77 mm**, the thinnest any shipped default has carried. Not folded, and the
+owner's call — but read `bendFoldMin` in the verdict strip before committing a
+print.
 
 ### 1. Raise the PREVIEW station count
 
-**The `samples` half of this landed 2026-09-03** (64 -> 512, and `stations`
-can no longer exceed `samples`, so the aliasing trap is unreachable rather
-than documented). What is left is the preview count itself — the sliders still
-run on 24 stations while the exports and the clearance solve build at 64.
+**The `samples` half landed 2026-09-03** (64 -> 512, and `stations` can no
+longer exceed `samples`). What is left is the preview count itself: the
+sliders and the 3-D view run on 24 stations while the exports and the
+clearance solve build at 64.
 
-The measurement behind it: the near-throat gap has a SHARP minimum near
-u = 0.021 and a station grid finds it only if a station lands there. 48, 96
-and 192 stations all contain u = 1/48 and all read exactly -0.2422 mm; 64
-straddles it; 24 misses it. The clearance readout and the separation solve
-already build their own 64-station map, so what remains is the geometry the
-sliders and the 3-D preview show.
+**First, what does NOT depend on it**, measured at the defaults with the
+shipped bow — ΔL, Lmin, Lmax, mouth area, f_c and turn are IDENTICAL at 24,
+32, 48 and 64, because they come from `samples` rather than from the ring
+count. wallSpread moves 0.32%. So every number you drag a slider against is
+already exact, which is worth knowing before budgeting a session here.
 
-### 2. Interpolate the station position and frame between samples
+**Two things do move, and only one of them is resolution.** The discriminator
+is whether the metric converges with the count or keys on DIVISIBILITY:
 
-Pairs naturally with (1) — same subsystem. See the map defect below, which
-the `samples` raise has already taken from a 2.4x irregularity to 1.15x.
+| stations | 24 | 32 | 48 | 64 | 128 | 256 |
+|---|---|---|---|---|---|---|
+| 512 ÷ stations | 21.33 | **16** | 10.67 | **8** | **4** | **2** |
+| sectionObliqMax (deg) | 40.91 | 34.52 | 26.14 | 20.67 | 20.98 | 21.36 |
+| bendFoldMin (mm) | 1.6122 | 1.7732 | 1.6122 | 1.7732 | 1.7732 | 1.7096 |
 
-### 3. Decide whether depth 300 stays the default
+- **Obliquity is genuine under-resolution**: monotone, converged by 64. So the
+  export is right and **the 24-station preview reads the section tilt nearly
+  TWICE as bad as it is** — pessimistic, where the clearance is optimistic.
+- **The fold margin is the SNAPPING** (item 3): it does not converge, it flips
+  between two values on whether the count divides 512. 24 and 48 both read
+  1.6122; 32, 64 and 128 all read 1.7732. A 9% error tracking the
+  parameterisation rather than the horn.
 
-See the note above. Owner's call, numbers ready.
+And the live cost of the preview count: on the current default bow the
+clearance would read **−2.11 mm at 24 stations against −3.97 at 64**. The
+readout already dodges this by building its own 64-station map, so what is
+still exposed is the 3-D preview — the picture the horn is judged by is a
+coarser horn than the one exported.
 
-### 4. The clearance metric reads GROSS outlines; the export carries INSET ones
+**Until this lands: use station counts that DIVIDE 512** — 32, 64, 128. The
+64-station export is exact; the 24-station preview is not.
 
-Offered and declined once, and still open. On the default horn the gross
-outlines interpenetrate 0.242 mm while the EXPORTED ones do not interpenetrate
-at all — they leave a 0.123 mm wall sliver, and the tool reports +0.568 mm.
-The two errors partly cancel, which is why it went unnoticed. So "min gap" is
-the gap between the AIR columns, not the printed wall, which is 0.4(1-s) mm
-thicker.
+### 2. Chord-length parameterisation in `ductBrep` — the root cause of three symptoms
+
+**This is the item to reach for next.** `ductBrep` interpolates its loft with a
+UNIFORM parameterisation: it assumes every station ring is the same distance
+from the next and never measures. Where the rings really are evenly spaced that
+is right. Where they are not, the spline is told a short gap is a full one, so
+it delivers a full pitch of curvature into a fraction of the distance —
+overshooting past the end ring and coming back. The wall then pokes through the
+cap meant to close it, and **no self-check in the file can see it**: residual,
+edge pairing and referential integrity all pass, because none of them tests a
+surface against itself.
+
+Three recorded symptoms, one bug:
+
+1. **The cutter extension** — a 1 mm prepend against 4.87 mm station steps
+   folded the wall 0.15 mm at the throat and 0.16 at the mouth (2026-09-04,
+   found in CAD). Worked around by sizing the mouth extension from the step.
+2. **A non-dividing shell station count** — 32 rings from a 48-ring map gives
+   gaps alternating 1 and 2, and the loft ran **4.6 mm** off its own rings.
+   Worked around by snapping the count to a divisor.
+3. **The station snapping** (the map defect below) — rings land on 21/22-sample
+   gaps and are told they are equal.
+
+The fix is to measure the real distance between consecutive rings and hand it
+to the spline. It **subsumes item 3 and the divisor rule**, and it frees the
+cutter's mouth extension to go back to the ~1 mm the cap-fill sag actually
+needs.
+
+Why it has not been done yet: it changes the interpolation on every surface in
+every STEP export by a small amount, so **every recorded STEP measurement in
+CLAUDE.md re-baselines**. Its own session, with its own verification pass.
+
+### 3. Interpolate the station position and frame between samples
+
+Pairs with (2) — same root cause, and (2) is the more general fix. The
+`samples` raise already took the irregularity from 2.4x to 1.15x, so this is
+no longer urgent on its own. See the map defect below.
 
 ## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
 

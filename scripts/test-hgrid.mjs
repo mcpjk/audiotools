@@ -2595,6 +2595,119 @@ head("Throat knife edge (the defect metric's other boundary)");
     `throat run to ${both.throat.knifeMax}, joint from ${both.joint.knifeMin}, engagement ${both.joint.engageMax.toFixed(2)} mm unchanged`);
 }
 
+// ── WHICH OUTLINES THE GAP IS MEASURED BETWEEN ─────────────────────────────
+// Every cell has two outlines at every station. GROSS is its full share of
+// the cross-section, and neighbours' gross outlines TOUCH at the throat
+// because the partition tiles the driver exit. INSET is gross pulled in by
+// t/2 on each shared side, tapering to nothing at the mouth — and that is
+// THE AIR, the curve `ductSections` builds and the STL and STEP write. So
+// the material between two ducts is the INSET gap, and that is the number a
+// designer means by "will a 3 mm wall fit".
+// The metric's own default stays GROSS, because every figure recorded in
+// CLAUDE.md was measured on it; the UI asks for inset.
+head("Gross vs inset outlines, and where a wall fits");
+{
+  const t = 0.4;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c });
+  const th = Lay.throat;
+  const dflt = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55,
+    divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+    fTarget: 20000, t, profileArea: "open",
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    sectionMode: "swept", stations: 48, depth: 300, profileT: 0.7,
+    keepGeometry: true, computeClearance: false, ...o,
+  });
+  const mD = M.mapThroatToMouth(th, dflt());
+  const PS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+  const gross = M.ductClearance(mD.rows, { pairSteps: PS });
+  const inset = M.ductClearance(mD.rows, { pairSteps: PS, outline: "inset", t });
+
+  // (a) NOT A MODE AGAINST ITSELF. With t = 0 there is no divider to inset,
+  //     so the two conventions must coincide to the last bit — the same rule
+  //     this file already applies to the open-area mode, which passed 259
+  //     checks against a feature that was inert.
+  const m0 = M.mapThroatToMouth(th, { ...dflt(), t: 0 });
+  const g0 = M.ductClearance(m0.rows, { pairSteps: PS });
+  const i0 = M.ductClearance(m0.rows, { pairSteps: PS, outline: "inset", t: 0 });
+  checkTrue("with no divider the two conventions are identical",
+    ["minMid", "minMidAt", "min", "overlap", "max"].every((k) => Object.is(g0[k], i0[k]))
+    && g0.perStation.every((x, i) => Object.is(x, i0.perStation[i])),
+    "every statistic and the whole per-station profile");
+
+  // (b) AND WITH A DIVIDER THEY GENUINELY DIFFER, in the direction the
+  //     construction requires: the inset outline is strictly inside the
+  //     gross one, so the gap between two of them is strictly LARGER.
+  checkTrue("with a divider the inset gap is larger at every interior station",
+    inset.perStation.slice(1, inset.perStation.length - 1)
+      .every((x, i) => x > gross.perStation[i + 1] - 1e-12),
+    `worst gap ${gross.minMid.toFixed(3)} gross vs ${inset.minMid.toFixed(3)} mm inset`);
+
+  // (c) THE METRIC READS THE EXPORTED CURVE, and this is checked against
+  //     `ductSections` INDEPENDENTLY rather than against the metric's own
+  //     bookkeeping: the rings are rebuilt from the cell records and the gap
+  //     measured with a fresh point-to-segment walk.
+  const pSeg = (P, U, V) => {
+    const ux = V[0] - U[0], uy = V[1] - U[1], uz = V[2] - U[2];
+    const L2 = ux * ux + uy * uy + uz * uz || 1e-18;
+    let k = ((P[0] - U[0]) * ux + (P[1] - U[1]) * uy + (P[2] - U[2]) * uz) / L2;
+    k = k < 0 ? 0 : k > 1 ? 1 : k;
+    return Math.hypot(P[0] - U[0] - ux * k, P[1] - U[1] - uy * k, P[2] - U[2] - uz * k);
+  };
+  const secOf = new Map();
+  for (const c of th.cells) {
+    const r = mD.rows.find((x) => x.id === c.id);
+    secOf.set(`${r.i},${r.j}`, M.ductSections(c, r, { t }));
+  }
+  const byIdx = new Map(mD.rows.map((r) => [`${r.i},${r.j}`, r]));
+  const qTest = 8;   // clear of both tiling ends, so the sign is unambiguous
+  let indep = Infinity;
+  for (const A of mD.rows) for (const [da, db] of PS) {
+    const B = byIdx.get(`${A.i + da},${A.j + db}`);
+    if (!B) continue;
+    const pa = secOf.get(`${A.i},${A.j}`)[qTest].pts, pb = secOf.get(`${B.i},${B.j}`)[qTest].pts;
+    for (const P of pa) for (let e = 0; e < pb.length; e++)
+      indep = Math.min(indep, pSeg(P, pb[e], pb[(e + 1) % pb.length]));
+  }
+  // the metric strides every 2nd point, so it can only read the same or more
+  checkTrue("the inset gap is the gap between the EXPORTED duct outlines",
+    Math.abs(inset.perStation[qTest] - indep) < 0.02,
+    `${inset.perStation[qTest].toFixed(4)} against ${indep.toFixed(4)} mm rebuilt from ductSections`);
+
+  // (d) THE TWO ENDS ARE PINNED BY TILING, and the throat one is exactly the
+  //     divider. This is the whole reason a single minimum cannot answer
+  //     "will a 3 mm wall fit": the answer at station 0 is `t`, always.
+  check("the inset wall at the throat IS the divider t", inset.perStation[0], t, 2e-3, "mm");
+  checkTrue("and at the mouth the cells tile again, so it is zero",
+    Math.abs(inset.perStation[inset.perStation.length - 1]) < 2e-3,
+    `${inset.perStation[inset.perStation.length - 1].toExponential(1)} mm`);
+
+  // (e) `reach` IS ADDITIVE — asking for it may not move anything else.
+  const noFloor = M.ductClearance(mD.rows, { pairSteps: PS, outline: "inset", t });
+  const withFloor = M.ductClearance(mD.rows, { pairSteps: PS, outline: "inset", t, floor: 3 });
+  checkTrue("asking where a wall fits changes no other statistic",
+    noFloor.reach === null && withFloor.reach !== null
+    && ["minMid", "minMidAt", "min", "overlap", "max", "maxAt"]
+      .every((k) => Object.is(noFloor[k], withFloor[k])),
+    "");
+
+  // (f) AND A FLOOR ABOVE THE DIVIDER CAN NEVER INCLUDE THE THROAT, which is
+  //     the structural fact the run exists to report rather than hide.
+  const r3 = withFloor.reach;
+  checkTrue("a 3 mm wall cannot reach station 0, because the cells tile there",
+    r3.from > 0 && r3.atThroat < 3,
+    `run starts at u ${r3.from.toFixed(3)}, throat holds ${r3.atThroat.toFixed(2)} mm`);
+  checkTrue("nor the mouth, for the same reason", r3.to < 1 && r3.atMouth < 3,
+    `run ends at u ${r3.to.toFixed(3)}, mouth holds ${r3.atMouth.toFixed(2)} mm`);
+  checkTrue("and the run it reports really does hold the wall throughout",
+    r3.worstInside >= 3 - 1e-9,
+    `${r3.lenMm.toFixed(0)} mm of path, worst ${r3.worstInside.toFixed(3)} mm inside`);
+  // a floor no part of the horn reaches must report NOTHING, not a vacuous span
+  const rBig = M.ductClearance(mD.rows, { pairSteps: PS, outline: "inset", t, floor: 500 }).reach;
+  checkTrue("a wall the horn never carries reports no run at all",
+    rBig.from === null && rBig.runs === 0 && rBig.fracPath === 0, "");
+}
+
 head("Duct separation (field and solver)");
 {
   const t = 0.4, ST = 24;

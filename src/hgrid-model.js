@@ -1770,6 +1770,10 @@ export function mapThroatToMouth(throat, opts) {
 
     rows.push({
       id: cellRec.id, label: cellRec.label, i, j,
+      // which of the four sides are on the disc RIM (no neighbour, so no
+      // divider) — carried so `ductClearance` can rebuild the INSET outline,
+      // the air the export actually carries, without needing the cell record
+      rimSide: cellRec.rimSide || [false, false, false, false],
       obliqMaxDeg: obliqMax, obliqMaxAt: obliqAt,
       fluxMin, fluxContract, fluxContractAt: contractAt,
       // the passage measured against the cell's OWN throat: below 1 the horn
@@ -2060,8 +2064,28 @@ export function mapThroatToMouth(throat, opts) {
 //     `throat.dip` reports the backward step that ENDED the longest run and
 //     where. 0 (the default) turns the whole rule off, and every statistic
 //     reduces exactly to the form that has no throat boundary at all.
+//   outline — WHICH PAIR OF CURVES THE GAP IS MEASURED BETWEEN, and this is
+//     the difference between "how close are the cells" and "how thick is the
+//     wall". Every cell has two outlines at every station: the GROSS share of
+//     the cross-section, boundary to boundary, which neighbours share exactly
+//     (they tile); and the INSET outline, gross pulled in by t/2 on each
+//     shared side and tapering to nothing at the mouth. The inset one is THE
+//     AIR — it is what `ductSections` builds and what the STL and the STEP
+//     write — so the material between two ducts IS the inset gap.
+//     "gross" is the default because every figure recorded in CLAUDE.md was
+//     measured on it; the UI asks for "inset", because the question a
+//     designer has is whether a printable wall fits, and that is a question
+//     about the air columns. The two differ by t(1-s): 0.4 mm at the throat
+//     at the shipped divider, falling to 0 at the mouth, so gross is
+//     PESSIMISTIC and most so exactly where the ducts are closest.
+//     Needs `t`; with t = 0 the two coincide exactly.
+//   floor — the wall you actually want, in mm. Purely a REPORTING input: it
+//     does not change a single gap. What it buys is `reach` — the stretch of
+//     path over which every neighbouring pair clears it. See the note on
+//     `reach` below for why one minimum cannot answer that question.
 export function ductClearance(rows, {
   jointAware = false, thinBand = 0, throatFloor = 0,
+  outline = "gross", t = 0, floor = 0,
   // WHICH PAIRS COUNT AS NEIGHBOURS. The default is the orthogonal grid
   // adjacency this metric has always used, and every recorded number is on
   // it. `[[1,0],[0,1],[1,1],[1,-1]]` adds the diagonals, which the shell
@@ -2150,12 +2174,26 @@ export function ductClearance(rows, {
   };
   // first pass: every pair's signed gap at every station, kept, because the
   // joint classification needs the runs and the solver needs the per-pair map
+  // The ring this measurement is taken on — gross as built, or the inset
+  // outline the exports carry. Built exactly as `ductSections` builds it, so
+  // "inset" here and the exported solid are the same curve by construction
+  // rather than by agreement.
+  const ringAt = (row, q) => {
+    const st = row.sched[q];
+    if (outline !== "inset" || !(t > 0)) return st.pts;
+    const taper = 1 - st.s;
+    if (taper <= 1e-12) return st.pts;
+    const rim = row.rimSide || [false, false, false, false];
+    const d = rim.map((isRim) => (isRim ? 0 : (t / 2) * taper));
+    return d.some((v) => v > 0) ? insetSection3(st.pts, d) : st.pts;
+  };
   const gaps = pairs.map(() => new Array(stations + 1).fill(Infinity));
   for (let q = 0; q <= stations; q++) {
-    const fr = new Map(rows.map((r) => [r.id, frame(r.sched[q].pts)]));
+    const ring = new Map(rows.map((r) => [r.id, ringAt(r, q)]));
+    const fr = new Map(rows.map((r) => [r.id, frame(ring.get(r.id))]));
     for (let pi = 0; pi < pairs.length; pi++) {
       const [A, B] = pairs[pi];
-      const pa = A.sched[q].pts, pb = B.sched[q].pts;
+      const pa = ring.get(A.id), pb = ring.get(B.id);
       // both directions: either duct can be the one poking into the other
       gaps[pi][q] = Math.min(signedGap(pa, pb, fr.get(B.id)), signedGap(pb, pa, fr.get(A.id)));
     }
@@ -2312,7 +2350,54 @@ export function ductClearance(rows, {
   // number, or 0 when the ducts are merely touching or apart. It is the
   // number that replaces the k <= 1 shrink argument once sections stop
   // coming from one shared flow, and the two must agree while both hold.
+
+  // ── WHERE THE WALL YOU ASKED FOR ACTUALLY FITS ────────────────────────────
+  // ONE MINIMUM CANNOT ANSWER THIS, and that is a property of the geometry
+  // rather than of the metric. The cells TILE at the throat and TILE again at
+  // the mouth, so the wall between two air columns is pinned at both ends by
+  // construction: exactly `t` at station 0 (the divider the layout was solved
+  // with) and 0 at the aperture. Any floor above `t` is therefore unreachable
+  // at both ends of every horn this tool can build, and a single worst-case
+  // number over the whole path can only ever report that tiling — it says
+  // nothing about the stretch in between, which is the part a designer can
+  // actually move.
+  // So this reports the RUN: the longest contiguous stretch over which EVERY
+  // neighbouring pair clears the floor. Measured on the RAW gap, not the
+  // defect-scoped one, because "is there 3 mm of material here" is a
+  // structural question and the throat and joint classifications are exactly
+  // the two regions where the honest answer is "no, by construction".
+  let reach = null;
+  if (floor > 0) {
+    const sAt = (q) => rows[0].sched[q].sLen;
+    let best = null, runs = 0, cur = null;
+    for (let q = 0; q <= stations; q++) {
+      if (perStation[q] >= floor) {
+        if (!cur) { cur = { a: q, b: q }; runs++; } else cur.b = q;
+        if (!best || cur.b - cur.a > best.b - best.a) best = { a: cur.a, b: cur.b };
+      } else cur = null;
+    }
+    // the ends are pinned by tiling, so report what they are rather than
+    // letting the run's start look like a choice
+    let inside = Infinity;
+    if (best) for (let q = best.a; q <= best.b; q++) inside = Math.min(inside, perStation[q]);
+    const L = sAt(stations) - sAt(0);
+    reach = {
+      floor, runs,
+      from: best ? best.a / stations : null,
+      to: best ? best.b / stations : null,
+      fromMm: best ? sAt(best.a) - sAt(0) : null,
+      toMm: best ? sAt(best.b) - sAt(0) : null,
+      lenMm: best ? sAt(best.b) - sAt(best.a) : 0,
+      fracPath: best ? (sAt(best.b) - sAt(best.a)) / (L || 1) : 0,
+      worstInside: best ? inside : null,
+      // what the two tiling ends actually hold, so the run's limits read as
+      // construction rather than as a solver result
+      atThroat: perStation[0], atMouth: perStation[stations],
+      stations,
+    };
+  }
   return {
+    reach,
     perStation, perStationDefect, min: worst, minAt: worstAt,
     minMid: worstMid, minMidAt: worstMidAt,
     overlap: worstMid < 0 ? -worstMid : 0,
@@ -2359,6 +2444,10 @@ export function ductClearance(rows, {
 }
 
 export function solveSeparation(throat, opts, cfg = {}) {
+  // "inset" measures the AIR the export carries; "gross" is the pre-2026-09-04
+  // convention every recorded figure in CLAUDE.md was taken on. The default
+  // stays gross so those figures still reproduce; the UI asks for inset.
+  const { outline = "gross" } = cfg;
   const {
     floor = 0.5, mode = "uniform", maxIter = 16, ampCap = 40, lobes = 1, tol = 0.05,
     // under-relaxation: a full-deficit push overshoots, because every push
@@ -2440,7 +2529,14 @@ export function solveSeparation(throat, opts, cfg = {}) {
   // what they leave rather than what they were looking at.
   const STEPS = diagonals
     ? [[1, 0], [0, 1], [1, 1], [1, -1]] : [[1, 0], [0, 1]];
-  const measure = (m) => ductClearance(m.rows, { jointAware, throatFloor: floor, pairSteps: STEPS });
+  // THE SOLVER SCORES THE SAME CURVES THE READOUT SHOWS, for the same reason
+  // it scores the same pair set: stage 8 and the verdict strip must not print
+  // two different numbers for one horn. The exports carry the INSET outlines,
+  // so that is what a separation solve is solving for.
+  const measure = (m) => ductClearance(m.rows, {
+    jointAware, throatFloor: floor, pairSteps: STEPS,
+    outline, t: opts.t || 0, floor,
+  });
   const clBase = measure(base);
   const gapOf = (cl) => cl.minMid;   // defect-scoped signed worst gap
   const gap0 = gapOf(clBase);

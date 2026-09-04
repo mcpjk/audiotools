@@ -797,14 +797,24 @@ export default function GinkgoHorn() {
         // walks: the per-duct nudge leaves -5.52 mm on the diagonals while
         // reading -3.28 mm on the orthogonal pairs. The solver is scored on
         // the same set, so this readout and the stage-8 one cannot disagree.
+        // AND IT MEASURES THE INSET OUTLINES — the AIR the export carries,
+        // not the cell's gross share of the cross-section. The gap between
+        // two air columns IS the wall between them, which is the question a
+        // designer has; the gross outlines are the same curves less the
+        // divider, so they read t(1-s) pessimistic — 0.4 mm at the throat
+        // at the shipped divider, and most pessimistic exactly where the
+        // ducts run closest. Measured at the defaults: gross reports
+        // -0.053 mm of interpenetration where the exported air measures
+        // +0.321 mm of real wall.
         value: G.ductClearance(rows, {
           jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
           pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
+          outline: "inset", t: thickness, floor: sepFloor,
         }),
       });
     }, 30);
     return () => clearTimeout(id);
-  }, [map, sepFloor, stations, throat, mapOpts, depth, profileT]);
+  }, [map, sepFloor, stations, throat, mapOpts, depth, profileT, thickness]);
   const clearance = clr && clr.of === map && clr.at === stations ? clr.value : null;
 
   // What path length would deliver the cutoff you asked for? m is solved from
@@ -1858,8 +1868,8 @@ export default function GinkgoHorn() {
 
       <Stage n={8} title="Duct separation" why="displace centrelines until the ducts clear — solved against the measured gap, and solved LAST">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 10, color: C.inkMuted }}>min gap</span>
-          <input type="number" value={sepFloor} min={0.1} max={5} step={0.1}
+          <span style={{ fontSize: 10, color: C.inkMuted }}>wall between ducts</span>
+          <input type="number" value={sepFloor} min={0.1} max={10} step={0.1}
             onChange={(e) => setSepFloor(Math.max(0.1, parseFloat(e.target.value) || 0.5))}
             style={{ ...sInput, width: 58, padding: "3px 5px", fontSize: 11 }} />
           <span style={{ fontSize: 10, color: C.inkMuted }}>mm</span>
@@ -1867,7 +1877,7 @@ export default function GinkgoHorn() {
             setSepBusy(true);
             setTimeout(() => {
               const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "uniform" });
+                { floor: sepFloor, mode: "uniform", outline: "inset" });
               setSepSolve(r);
               setSepBusy(false);
             }, 30);
@@ -1877,7 +1887,7 @@ export default function GinkgoHorn() {
             setSepBusy(true);
             setTimeout(() => {
               const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "nudge", maxIter: 20 });
+                { floor: sepFloor, mode: "nudge", maxIter: 20, outline: "inset" });
               setSepSolve(r);
               setSepBusy(false);
             }, 30);
@@ -1887,7 +1897,7 @@ export default function GinkgoHorn() {
             setSepBusy(true);
             setTimeout(() => {
               const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "repel", maxIter: 20 });
+                { floor: sepFloor, mode: "repel", maxIter: 20, outline: "inset" });
               setSepSolve(r);
               setSepBusy(false);
             }, 30);
@@ -1897,6 +1907,34 @@ export default function GinkgoHorn() {
             <button onClick={() => setSepSolve(null)} style={btn(false, C.series5)}>clear</button>
           )}
         </div>
+        {/* WHERE THE WALL ACTUALLY FITS. One minimum cannot answer this: the
+            cells TILE at the throat and TILE again at the mouth, so the wall
+            is pinned at both ends by construction — exactly the divider `t`
+            at station 0 and 0 at the aperture. Any wall above `t` is
+            unreachable at both ends of every horn this tool can build, and a
+            single worst-case number over the whole path only ever reports
+            that tiling. The run is the part a designer can move. */}
+        {clearance && clearance.reach && (
+          <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <span>
+              <span style={{ color: C.inkMuted }}>{fmt(sepFloor, 1)} mm wall fits over </span>
+              <span style={{ color: clearance.reach.fracPath > 0.5 ? C.series4 : clearance.reach.fracPath > 0 ? C.series1 : C.series5 }}>
+                {clearance.reach.from == null
+                  ? "nowhere on the path"
+                  : `${fmt(clearance.reach.fromMm, 0)}–${fmt(clearance.reach.toMm, 0)} mm (${fmt(clearance.reach.fracPath * 100, 0)}% of the path)`}
+              </span>
+              {clearance.reach.runs > 1 && (
+                <span style={{ color: C.series5 }}> · {clearance.reach.runs} separate runs — this is the longest</span>
+              )}
+            </span>
+            <span>
+              <span style={{ color: C.inkMuted }}>pinned by tiling: throat </span>
+              <span style={{ color: C.ink }}>{fmt(clearance.reach.atThroat, 2)} mm</span>
+              <span style={{ color: C.inkMuted }}> (= divider t) · mouth </span>
+              <span style={{ color: C.ink }}>{fmt(clearance.reach.atMouth, 2)} mm</span>
+            </span>
+          </div>
+        )}
         {sepSolve && (
           <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
             {sepSolve.already
@@ -1939,10 +1977,20 @@ export default function GinkgoHorn() {
           the next change silently invalidates it. The solve is discarded automatically whenever anything upstream moves, including the
           bulge, so a stale field can never survive on screen.
           <br />
-          The centrelines are displaced with the same windowed bow the lengthening uses, but with the amplitudes
+          <strong style={{ color: C.inkDim }}>The number above is the wall between two air columns</strong>, measured on the INSET
+          outlines — the ducts the STL and the STEP actually carry — not on each cell's gross share of the cross-section. The two differ
+          by the divider, t(1−s): {fmt(thickness, 1)} mm at the throat falling to nothing at the mouth, and gross is pessimistic by exactly
+          that, most so where the ducts run closest. At the tool's defaults gross reports 0.05 mm of interpenetration where the exported
+          air has 0.32 mm of real wall.
+          {" "}<strong style={{ color: C.inkDim }}>It cannot be met at either end, and that is construction rather than a defect.</strong>
+          {" "}The cells tile the driver exit at the throat, so the wall there is exactly the divider t; they tile the aperture at the
+          mouth, so it goes to zero. Asking for 3 mm at the <em>throat</em> would mean t = 3, which leaves 29% of the driver exit open
+          against 90% at {fmt(thickness, 1)} mm — not a trade worth making. So read the <em>run</em>, not the minimum: how much of the
+          path carries the wall you asked for, and the two ends reported beside it as what they are.
+          {" "}The centrelines are displaced with the same windowed bow the lengthening uses, but with the amplitudes
           <strong style={{ color: C.inkDim }}> solved against the measured clearance</strong>, and the window placed where the trouble is.
-          Ducts touching or merging is a joint; a gap between 0 and the minimum above is a <strong style={{ color: C.inkDim }}>sliver of
-          wall too thin to print</strong>, and this is the lever that clears both it and real interpenetration.
+          Ducts touching or merging is a joint; a gap between 0 and the wall above is a <strong style={{ color: C.inkDim }}>sliver too thin
+          to print</strong>, and this is the lever that clears both it and real interpenetration.
           {" "}<em>Quick spread</em> pushes every duct outward by one shared amount — cheap, one knob, and it honestly reports when that
           single knob cannot fix the geometry. <em>Per-duct nudge</em> resolves each over-packed row and column as a contact chain and
           moves every duct individually — a few seconds, and the field keeps both mirrors by construction. <em>Mutual repulsion</em> puts
