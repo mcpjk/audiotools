@@ -311,7 +311,17 @@ CUTTER PER CELL (`buildShellSTEP`; see the shell findings below, and read the
 evaluated-vs-searched rings finding before proposing any other shell
 construction). With the throat plain and the mouth extended, which is what
 ships, the CAD work is: union the N blanks, subtract the mouth trim, subtract
-the N cutters. The canvas shows the AIR ONLY: a "horn" view was built twice
+the N cutters. **THE KIT SHIPS AS A STEP ASSEMBLY RATHER THAN A FLAT BODY
+LIST** (2026-09-04): the blanks, the cutters and any trims sit in separate
+folders of a product tree, each body named for its cell, so the two kinds of
+solid — the material and what comes out of it — do not have to be sorted by
+reading names off one list of 2N bodies. It is a NAMING device and nothing
+else: every `NEXT_ASSEMBLY_USAGE_OCCURRENCE` carries the identity transform,
+and the emitted geometry is the flat file's point for point, which the suite
+asserts rather than assumes. `folders: false` (UI: `tree: flat`) restores the
+single-PRODUCT form, and is kept because whether an importer handles an
+assembly well is only observable in CAD. `buildSTEP` names no folders, so the
+duct export keeps the flat form it has always had. The canvas shows the AIR ONLY: a "horn" view was built twice
 and dropped at the owner's call.
 **THE ONLY EXPORTS ARE THE THREE THAT CARRY A SOLID** — the STL, the duct
 STEP and the shell STEP kit (plus the two-cell test, which is the shell format
@@ -475,7 +485,28 @@ exists.
   that (-6.46 at grade 0 on the same window), which is the graded-region
   mechanism working exactly as its own finding predicts. It pays in fold
   margin — 2.99 -> 1.77 mm — because a narrowed window is a steeper turn, and
-  1.77 mm is thin enough to read before changing anything else. And the
+  1.77 mm is thin enough to read before changing anything else.
+  **THE GRADE MOVED AGAIN TO 0.20 ON 2026-09-04 (owner's number), AND WHAT IT
+  BUYS IS SMALL WHILE WHAT IT SPENDS IS NOT.** Measured at the shipped
+  settings — 6x3, m 3, arcs 500x245, depth 300, T 0.7, 1-lobe radial,
+  [0.02, 0.22], 64 stations, the UI's own pair set with diagonals in and its
+  1.5 mm floor — sweeping ONLY the grade:
+    grade            0.10    0.15    0.20    0.25    0.30
+    worst gap      -5.228  -2.767  -2.611  -2.753  -2.665  mm
+    foldMin @512    2.218   1.749   1.096   0.421   0.116  mm
+    foldMin @2048   2.108   1.468   0.868   0.268  -0.055  mm
+    bow ampMax       20.9    21.3    21.7    22.2    22.4   mm
+  So 0.15 -> 0.20 buys **0.16 mm of clearance for 41% of the fold margin**
+  (1.468 -> 0.868 mm at converged sampling), and the gap is FLAT past 0.15 —
+  it is 0.20, 0.25 and 0.30 within 0.14 mm of each other, i.e. the mechanism
+  has already delivered what it has to give by 0.15 and the rest is paid for
+  nothing. **0.868 mm is now the thinnest fold margin any shipped default has
+  carried**, and the tool DISPLAYS 1.10 because 512 samples is optimistic on a
+  graded window (the bias is one-sided, so the true figure is always the
+  smaller one). By grade 0.30 the duct is FOLDED at honest sampling.
+  Not a defect and not a recommendation — the owner's call, recorded so the
+  cost is not re-derived. The lever that gives the margin back is unchanged
+  and is the depth: at 319.5 mm the same bow reads 4.51 mm. And the
   comparison that still stands: **[0.30, 0.95] measures -0.050 mm, which is
   bit-identical to the unbowed horn, with 12.61 mm of fold margin and the same
   dL of exactly 0.** A window off the throat is free; [0.02, 0.22] costs

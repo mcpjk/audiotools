@@ -3317,10 +3317,13 @@ head("Horn shell export (blanks + cutters)");
   const integ = M.stepIntegrity(out.text);
   checkTrue("every referenced entity is defined", integ.ok,
     `${integ.entities} entities, ${integ.missing} missing`);
-  checkTrue("36 solids in one AP214 representation, labelled by role",
+  // Counted on the SOLID entities, not on the whole file: the folder tree
+  // repeats each label as a leaf PRODUCT's name, so a bare substring count
+  // measures the naming as well as the geometry and reads 3x.
+  checkTrue("36 solids, labelled by role",
     (out.text.match(/MANIFOLD_SOLID_BREP/g) || []).length === 36
-    && (out.text.match(/'shell blank /g) || []).length === 18
-    && (out.text.match(/'duct cutter /g) || []).length === 18, "");
+    && (out.text.match(/MANIFOLD_SOLID_BREP\('shell blank /g) || []).length === 18
+    && (out.text.match(/MANIFOLD_SOLID_BREP\('duct cutter /g) || []).length === 18, "");
   // solids alternate blank, cutter — the blank must out-hold the plain duct,
   // and the cutter is the duct plus its two end prisms
   let volOK = true;
@@ -3768,6 +3771,113 @@ head("Aperture surface, per-cell shell, orientation");
     const auto = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, stations: 32, name: "auto" });
     checkTrue("an export with no params still carries the shell settings",
       /wall=3/.test(auto.text), "");
+  }
+
+  // ── the kit is ONE FILE ORGANISED INTO FOLDERS, and the tree moves nothing ─
+  //
+  // A flat list of 36 bodies makes the reader sort blanks from cutters by
+  // reading names, and the two are used in opposite senses. The file now
+  // carries a STEP assembly — a root PRODUCT with NEXT_ASSEMBLY_USAGE_
+  // OCCURRENCE children — which every importer shows as a folder tree.
+  //
+  // The claim that has to be tested is not that the entities are present but
+  // that they are inert: an occurrence carries a transform, so a wrong one
+  // would move a solid, and the shell kit's whole value is that the cutter
+  // sits exactly inside the blank it came from. So the test resolves the
+  // tree, checks every transform is the identity on both sides, and compares
+  // the emitted GEOMETRY against the flat file's point for point.
+  {
+    const kit = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, stations: 32, name: "tree" });
+    const flat = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, stations: 32, folders: false, name: "tree" });
+    // index the file by entity id
+    const ent = new Map();
+    for (const m of kit.text.matchAll(/^#(\d+)=([A-Z0-9_]+)\(([\s\S]*?)\);$/gm)) ent.set(m[1], { type: m[2], args: m[3] });
+    const refs = (a) => [...a.matchAll(/#(\d+)/g)].map((m) => m[1]);
+    const str0 = (a) => (/^'((?:[^']|'')*)'/.exec(a) || [, null])[1];
+
+    // root: the one PRODUCT_DEFINITION that is a parent and never a child
+    const nauos = [...ent].filter(([, e]) => e.type === "NEXT_ASSEMBLY_USAGE_OCCURRENCE")
+      .map(([id, e]) => { const r = refs(e.args); return { id, parent: r[0], child: r[1] }; });
+    const children = new Set(nauos.map((n) => n.child));
+    const roots = [...new Set(nauos.map((n) => n.parent))].filter((x) => !children.has(x));
+    checkTrue("the product tree has exactly one root", roots.length === 1, `${roots.length} roots`);
+    const kidsOf = (pd) => nauos.filter((n) => n.parent === pd).map((n) => n.child);
+    const nameOf = (pd) => {
+      const pdf = refs(ent.get(pd).args)[0];
+      return str0(ent.get(refs(ent.get(pdf).args)[0]).args);
+    };
+    const folders = kidsOf(roots[0]);
+    checkTrue("its children are the two folders the kit is sorted into, plus the trims",
+      folders.map(nameOf).sort().join("|") === "duct cutters|shell blanks|trim solids",
+      folders.map(nameOf).join(", "));
+    // every leaf sits in exactly one folder, and its name matches that folder
+    let leaves = 0, misfiled = 0, deep = 0;
+    for (const f of folders) {
+      const kind = nameOf(f).replace(/s$/, "");
+      for (const leaf of kidsOf(f)) {
+        leaves++;
+        if (kidsOf(leaf).length) deep++;
+        const nm = nameOf(leaf);
+        if (!(kind === "trim solid" ? /trim$/.test(nm) : nm.startsWith(kind))) misfiled++;
+      }
+    }
+    checkTrue("every solid is a named leaf filed under the folder its name says",
+      leaves === 38 && misfiled === 0 && deep === 0,
+      `${leaves} leaves, ${misfiled} misfiled, ${deep} nested deeper`);
+    checkTrue("and the tree is reported back to the caller",
+      kit.tree.folders === 3 && kit.tree.parts === 38, JSON.stringify(kit.tree));
+
+    // EVERY occurrence transform is the identity, on both sides. This is what
+    // makes the tree a naming device: a solid sits where the flat file put it.
+    const isIdentity = (ap) => {
+      const r = refs(ent.get(ap).args);
+      const o = ent.get(r[0]).args.match(/-?[\d.E+]+/g).map(Number);
+      const dz2 = ent.get(r[1]).args.match(/-?[\d.E+]+/g).map(Number);
+      const dx2 = ent.get(r[2]).args.match(/-?[\d.E+]+/g).map(Number);
+      return o.every((v) => v === 0) && dz2.join() === "0,0,1" && dx2.join() === "1,0,0";
+    };
+    let nonIdent = 0, idts = 0;
+    for (const [, e] of ent) {
+      if (e.type !== "ITEM_DEFINED_TRANSFORMATION") continue;
+      idts++;
+      const r = refs(e.args);
+      if (!isIdentity(r[0]) || !isIdentity(r[1])) nonIdent++;
+    }
+    checkTrue("every occurrence carries the identity transform, so nothing moves",
+      idts === 41 && nonIdent === 0, `${idts} transforms, ${nonIdent} not identity`);
+
+    // and each leaf representation holds exactly ONE solid
+    let oneEach = true;
+    for (const [, e] of ent)
+      if (e.type === "ADVANCED_BREP_SHAPE_REPRESENTATION"
+        && refs(e.args).filter((r) => ent.get(r) && ent.get(r).type === "MANIFOLD_SOLID_BREP").length !== 1) oneEach = false;
+    checkTrue("each leaf representation holds exactly one solid", oneEach, "");
+
+    // THE GEOMETRY IS UNCHANGED. Every point emitted before the product tree
+    // is geometry, and the two files must agree on all of it, in order.
+    const geom = (txt) => txt.slice(0, txt.search(/^#\d+=PRODUCT\(/m))
+      .match(/CARTESIAN_POINT\('',\([^)]*\)\)/g);
+    const gK = geom(kit.text), gF = geom(flat.text);
+    checkTrue("the folder file's geometry is the flat file's, point for point",
+      gK.length === gF.length && gK.every((v, i) => v === gF[i]),
+      `${gK.length} vs ${gF.length} points`);
+    checkTrue("and folders:false still emits the single-PRODUCT flat form",
+      (flat.text.match(/^#\d+=PRODUCT\(/gm) || []).length === 1
+      && (flat.text.match(/ADVANCED_BREP_SHAPE_REPRESENTATION/g) || []).length === 1
+      && flat.tree.folders === 0, JSON.stringify(flat.tree));
+    checkTrue("both files are referentially intact",
+      M.stepIntegrity(kit.text).ok && M.stepIntegrity(flat.text).ok, "");
+    // the duct export names no folders, so it keeps the flat form it always had
+    const dz3 = M.buildSTEP(th, map, { t, name: "ducts" });
+    checkTrue("the duct export is untouched: 18 solids in one representation",
+      (dz3.text.match(/MANIFOLD_SOLID_BREP/g) || []).length === 18
+      && (dz3.text.match(/ADVANCED_BREP_SHAPE_REPRESENTATION/g) || []).length === 1
+      && dz3.checks.tree.folders === 0, "");
+    // a two-cell test is the same format, so it must fold the same way
+    const two = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: false, stations: null,
+      only: [th.cells[0].label, th.cells[1].label], name: "twotree" });
+    checkTrue("the two-cell test carries the same two folders",
+      two.tree.folders === 2 && two.tree.parts === 4, JSON.stringify(two.tree));
   }
 
   // ── the wall against the cell width, which is what stacks the blanks ─────
