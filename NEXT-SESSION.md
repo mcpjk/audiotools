@@ -13,45 +13,83 @@ happens otherwise: a construction chosen for construction reasons satisfied
 every number the tool reported while the passage the wave crosses contracted
 27% below its own throat.
 
-## Shipped 2026-09-03 (three sessions, newest last)
+## Shipped 2026-09-04 — a trimming pass, and one measurement that mattered
 
-Orientation only — every measurement is a CLAUDE.md finding, and the commits
-carry the rest. Nothing here is a task.
+Owner's edits. Every number is a CLAUDE.md finding.
 
-- **Duct separation moved to stage 8**, after the coped joints, and a
-  `solveSeparation` nudge bug fixed: a failed solve returned a field WORSE
-  than no separation and the UI applied it.
-- **The throat run rule became "the gap must be opening"**, replacing the
-  symmetric band that filed a -0.49 mm dive as a knife edge.
-- **The section planes now follow the tangent** (`sectionAlign`), with two
-  metrics that can see the passage: `fluxContractMax` / `sectionObliqMax` /
-  `fluxVsThroatMin`, and `bendFoldMin` (the torus condition — the only
-  witness to a folded duct, since a folded one still meshes closed and passes
-  every cap check).
-- **`samples` raised 64 -> 512** and `stations` can no longer exceed it. Only
-  ONE number in CLAUDE.md moved — the fold margin, which was 56% optimistic —
-  and the file's recorded 10.9% passage contraction turned out to be an
-  ALIASING artifact of reading stations 192 against samples 64.
-- **Mutual repulsion built** (`solveSeparation` mode `"repel"`, the owner's
-  proposal): every deficient pair as one linear constraint, all solved
-  together as a regularised least-squares. What it actually bought was the
-  DIAGONALS — the chain's own field slides ducts into diagonal neighbours and
-  nothing was scoring that (measured -3.28 mm reported against -5.52 mm left).
-  All three modes are now scored on the diagonals, which costs nothing on an
-  unseparated horn.
-- **The housekeeping pass**: the O-grid family and its whole mesh machinery
-  deleted (~1130 lines), along with `solveBow`, `solveDepthForFc`,
-  `shellSolids`, `buildSolidsSTEP`, `polyArea2`, `hypexFlareRate` and five
-  test sections. The mis-keyed edge-curvature warning removed. The coped-joint
-  metric rebuilt to measure cope DEPTH in mm rather than contact in stations.
-  Default arcH 555 -> 500 mm.
+- **Four export formats removed** — DXF, JSON, per-cell CSV, ΣA(x) CSV — and
+  `sigma`, `cellParity` and every `jitter` argument with them. Only the three
+  exports that carry a SOLID remain. **The ΣA(x) CSV was the only route into
+  a 1-D simulator (Hornresp / ABEC)**; `sched[q].axial` is still on every row
+  if that handoff is ever wanted back.
+- **The wall jitter is gone**, on the owner's CAD evidence rather than on a
+  number here. It did what it claimed (near-copy arc 148 → 0 mm) but never
+  changed a boolean outcome, and adjacency is what actually sorts the unions.
+  `shellCoincidence` still measures the arc on every export — 148.2 mm at the
+  defaults — so the degeneracy is reported, not hidden.
+- **The throat end is pinned PLAIN**; only the mouth keeps extend/trim/plain.
+  The recipe is now one trim, not two, and the 27/27 coplanar throat caps come
+  back as the accepted trade.
+- **`cutterExt` is its own parameter at 1 mm** (was inheriting the blank's 3).
+  What a cutter must clear is the PER-CELL cap-fill sag, measured 1.2e-13 mm
+  on the shipped vertically flat mouth (its aperture is a cylinder, so a Coons
+  patch on it is exact), 0.018 mm at 90×40 and 0.038 mm at 90×60 — three
+  orders below the whole-horn figure the old comment was quoting.
+- **Bow region presets replaced by ±0.01 / ±0.05 steppers**, and the default
+  moved to [0.02, 0.22] grade 0.15. All four presets started at u = 0, the one
+  case measured to drive the ducts through each other.
+- **Defaults**: bow region [0.02, 0.22], region grade 0.15, min gap 1.5 mm.
 
-**The one thing from that pass that is a decision, not a done deal**: arcH 500
-moved the dL optimum to 319.5 mm, so the shipped depth of 300 is now nearly on
-it. Going the last 19.5 mm takes dL 14.60 -> 11.93 mm, the throat-fifth bow's
-fold margin 4.45 -> 5.82 mm and its passage contraction 5.57% -> 2.78%.
-Whether the round 300 is worth those is the owner's call — the numbers are now
-small enough that it may not be.
+**The one number worth acting on**: at the new bow default the fold margin is
+**1.77 mm**, down from 2.99 at the old [0, 0.20] grade 0 — the grade buys its
+47% better clearance (−7.44 → −3.97 mm) by narrowing the inner cells' windows,
+and a narrower window is a steeper turn. It is not folded, but it is the
+thinnest margin any shipped default has carried. Moving the region start to
+u ≥ 0.10, or going to the dL-optimal depth, is what gives it back.
+
+**And the comparison that has not changed**: [0.30, 0.95] measures −0.050 mm,
+bit-identical to the unbowed horn, at 12.61 mm of fold margin and dL exactly 0.
+A window off the throat is still free; [0.02, 0.22] is still a deliberate
+purchase of acoustic placement for ~3.9 mm of interpenetration.
+
+## Shipped 2026-09-03 — orientation only
+
+Every measurement is a CLAUDE.md finding and the commits carry the rest.
+Nothing here is a task.
+
+- Duct separation moved to stage 8, and a `solveSeparation` bug fixed: a
+  failed solve returned a field WORSE than no separation and the UI applied it.
+- The throat run rule became **"the gap must be opening"**, replacing the
+  symmetric band that filed a −0.49 mm dive as a knife edge.
+- Section planes now follow the tangent (`sectionAlign`), with metrics that
+  can see the passage: `fluxContractMax`, `sectionObliqMax`, and `bendFoldMin`
+  — the only witness to a folded duct, since a folded one still meshes closed.
+- `samples` raised 64 → 512, and `stations` can no longer exceed it. Only the
+  fold margin moved (it was 56% optimistic); the recorded 10.9% passage
+  contraction turned out to be an ALIASING artifact.
+- Mutual repulsion built (`solveSeparation` mode `"repel"`). What it bought
+  was the DIAGONALS — the chain slides ducts into diagonal neighbours and
+  nothing scored that. All three modes now score on them.
+- The separation solve got a **path-length budget**: a candidate can only
+  become the best state if ΔL stays within λ/8 of where it started.
+  Re-targeting the bow instead was measured first and folds the duct.
+- The **graded bow region** (`lengthen.regionGrade`) built, grade 0
+  bit-identical. Worth 13–21% of the damage a throat-anchored bow does, and
+  it spends fold margin to get it.
+- Housekeeping: the O-grid family and its mesh machinery deleted (~1130
+  lines), with `solveBow`, `solveDepthForFc`, `shellSolids`,
+  `buildSolidsSTEP`, `polyArea2`, `hypexFlareRate` and five test sections.
+  Default arcH 555 → 500 mm.
+
+**Still a decision, not a done deal**: arcH 500 moved the dL optimum to
+319.5 mm, so the shipped depth of 300 is nearly on it. The last 19.5 mm takes
+ΔL 14.60 → 11.93 mm and the bow's fold margin 4.45 → 5.82 mm. Owner's call.
+
+**One thing repulsion deliberately did not do, still open**: the field is one
+vector per cell times one window, so it can SLIDE a duct but not re-route it.
+A per-STATION field is the next step and is a bigger build — the amplitude
+becomes a profile, the windowing stops being a window, and the mirror and
+end-pinning guarantees have to be re-established per station.
 
 ## Explored and REJECTED, so it is not re-proposed
 
@@ -68,64 +106,42 @@ small enough that it may not be.
   inflating the outer cell's displacement to 61 mm on a 325 mm path. Dropped
   in favour of the concentric form. Numbers in CLAUDE.md.
 
-## SHIPPED — the separation solve now knows about path length
-
-Items 1 and 2 of the previous queue, which turned out to be one task.
-
-A separation displacement always makes a duct's path LONGER and the
-equalising bow can only ADD length, so a duct pushed past the lengthening
-target was never caught up to and the overshoot survived as ΔL — `Lmax −
-target` equalled the reported ΔL to the last digit, 19.9 mm after repel.
-Scoring on the gap alone let a solve hand that back as an improvement.
-
-The fix is a **budget, not a re-target**: a candidate can only become the
-best state if ΔL stays within λ/8 of where it started (2.14 mm at 20 kHz —
-the number `band` already uses). Re-targeting the bow to chase the runaway
-cell was measured first and is the wrong fix: it closes ΔL and folds the
-duct. Full numbers in CLAUDE.md.
-
-It is inert where the horn can actually be separated (0 states refused on
-the recorded case, every statistic unchanged) and honest where it bites.
-
-## SHIPPED — the graded bow region (owner's proposal)
-
-`lengthen.regionGrade`, off by default, grade 0 bit-identical. The window
-widens with the cell's distance from the axis, centre fixed, so displacement
-grows outward while every cell still lands on the same target length: a row
-sharing one outward direction EXPANDS instead of translating. The mechanism
-is confirmed (middle-row amplitude 20.5/20.0/19.5 flat at grade 0 against
-14.5/19.4/22.1 at 0.6, dL exactly 0 throughout, both mirrors at 5.7e-11).
-
-**What it is worth is 13–21% of the damage a throat-anchored bow does**, it
-is non-monotone, and it spends fold margin at shallow depths. Moving the bow
-region to u ≥ 0.10 recovers essentially all of that damage instead, for
-nothing. So the grade is for when you want the bow AT the throat on acoustic
-grounds and are knowingly paying for it — not a lever to turn up. Full
-numbers, and the two rejected anchorings, in CLAUDE.md.
-
-## SHIPPED, and what it did NOT fix — separation as mutual repulsion
-
-Built this session. Full numbers in CLAUDE.md; the short version is that the
-win was the diagonals and the scoring, not the search. On the one case in the
-comparison set that can actually be separated the two modes land within
-0.024 mm of each other, repulsion getting there in 10 rounds against 14 with
-less displacement and less dL. On the cases that cannot be separated they
-trade, and neither reaching the floor is the signal to move the DEPTH.
-
-One thing it deliberately did not do, still open:
-
-- **The field is one vector per cell times one window**, so it can slide a
-  duct but not re-route it. The chain's third structural limit — a pair's
-  push taken at that pair's single worst station — is untouched. A
-  per-STATION field is the next step and is a bigger build: the amplitude
-  becomes a profile, the windowing stops being a window, and the mirror and
-  end-pinning guarantees have to be re-established per station.
-
-(The other one — no mode accounting for dL — was fixed by the budget above.)
-
 ## The queue
 
 In priority order. Each rests on a measurement, named.
+
+### 0. The new bow default carries a 1.77 mm fold margin — read it before shipping a print
+
+Shipped 2026-09-04 at the owner's numbers, [0.02, 0.22] grade 0.15. It is a
+47% improvement on the [0, 0.20] grade 0 it replaced (worst gap −7.44 →
+−3.97 mm) and the grade is doing most of that, exactly as the graded-region
+finding predicts. The price is the fold margin: 2.99 → 1.77 mm, because a
+narrowed window is a steeper turn. Not folded, but thinner than any shipped
+default has been.
+
+**THE DEPTH FIXES BOTH AT ONCE, AND THIS IS THE STRONGEST CASE THE FILE HAS
+CARRIED FOR MOVING IT.** Same bow, same grade, sweeping only the axial depth,
+64 stations, diagonals included:
+
+| depth | ΔL | bow amp | foldMin | worst gap | contraction |
+|---|---|---|---|---|---|
+| 300 (shipped) | 0.00 | 21.3 | **1.77** | **−3.967** | 0.00% |
+| 310 | 0.00 | 21.2 | 3.07 | −2.665 | 0.00% |
+| 319.5 (dL optimum) | 0.00 | 21.0 | **4.51** | **−0.169** | 0.00% |
+| 330 | 0.00 | 22.4 | 5.10 | −0.004 | 0.00% |
+| 357 | 0.00 | 26.1 | 4.94 | **+1.517** | 0.00% |
+
+At the dL optimum the fold margin is back to 4.51 mm and the interpenetration
+collapses from 3.97 mm to 0.17 — with the bow the owner wants, in the window
+the owner wants, at zero cost in ΔL. By depth 330 the gap is −0.004 mm, and by
+357 it CLEARS the new 1.5 mm floor outright. Moving the bow region instead is
+not the cheaper fix here: [0.10, 0.30] measures −2.40 mm but takes the fold
+margin to 0.30 mm, worse than doing nothing.
+
+Same conclusion the file has reached three times by different routes: **solve
+the depth first and the bow becomes a small correction.** The only argument
+for 300 was that it is a round number. Owner's call — task 3 below is the same
+decision, and this is a fourth measurement pointing at it.
 
 ### 1. Raise the PREVIEW station count
 

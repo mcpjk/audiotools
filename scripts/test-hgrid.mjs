@@ -3014,8 +3014,91 @@ head("Horn shell export (blanks + cutters)");
     check("cutter throat ring planar in z = -ext", z, 0, 1e-9, "mm");
   }
 
+  // ── 1 mm is enough for a CUTTER, and the reason is the cap-fill sag ──────
+  // A cutter's whole job is to protrude past the two faces it opens. At the
+  // throat those are parallel planes and there is nothing to clear. At the
+  // mouth the blank's face is the aperture (cut by the trim, or capped on the
+  // aperture when plain) while the cutter's own cap is a COONS FILL of its
+  // mouth ring, which falls BEHIND the aperture by the fill's sag. So the
+  // extension must exceed that sag, and this measures it rather than assuming
+  // the whole-horn figure the shell comment used to carry (order 1 mm, which
+  // is where the old 3 mm default came from). Per cell it is far smaller,
+  // and it is smallest of all on the tool's own vertically flat mouth, where
+  // the aperture is a cylinder and a Coons patch on a ruled surface is exact.
+  {
+    const coonsFill = (ring) => {
+      const N = ring.length, q = N / 4;
+      const bot = [], top = [], left = [], right = [];
+      for (let i = 0; i <= q; i++) { bot.push(ring[i % N]); top.push(ring[(3 * q - i + N) % N]); }
+      for (let j = 0; j <= q; j++) { right.push(ring[(q + j) % N]); left.push(ring[(4 * q - j) % N]); }
+      const out = [];
+      for (let i = 0; i <= q; i++) {
+        const u = i / q;
+        for (let j = 0; j <= q; j++) {
+          const v = j / q;
+          out.push([0, 1, 2].map((k) => (1 - v) * bot[i][k] + v * top[i][k] + (1 - u) * left[j][k] + u * right[j][k]
+            - ((1 - u) * (1 - v) * bot[0][k] + u * (1 - v) * bot[q][k] + u * v * top[q][k] + (1 - u) * v * top[0][k])));
+        }
+      }
+      return out;
+    };
+    const sagOf = (mp) => {
+      const frame = M.apertureFrame(mp.mouthSurf);
+      let worst = -Infinity;
+      for (const cc of th.cells) {
+        const rr = mp.rows.find((r) => r.id === cc.id);
+        const dd = M.ductSections(cc, rr, { t });
+        const ring = dd[dd.length - 1].pts;
+        // the extension direction: the ring's own unit vector-area normal
+        let A = [0, 0, 0];
+        for (let i = 0; i < ring.length; i++) {
+          const a = ring[i], b = ring[(i + 1) % ring.length];
+          A = [A[0] + (a[1] * b[2] - a[2] * b[1]), A[1] + (a[2] * b[0] - a[0] * b[2]), A[2] + (a[0] * b[1] - a[1] * b[0])];
+        }
+        const nA = Math.hypot(A[0], A[1], A[2]) || 1;
+        const n = [A[0] / nA, A[1] / nA, A[2] / nA];
+        for (const p of coonsFill(ring)) {
+          const pr = frame.param(p);
+          if (!pr.ok) continue;
+          const qq = frame.at(pr.a, pr.e);
+          worst = Math.max(worst, (qq[0] - p[0]) * n[0] + (qq[1] - p[1]) * n[1] + (qq[2] - p[2]) * n[2]);
+        }
+      }
+      return worst;
+    };
+    const mouthOpts = (thetaV, arcV) => ({
+      c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 8,
+      divergeLen: 0, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+      fTarget: 20000, t, profileArea: "open",
+      mouthMode: "biradial", thetaH: 90, thetaV, arcH: 480, arcV,
+      sectionMode: "swept", stations: ST, depth: 320, profileT: 0.7,
+      keepGeometry: true, computeClearance: false,
+    });
+    // Th_v = 0 makes the aperture a CYLINDER — a ruled surface — and a Coons
+    // patch whose sides run along the rulings lies on it exactly. That is the
+    // tool's own shipped mouth, so its cutters clear by the whole extension.
+    const flat = sagOf(M.mapThroatToMouth(th, mouthOpts(0, 245)));
+    checkTrue("a Coons cap on a ruled aperture is exact, so a flat mouth sags nothing",
+      Math.abs(flat) < 1e-9, `${flat.toExponential(2)} mm over ${th.cells.length} cells`);
+    // and on a DOUBLY curved mouth, where it is not exact. Two curvatures, so
+    // the trend is visible rather than a single number: more curvature is more
+    // sag, and even the wide one is two orders below the extension.
+    const sag40 = sagOf(map), sag60 = sagOf(M.mapThroatToMouth(th, mouthOpts(60, 300)));
+    checkTrue("a doubly curved mouth sags, and more curvature sags more",
+      sag40 > 0 && sag60 > sag40, `${sag40.toFixed(4)} mm at 90x40, ${sag60.toFixed(4)} at 90x60`);
+    checkTrue("even at 90x60 the per-cell cap sag is under a tenth of a millimetre",
+      sag60 < 0.1, `${sag60.toFixed(4)} mm`);
+    checkTrue("so the 1 mm cutter extension clears it with over 0.9 mm of margin",
+      1 - sag60 > 0.9, `margin ${(1 - sag60).toFixed(4)} mm`);
+    // the default is 1 mm, and it is NOT the blank's — the blank has to
+    // exceed ~0.4 of a station step or its loft overshoots its own cap plane
+    const kit = M.buildShellSTEP(th, map, { t, wall, extend: false, stations: null, name: "cutext" });
+    checkTrue("the shipped cutter default is 1 mm, stamped separately from the blank's ext",
+      /cutterExt=1\b/.test(kit.text) && /ext=3\b/.test(kit.text), "");
+  }
+
   // ── the emitted file ──────────────────────────────────────────────────────
-  const out = M.buildShellSTEP(th, map, { t, wall, ext, extend: false, jitter: 0, stations: null, name: "shelltest" });
+  const out = M.buildShellSTEP(th, map, { t, wall, ext, extend: false, stations: null, name: "shelltest" });
   checkTrue("two solids per cell: 18 blanks + 18 cutters", out.checks.ducts === 36, `${out.checks.ducts} solids`);
   check("shell surfaces pass through every sampled ring point", out.checks.residual, 0, 1e-9, "mm");
   checkTrue("every edge used exactly twice, opposite senses", out.checks.edgePairing, "");
@@ -3186,7 +3269,7 @@ head("Aperture surface, per-cell shell, orientation");
 
   // ── the kit, and the recipe it states ─────────────────────────────────────
   {
-    const out = M.buildShellSTEP(th, map, { t, wall, extend: false, jitter: 0, stations: null, name: "cellstest" });
+    const out = M.buildShellSTEP(th, map, { t, wall, extend: false, stations: null, name: "cellstest" });
     checkTrue("the shell emits one blank and one cutter per cell",
       !!out && out.mode === "cells" && out.cells === th.cells.length && out.checks.ducts === 2 * th.cells.length,
       out ? `${out.cells} blanks + ${out.cells} cutters` : "no output");
@@ -3207,27 +3290,20 @@ head("Aperture surface, per-cell shell, orientation");
     // (a) THE NEAR-COPY SURFACES. Two adjacent cells share a grid line, so on
     // their other sides both blanks offset the SAME curve by the SAME
     // distance: the identical surface computed twice, landing sub-micron
-    // apart. `jitter` gives cells of opposite grid parity different walls.
-    const bare = M.shellCoincidence(th, map, { t, wall, jitter: 0, stations: 32 });
-    const jit = M.shellCoincidence(th, map, { t, wall, jitter: 0.5, stations: 32 });
-    checkTrue("without jitter, blanks carry surface that is a near-copy of a neighbour's", bare.arc > 10,
+    // apart. A per-parity wall `jitter` removed it and was WITHDRAWN on
+    // 2026-09-04 on the owner's CAD evidence that it changed no boolean
+    // outcome, so this is now a STANDING PROPERTY of every kit rather than a
+    // knob's readout. It is asserted here so the number cannot drift
+    // unnoticed, and so a future proposal to re-add the jitter starts from
+    // the measurement rather than from memory.
+    const bare = M.shellCoincidence(th, map, { t, wall, stations: 32 });
+    checkTrue("blanks carry surface that is a near-copy of a neighbour's", bare.arc > 10,
       `${bare.arc.toFixed(1)} mm of arc inside ${bare.eps} mm, over ${bare.pairs} pairs`);
-    check("with jitter, none is left", jit.arc, 0, 1e-12, "mm");
-    checkTrue("every adjacent pair is examined", bare.pairs === 27 && jit.pairs === 27, "");
-    // parity is what guarantees it: orthogonal neighbours always differ
-    let sameParity = 0;
-    for (const c of th.cells) {
-      const [col, rw] = c.label.split(",").map(Number);
-      for (const [dc, dr] of [[1, 0], [0, 1]]) {
-        const nb = `${col + dc},${rw + dr}`;
-        if (th.cells.some((x) => x.label === nb) && M.cellParity(c.label) === M.cellParity(nb)) sameParity++;
-      }
-    }
-    check("no two orthogonally adjacent cells share a wall parity", sameParity, 0, 0, "pairs");
-    // and the jitter only ever ADDS, so the wall stays the minimum
+    checkTrue("every adjacent pair is examined", bare.pairs === 27, "");
+    // the wall is exactly the wall now — there is nothing left that adds to it
     let wMin = Infinity;
     for (const c of th.cells) {
-      const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, jitter: 0.5, snapMouth: false });
+      const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, snapMouth: false });
       const d = M.ductSections(c, map.rows.find((r) => r.id === c.id), { t });
       const n = b[0].pts.length / 4;
       b[0].pts.forEach((p, k) => {
@@ -3244,7 +3320,7 @@ head("Aperture surface, per-cell shell, orientation");
         wMin = Math.min(wMin, m);
       });
     }
-    checkTrue("jitter only ever adds, so the wall stays the minimum", wMin >= wall - 1e-9,
+    checkTrue("the blank's face offset is exactly the wall", wMin >= wall - 1e-9,
       `thinnest face ${wMin.toFixed(3)} mm against ${wall}`);
 
     // (b) THE END CAPS. Every blank's throat ring is planar in z = 0, so
@@ -3261,7 +3337,7 @@ head("Aperture surface, per-cell shell, orientation");
     const capPairs = (ext) => {
       const E = new Map();
       for (const c of th.cells) {
-        const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: ext > 0 ? false : true });
+        const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, surf: map.mouthSurf, stations: 32, snapMouth: ext > 0 ? false : true });
         E.set(c.label, ext > 0 ? M.extendSections(b, ext * (1 + 0.4 * M.cellPhase5(c.label))) : b);
       }
       let n = 0;
@@ -3323,13 +3399,13 @@ head("Aperture surface, per-cell shell, orientation");
   {
     const ext = 3;
     const tr = M.throatTrimSections(th, map, { t, wall, ext });
-    const mo = M.mouthTrimSections(th, map, { t, wall, ext, jitter: 0.5 });
+    const mo = M.mouthTrimSections(th, map, { t, wall, ext });
     checkTrue("the throat trim is a slab below z = 0", tr && tr[tr.length - 1].pts.every((p) => Math.abs(p[2]) < 1e-12) && tr[0].pts.every((p) => p[2] < -ext),
       tr ? `top at z = 0, bottom at z = ${tr[0].pts[0][2].toFixed(1)}` : "none");
     // it has to cover the whole throat end, extended blanks included
     let rB = 0;
     for (const c of th.cells) {
-      const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, jitter: 0.5, snapMouth: false });
+      const b = M.shellSections(c, map.rows.find((r) => r.id === c.id), { t, wall, snapMouth: false });
       for (const p of b[0].pts) rB = Math.max(rB, Math.abs(p[0]), Math.abs(p[1]));
     }
     let half = 0;
@@ -3343,7 +3419,7 @@ head("Aperture surface, per-cell shell, orientation");
     checkTrue("and it stands clear of the aperture on the far side", mo[0].pts.every((p, i) => p[2] > mo[mo.length - 1].pts[i][2] + 1),
       `${(mo[0].pts[0][2] - mo[mo.length - 1].pts[0][2]).toFixed(0)} mm of stand-off`);
 
-    const out = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, name: "phase1" });
+    const out = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, stations: 32, name: "phase1" });
     checkTrue("extended mode emits the blanks, the cutters and both trims",
       out.mode === "extended" && out.cells === th.cells.length && out.trims === 2
       && out.checks.ducts === 2 * th.cells.length + 2, `${out.checks.ducts} solids`);
@@ -3355,11 +3431,11 @@ head("Aperture surface, per-cell shell, orientation");
     checkTrue("every solid's edges pair up", out.checks.edgePairing, "");
     checkTrue("the file is referentially intact", M.stepIntegrity(out.text).ok, "");
     // the two-cell test file: the smallest thing that can fail
-    const two = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, only: [th.cells[0].label, th.cells[1].label], name: "twocell" });
+    const two = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, stations: 32, only: [th.cells[0].label, th.cells[1].label], name: "twocell" });
     checkTrue("the two-cell test emits one adjacent pair and no trims",
       two.cells === 2 && two.trims === 0 && two.checks.ducts === 4, `${two.checks.ducts} solids`);
     // plain mode still available, ends still exact
-    const plain = M.buildShellSTEP(th, map, { t, wall, ext, extend: false, jitter: 0, stations: null, name: "plain" });
+    const plain = M.buildShellSTEP(th, map, { t, wall, ext, extend: false, stations: null, name: "plain" });
     checkTrue("plain mode is unchanged: N blanks, N cutters, no trims, no unions",
       plain.mode === "cells" && plain.trims === 0 && /no unions/.test(plain.text), "");
   }
@@ -3380,14 +3456,14 @@ head("Aperture surface, per-cell shell, orientation");
       ["extend both, trim mouth", { trimThroat: false }, 1, true, true],
     ];
     for (const [tag, cfg, nTrim, eT, eM] of cases) {
-      const r = M.buildShellSTEP(th, map, { t, wall, ext, jitter: 0.5, stations: 32, ...cfg, name: tag });
+      const r = M.buildShellSTEP(th, map, { t, wall, ext, stations: 32, ...cfg, name: tag });
       const ok = r && r.trims === nTrim && r.ends.throat === eT && r.ends.mouth === eM
         && r.checks.ducts === 2 * th.cells.length + nTrim
         && M.stepIntegrity(r.text).ok && r.checks.edgePairing && r.checks.residual < 1e-6;
       checkTrue(`ends: ${tag}`, ok, r ? `${r.checks.ducts} solids, trims [${r.trimNames.join(", ") || "none"}]` : "null");
     }
     // a trim with no extension behind it would cut the real body: refused
-    const bad = M.buildShellSTEP(th, map, { t, wall, ext, jitter: 0.5, stations: 32,
+    const bad = M.buildShellSTEP(th, map, { t, wall, ext, stations: 32,
       extendThroat: false, trimThroat: true, name: "bad" });
     checkTrue("a trim with no extension behind it is refused",
       bad.trims === 1 && !bad.trimNames.includes("throat trim"),
@@ -3398,7 +3474,7 @@ head("Aperture surface, per-cell shell, orientation");
       let worst = 0;
       for (const c of th.cells) {
         const row = map.rows.find((r) => r.id === c.id);
-        const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: false });
+        const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, stations: 32, snapMouth: false });
         const e = ext * (1 + 0.4 * M.cellPhase5(c.label));
         const sec = M.extendSections(b, e, { throat: eThroat, mouth: true });
         const br = M.ductBrep(sec);
@@ -3411,12 +3487,12 @@ head("Aperture surface, per-cell shell, orientation");
       return worst;
     };
     // and the model reports it, with the ratio that explains it
-    const rep = M.shellCapOvershoot(th, map, { t, wall, jitter: 0.5, stations: 32, ext });
+    const rep = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext });
     checkTrue("shellCapOvershoot finds it and names the cell",
       rep.worst > 1e-3 && rep.at && rep.minRatio < 0.5 && rep.step > 1,
       `${rep.worst.toFixed(4)} mm at ${rep.at}, ext/step ${rep.minRatio.toFixed(2)}, step ${rep.step.toFixed(1)} mm`);
     // raising the extension past the threshold removes it
-    const big = M.shellCapOvershoot(th, map, { t, wall, jitter: 0.5, stations: 32, ext: 12 });
+    const big = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext: 12 });
     checkTrue("and a long enough extension removes it entirely",
       big.worst <= 1e-9 && big.minRatio > 0.5, `${big.worst.toExponential(2)} mm at ext/step ${big.minRatio.toFixed(2)}`);
     const withExt = past(true), noExt = past(false);
@@ -3428,7 +3504,7 @@ head("Aperture surface, per-cell shell, orientation");
     let flat = 0;
     for (const c of th.cells) {
       const row = map.rows.find((r) => r.id === c.id);
-      const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, jitter: 0.5, stations: 32, snapMouth: false });
+      const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, stations: 32, snapMouth: false });
       for (const p of b[0].pts) flat = Math.max(flat, Math.abs(p[2]));
     }
     check("and its end ring is planar in z = 0", flat, 0, 1e-9, "mm");
@@ -3440,7 +3516,7 @@ head("Aperture surface, per-cell shell, orientation");
   // recipe, which made FILE_DESCRIPTION a syntax error. The check is a real
   // tokeniser over the header, not a substring search.
   {
-    const kit = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, jitter: 0.5, stations: 32,
+    const kit = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, stations: 32,
       params: "depth=320 note=o'brien back\\slash em—dash", name: "hdr" });
     const head = kit.text.slice(0, kit.text.indexOf("ENDSEC;"));
     // walk the header and count string literals, treating '' as an escape
@@ -3472,9 +3548,9 @@ head("Aperture surface, per-cell shell, orientation");
     // and the file still passes its own integrity check
     checkTrue("the escaped file is still referentially intact", M.stepIntegrity(kit.text).ok, "");
     // a shell export with no params supplied still stamps the shell settings
-    const auto = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, jitter: 0.5, stations: 32, name: "auto" });
+    const auto = M.buildShellSTEP(th, map, { t, wall, ext: 3, extend: true, stations: 32, name: "auto" });
     checkTrue("an export with no params still carries the shell settings",
-      /wall=3/.test(auto.text) && /jitter=0.5/.test(auto.text), "");
+      /wall=3/.test(auto.text), "");
   }
 
   // ── the wall against the cell width, which is what stacks the blanks ─────
@@ -3501,7 +3577,7 @@ head("Aperture surface, per-cell shell, orientation");
       const B = new Map();
       for (const c of th.cells) {
         const row = map.rows.find((r) => r.id === c.id);
-        const b = M.shellSections(c, row, { t, wall: w, surf: map.mouthSurf, jitter: 0, stations: 32, snapMouth: false })[0].pts;
+        const b = M.shellSections(c, row, { t, wall: w, surf: map.mouthSurf, stations: 32, snapMouth: false })[0].pts;
         if (cap) {
           const D = M.ductSections(c, row, { t })[0].pts, lim = cap * w;
           for (let k = 0; k < b.length; k++) {
@@ -3585,8 +3661,8 @@ head("Aperture surface, per-cell shell, orientation");
       `y ${mb.y.worst.toFixed(1)} mm broken, x ${mb.x.worst.toExponential(2)} mm intact`);
 
     // the kit itself: a region ships the same trims and the same blanks
-    const full = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, name: "full" });
-    const half = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32, xSide: 1, name: "half" });
+    const full = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, stations: 32, name: "full" });
+    const half = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, stations: 32, xSide: 1, name: "half" });
     checkTrue("a half kit is half the cells and still both trims",
       half.cells === 9 && half.trims === 2 && half.checks.ducts === 2 * 9 + 2 && full.cells === 18,
       `${half.checks.ducts} solids against the full kit's ${full.checks.ducts}`);
@@ -3599,7 +3675,7 @@ head("Aperture surface, per-cell shell, orientation");
       hi.ok && half.checks.edgePairing && half.checks.residual < 1e-6,
       `${hi.entities} entities, residual ${half.checks.residual.toExponential(1)} mm`);
     // `only` is the two-cell test and must keep its no-trims behaviour
-    const both = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, jitter: 0.5, stations: 32,
+    const both = M.buildShellSTEP(th, map, { t, wall, ext, extend: true, stations: 32,
       only: [th.cells[0].label], xSide: 1, name: "both" });
     checkTrue("`only` still wins over a region and ships no trims",
       both.cells === 1 && both.trims === 0 && both.region === null, `${both.checks.ducts} solids`);

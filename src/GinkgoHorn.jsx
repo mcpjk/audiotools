@@ -442,12 +442,21 @@ export default function GinkgoHorn() {
   // WHERE the bow sits, as a fraction of each cell's own path. The straight
   // runs are excised from this on top, per cell, inside the model — a run
   // asked to be straight is not a place to put a bow.
-  // Defaults to the throat fifth: a narrower region is a SMALLER bow that
-  // turns harder (amplitude goes as sqrt(span), curvature as span^-1.5), and
-  // the measured wall spread falls with it too — 17.44 mm at throat half
-  // against 15.16 at throat fifth, for 46.8 mm of amplitude against 25.6.
-  const [bowFrom, setBowFrom] = useState(0);
-  const [bowTo, setBowTo] = useState(0.2);
+  // [0.02, 0.22] by default (owner's numbers, 2026-09-04). A narrower region
+  // is a SMALLER bow that turns harder — amplitude goes as sqrt(span) and
+  // curvature as span^-1.5 — and the measured wall spread falls with it too:
+  // 17.44 mm over the throat half against 15.16 over a fifth, for 46.8 mm of
+  // amplitude against 25.6. The 0.02 start lifts the window off station 0,
+  // where the cells still TILE and any lateral turn moves a duct into a
+  // neighbour with nowhere to go. It does NOT clear that: the measured cliff
+  // is at u ~ 0.10, not 0.02 — see the clearance readout in stage 8, and the
+  // warning that fires when the worst overlap lands inside this window.
+  const [bowFrom, setBowFrom] = useState(0.02);
+  const [bowTo, setBowTo] = useState(0.22);
+  // Both ends share one clamp so the sliders and the steppers cannot disagree:
+  // the window stays inside [0, 1] and at least 0.1 of a path wide.
+  const clampFrom = (v) => Math.max(0, Math.min(v, bowTo - 0.1));
+  const clampTo = (v) => Math.min(1, Math.max(v, bowFrom + 0.1));
   // ONE lobe by default, at the owner's call: three humps read as a
   // corrugation rather than a duct and are not commercially acceptable, and
   // one is the shape a real part wants. Two is offered because the measured
@@ -456,10 +465,18 @@ export default function GinkgoHorn() {
   // looks and prints, not an oversight.
   const [lengthLobes, setLengthLobes] = useState(1);
   // REGION GRADE (owner's proposal): widen the bow window with the cell's
-  // distance from the axis, centre fixed. Off by default — grade 0 reproduces
-  // the ungraded geometry bit for bit, and the measurement says this is a
-  // 10-20% correction that has to be READ rather than turned up.
-  const [bowGrade, setBowGrade] = useState(0);
+  // distance from the axis, centre fixed. 0.15 by default (owner's number,
+  // 2026-09-04). Amplitude for a given added length goes as sqrt(span), so
+  // grading the span makes displacement grow outward while every cell still
+  // lands on the same target length — a row sharing one outward direction
+  // then EXPANDS instead of translating, and the spacing between its cells
+  // opens. It is a 13-21% correction to what a throat-anchored bow costs, it
+  // is NOT monotone in the grade, and a narrowed window is a steeper turn, so
+  // the fold margin is what it spends. Read it, do not turn it up: on a horn
+  // whose window is already clear of the throat, grading makes the clearance
+  // WORSE, because it widens the outer cells' bows into neighbours they were
+  // missing.
+  const [bowGrade, setBowGrade] = useState(0.15);
   // THERE IS NO "SOLVE THE BOW" BUTTON, and the reason is the ranking
   // metric rather than the search. `solveBow` ranks candidates on wall
   // spread, and wall spread measures the length each wall fibre has run BY
@@ -506,25 +523,30 @@ export default function GinkgoHorn() {
   // 2x this number. EXPORT ONLY: the blanks are not drawn, see the 3-D
   // preview note below.
   const [shellWall, setShellWall] = useState(3);
-  // THE TWO ENDS ARE SET SEPARATELY, because they are not the same problem.
-  // Each is "trim" (extend past the face and ship the trim solid that cuts it
-  // back), "extend" (extend, ship no trim, cut it yourself) or "plain" (the
-  // loft's own end ring makes the face, no cut at all). The MOUTH trim cuts on
-  // the aperture surface itself and has never been reported failing; the
-  // THROAT trim cuts on the plane z = 0, which is exactly the operation the
-  // owner measured failing as a plane split on individual blanks.
-  const [throatEnd, setThroatEnd] = useState("trim");
+  // ONLY THE MOUTH END IS SETTABLE. It is "trim" (extend past the face and
+  // ship the trim solid that cuts it back), "extend" (extend, ship no trim,
+  // cut it yourself) or "plain" (the loft's own end ring makes the face, no
+  // cut at all). The mouth trim cuts on the APERTURE SURFACE itself, a curved
+  // face the blanks cross transversally, and it has never been reported
+  // failing.
+  // THE THROAT IS PINNED PLAIN (owner's call, 2026-09-04, on the evidence
+  // that it is what they have been exporting and it has worked). Its trim
+  // would cut on the plane z = 0 — the same operation measured failing as a
+  // plane split on individual blanks — while a plain throat makes that face
+  // from the loft's own end ring, planar in z = 0 by construction, and asks
+  // for no cut there. What it costs is the 27 pairs of coplanar overlapping
+  // throat caps the extension existed to remove; the model keeps
+  // `extendThroat` / `trimThroat` if that trade is ever worth revisiting.
   const [mouthEnd, setMouthEnd] = useState("trim");
   const endCfg = (v) => ({ extend: v !== "plain", trim: v === "trim" });
-  const [wallJitter, setWallJitter] = useState(0.5);
   const [shellStations, setShellStations] = useState(32);
   // WHICH SIDE OF EACH MIRROR TO EXPORT. 0 keeps both. The horn is symmetric
   // about x = 0 and y = 0, so a half or a quarter carries the whole design
-  // and quarters the boolean work — but the two halves are NOT mirror copies
-  // of each other in the SHELL, because the wall jitter is keyed to grid
-  // parity; mirroring a half puts equal walls on both sides of the seam,
-  // which is the near-copy case the jitter exists to break. Export the other
-  // side here instead of mirroring this one.
+  // and quarters the boolean work. The passages are exact mirror images
+  // either way; with the wall jitter gone the blanks are too, so mirroring a
+  // half in CAD is no longer the near-copy trap it was — exporting the other
+  // side here is still the cleaner route, since the mirror is MEASURED on
+  // this geometry rather than assumed.
   const [regX, setRegX] = useState(0);
   const [regY, setRegY] = useState(0);
   // HOW THE SHELL IS DELIVERED. "solid" is one horn body plus one cutter per
@@ -562,7 +584,13 @@ export default function GinkgoHorn() {
   // geometry, so it is cleared the moment that geometry moves.
   const [sepSolve, setSepSolve] = useState(null);
   const [sepBusy, setSepBusy] = useState(false);
-  const [sepFloor, setSepFloor] = useState(0.5);
+  // 1.5 mm (owner's number, 2026-09-04). This one number is three things at
+  // once: the thin-wall band, the throat rule's ceiling, and the gap the
+  // separation solvers are asked to reach. Raising it does NOT ask the cells
+  // to fan out faster near the throat — the throat rule is monotone, not a
+  // rate, and reads the same at every floor the UI can set — it raises the
+  // target over the rest of the path and lengthens the knife-edge run.
+  const [sepFloor, setSepFloor] = useState(1.5);
 
   const [hover, setHover] = useState(null);
   const [hoverSide, setHoverSide] = useState("right");
@@ -1050,177 +1078,21 @@ export default function GinkgoHorn() {
       // spent inferring an export's settings back out of its geometry, and a
       // separation field is not recoverable from the solids at all
       `separate=${o.separate ? `${o.separate.mode || "?"}/${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]${map && map.separate ? `/max${n(map.separate.ampMax)}mm` : ""}` : "off"}`,
-      `wall=${shellWall}`, `jitter=${wallJitter}`, `shellStations=${shellStations}`,
-      `throatEnd=${throatEnd}`, `mouthEnd=${mouthEnd}`,
+      `wall=${shellWall}`, `shellStations=${shellStations}`,
+      `throatEnd=plain`, `mouthEnd=${mouthEnd}`,
       `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
     ];
     return g.join(" ");
   };
 
-  const buildDXF = (map) => {
-    const L = [];
-    const put = (k, v) => { L.push(String(k)); L.push(String(v)); };
-    put(0, "SECTION"); put(2, "ENTITIES");
-    const poly = (pts, layer, closed = true) => {
-      put(0, "POLYLINE"); put(8, layer); put(66, 1); put(70, closed ? 9 : 8);
-      for (const p of pts) {
-        put(0, "VERTEX"); put(8, layer); put(70, 32);
-        put(10, p[0].toFixed(4)); put(20, p[1].toFixed(4)); put(30, (p[2] ?? 0).toFixed(4));
-      }
-      put(0, "SEQEND"); put(8, layer);
-    };
-    // The throat layer is the true throat-plane outline at z = 0. Intermediate
-    // stations are sections PERPENDICULAR to each cell's own centreline, so
-    // they are tilted — that is what a loft wants, and why they are not simply
-    // the throat outline pushed along z.
-    throat.cells.forEach((cc) => poly(cc.poly.map((p) => [p[0], p[1], 0]), "STATION_00_THROAT"));
-    if (map) {
-      for (let q = 1; q <= stations; q++) {
-        const sec = map.sectionAt(q);
-        const name = q === stations ? `STATION_${String(q).padStart(2, "0")}_MOUTH` : `STATION_${String(q).padStart(2, "0")}`;
-        sec.forEach((sc) => sc && poly(sc.pts, name));
-      }
-    }
-    put(0, "ENDSEC"); put(0, "EOF");
-    return L.join("\n");
-  };
-
-  const buildJSON = (map) => JSON.stringify({
-    tool: "ginkgo multicell horn",
-    units: "mm, Hz, degrees",
-    driver: { exitDiameter: exitDia, exitHalfAngle: exitAngle, temperature, speedOfSound: c },
-    topology: {
-      nCols: shown.nc, nRows: shown.nr,
-      cornerAlphaDeg: alphaEff, equalArcAlphaDeg: G.equalArcAlphaDeg(shown.nc, shown.nr),
-      seed, singularVertices: singular.length,
-      lineShapes: {
-        shapeOrder, symmetric, chebyshevOrders: cfg.orders,
-        freeParameters: cfg.nParams, independentConstraints: cfg.nConstraints, spare: cfg.spare,
-        parameters: labels.map((l, i) => ({
-          group: l.group, name: l.name, kind: l.kind,
-          requested: +pReq[i].toFixed(8), achieved: +pOut[i].toFixed(8),
-        })),
-      },
-    },
-    solve: {
-      converged: solve.converged,
-      reason: solve.reason || undefined,
-      openAreaSpreadPercent: throat.spread,
-      areaResidual: solve.residual,
-      correctionNorm: solve.correction,
-      monotonicityGap: solve.monotone ? solve.monotone.gap : undefined,
-      note: "Areas are equal to the solver tolerance reported here, not by construction.",
-    },
-    aperture: map && map.biradial ? {
-      type: "biradial swept arc, no apex",
-      coverageDeg: { h: thetaH, v: thetaV },
-      arcLength: { h: arcH, v: arcV },
-      radius: { h: map.biradial.rH, v: map.biradial.rV },
-      sagitta: { h: map.biradial.sagH, v: map.biradial.sagV },
-      chord: { w: map.mouthWEff, h: map.mouthHEff },
-      axialDepth: depth, mouthAreaTotal: map.mouthAreaTotal,
-      copedJoints: map.bulge ? {
-        bulgeAmpMm: map.bulge.amp,
-        doubleCountPercent: +map.bulge.doubleCountPct.toFixed(3),
-        note: "mouthAreaTotal is the union (= the tiled aperture); per-cell mouth areas are the bulged outlines the expansion law lands on",
-      } : null,
-      separation: map.separate ? {
-        ampMaxMm: +map.separate.ampMax.toFixed(3), cells: map.separate.cells,
-      } : null,
-    } : null,
-    cells: throat.cells.map((cc) => {
-      const r = map && map.rows.find((x) => x.id === cc.id);
-      return {
-        id: cc.id, label: cc.label, i: cc.i, j: cc.j,
-        throatBoundary: cc.poly.map((p) => [+p[0].toFixed(4), +p[1].toFixed(4), 0]),
-        centroid: cc.centroid.map((v) => +v.toFixed(4)),
-        area: +cc.area.toFixed(4), openArea: +cc.open.toFixed(4),
-        Llong: +cc.Llong.toFixed(4), Lshort: +cc.Lshort.toFixed(4), aspect: +cc.aspect.toFixed(4),
-        f1: +cc.f1.toFixed(1), f1model: cc.f1model, convex: cc.convex,
-        aimVector: r ? r.mouthNormal.map((v) => +v.toFixed(6)) : null,
-        pathLength: r ? +r.Lpath.toFixed(4) : null,
-        sBendPadding: r ? +r.pad.toFixed(4) : null,
-        turnDeg: r ? +r.turnDeg.toFixed(3) : null,
-        twistDeg: r ? +r.twistDeg.toFixed(3) : null,
-        aimErrorDeg: r ? +r.aimErrDeg.toFixed(3) : null,
-        areaSchedule: r ? r.sched.map((st) => ({ s: +st.s.toFixed(4), area: +st.area.toFixed(3), z: +st.z.toFixed(3), sLength: +st.sLen.toFixed(3) })) : null,
-        stations: r ? r.sched.map((st, q) => (st.pts && map ? (map.sectionAt(q).find((x) => x && x.id === cc.id) || {}).pts.map((p) => p.map((v) => +v.toFixed(4))) : null)) : null,
-      };
-    }),
-  }, null, 1);
-
-  const buildCSV = (map) => {
-    // The deferred clearance belongs to the PREVIEW map; the CSV ships the
-    // export-resolution geometry, so its clearance is measured on that map
-    // here, at the click.
-    const clrNow = map && map.rows.length && map.rows[0].sched[0].pts
-      ? G.ductClearance(map.rows) : null;
-    const head = [
-      "cell", "i", "j", "kind", "area_mm2", "open_area_mm2", "L_long_mm", "L_short_mm",
-      "aspect", "diameter_mm", "convex", "pw_floor_Hz",
-      "f1_Hz", "f1_model", "centroid_x", "centroid_y",
-      "path_length_mm", "s_pad_mm", "turn_deg", "twist_deg", "aim_err_deg",
-      // the expansion profile, per cell. Empty when no law is imposed.
-      "profile_T", "hypex_m_per_mm", "fc_Hz", "expansion_ratio", "k_min", "k_max", "min_gap_mm",
-      // lateral bow amplitude from path lengthening; empty when it is off
-      "bow_amp_mm",
-      // separation displacement, empty when no field is applied
-      "sep_amp_mm",
-    ].join(",");
-    const rows = throat.cells.map((cc) => {
-      const r = map && map.rows.find((x) => x.id === cc.id);
-      return [
-        // the label is "col,row" — it must be quoted or it splits the row
-        `"${cc.label}"`, cc.i ?? "", cc.j ?? "", cc.kind, cc.area.toFixed(4), cc.open.toFixed(4),
-        cc.Llong.toFixed(4), cc.Lshort.toFixed(4), cc.aspect.toFixed(4), cc.dia.toFixed(4),
-        cc.convex, cc.pwFloor ? cc.pwFloor.toFixed(1) : "", cc.f1.toFixed(1), `"${cc.f1model}"`,
-        cc.centroid[0].toFixed(4), cc.centroid[1].toFixed(4),
-        r ? r.Lpath.toFixed(4) : "", r ? r.pad.toFixed(4) : "", r ? r.turnDeg.toFixed(3) : "",
-        r ? r.twistDeg.toFixed(3) : "", r ? r.aimErrDeg.toFixed(3) : "",
-        profileT != null ? profileT.toFixed(4) : "",
-        r && r.profM != null ? r.profM.toExponential(6) : "",
-        r && r.profFc != null ? r.profFc.toFixed(2) : "",
-        r && r.profRatio != null ? r.profRatio.toFixed(6) : "",
-        r && r.profM != null ? r.profScaleMin.toFixed(6) : "",
-        r && r.profM != null ? r.profScaleMax.toFixed(6) : "",
-        clrNow && clrNow.perCell.has(cc.id) && profileT != null
-          ? clrNow.perCell.get(cc.id).toFixed(4) : "",
-        map && map.lengthen && r ? r.snakeAmp.toFixed(3) : "",
-        map && map.separate && r ? r.sepAmp.toFixed(3) : "",
-      ].join(",");
-    });
-    return [head, ...rows].join("\n");
-  };
-
-  const buildSigmaCSV = (map) => {
-    if (!map) return "";
-    const head = "station,s,axial_z_mm,developed_s_mm,section_area_mm2,flux_area_mm2,equivalent_diameter_mm";
-    const rows = map.sigma.map((g, q) =>
-      [q, g.s.toFixed(4), g.zMean.toFixed(3), g.sMean.toFixed(3), g.area.toFixed(3),
-       g.axial.toFixed(3), (2 * Math.sqrt(g.axial / Math.PI)).toFixed(3)].join(","));
-    return [
-      "# Sum of cell cross-sections along the loft, for Hornresp / ABEC.",
-      "# s is the fraction of each cell's own developed path, so axial_z and",
-      "# developed_s are MEANS across cells whose paths differ in length.",
-      "# Both are measured at the SECTION CENTROIDS, not on the centreline:",
-      "# the two drift apart by up to ~4.5 mm on a wide-coverage mouth, and",
-      "# attributing an area to the centreline's position would put the",
-      "# schedule that far out of register with the areas it reports.",
-      "# section_area is the sections' own area; flux_area is their projection",
-      "# on the direction of travel. A flowed section is a level set of the",
-      "# flow, not a cut square to the path, so the two differ by the section's",
-      "# obliquity. USE flux_area for a 1-D horn schedule — it is the",
-      "# cross-section normal to propagation, and equivalent_diameter follows",
-      "# it. It is NOT exactly what integrates to the duct volume: that is the",
-      "# vector area dotted with the centroid step, which differs because",
-      "# flux_area projects on the centreline tangent while the volume",
-      "# advances along the section's own displacement.",
-      profileT != null
-        ? `# Hypex expansion profile imposed, T = ${profileT.toFixed(3)}, f_c = ${fmt(map.profFcMin, 0)}-${fmt(map.profFcMax, 0)} Hz.`
-        : "# NO expansion law is imposed: this schedule is whatever the routing produced.",
-      head, ...rows,
-    ].join("\n");
-  };
+  // THE OTHER EXPORT FORMATS WERE REMOVED ON 2026-09-04 (owner's call): DXF
+  // (one layer per station), the JSON cell definition, the per-cell CSV and
+  // the sigma-A(x) CSV. Only the three that carry a SOLID survive — the STL,
+  // the duct STEP and the shell STEP kit — because those are the ones the
+  // horn is actually made from. The sigma-A(x) CSV was the tool's only route
+  // into a 1-D simulator (Hornresp / ABEC), so that handoff is gone with it
+  // and `sigma` went from the model in the same pass; it is a short function
+  // over the schedule if it is ever wanted back.
 
   // ── throat plan ────────────────────────────────────────────────────────────
   const fLo = Math.min(...throat.cells.map((x) => x.f1));
@@ -1850,18 +1722,36 @@ export default function GinkgoHorn() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: lengthenOn ? 1 : 0.4 }}>
           <span style={{ fontSize: 10, color: C.inkMuted }}>bow region</span>
           <input type="range" min={0} max={0.9} step={0.01} value={bowFrom} disabled={!lengthenOn}
-            onChange={(e) => setBowFrom(Math.min(parseFloat(e.target.value), bowTo - 0.1))}
+            onChange={(e) => setBowFrom(clampFrom(parseFloat(e.target.value)))}
             style={{ width: 100, accentColor: C.series1 }} />
           <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowFrom.toFixed(2)}</span>
           <span style={{ fontSize: 10, color: C.inkMuted }}>to</span>
           <input type="range" min={0.1} max={1} step={0.01} value={bowTo} disabled={!lengthenOn}
-            onChange={(e) => setBowTo(Math.max(parseFloat(e.target.value), bowFrom + 0.1))}
+            onChange={(e) => setBowTo(clampTo(parseFloat(e.target.value)))}
             style={{ width: 100, accentColor: C.series1 }} />
           <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowTo.toFixed(2)}</span>
-          {[["throat half", 0, 0.5], ["throat third", 0, 1 / 3],
-            ["throat quarter", 0, 0.25], ["throat fifth", 0, 0.2]].map(([l, a, b]) => (
-            <button key={l} onClick={() => { setBowFrom(a); setBowTo(b); }} disabled={!lengthenOn}
-              style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
+        </div>
+        {/* STEPPERS, NOT PRESETS (owner's call, 2026-09-04). The named presets
+            all started the window at u = 0, and a bow that starts at the
+            throat is the one thing measured to drive the ducts through each
+            other — the same horn reads -0.09 mm unbowed and -5.53 mm with a
+            1-lobe bow over [0, 0.25], while every start at u >= 0.10 leaves
+            the gap bit-identical to unbowed. So the presets were four ways of
+            asking for the expensive case. A stepper moves one end by one
+            hundredth of a path at a time, which is the resolution the
+            clearance readout actually responds to; the same clamp the sliders
+            use keeps the window at least 0.1 of a path wide. */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6, opacity: lengthenOn ? 1 : 0.4 }}>
+          {[["start", bowFrom, (d) => setBowFrom(clampFrom(bowFrom + d))],
+            ["end", bowTo, (d) => setBowTo(clampTo(bowTo + d))]].map(([lab, val, mv]) => (
+            <div key={lab} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, width: 30 }}>{lab}</span>
+              {[[-0.05, "\u2212\u2212"], [-0.01, "\u2212"], [0.01, "+"], [0.05, "++"]].map(([d, l]) => (
+                <button key={d} onClick={() => mv(d)} disabled={!lengthenOn}
+                  style={{ ...btn(false, C.series7), minWidth: 26 }}>{l}</button>
+              ))}
+              <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim, width: 30 }}>{val.toFixed(2)}</span>
+            </div>
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: lengthenOn ? 1 : 0.4 }}>
@@ -2089,10 +1979,6 @@ export default function GinkgoHorn() {
 
       <Stage n={9} title="Export" why="exports build at full resolution on click; the preview stays at 24 stations">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button style={expBtn} onClick={() => dl(`${stem}.dxf`, buildDXF(exportMap()), "application/dxf")}>DXF · one layer per station</button>
-          <button style={expBtn} onClick={() => dl(`${stem}.json`, buildJSON(exportMap()), "application/json")}>JSON cell definition</button>
-          <button style={expBtn} onClick={() => dl(`${stem}.csv`, buildCSV(exportMap()), "text/csv")}>CSV · per cell</button>
-          <button style={expBtn} disabled={!map} onClick={() => dl(`${stem}_area_schedule.csv`, buildSigmaCSV(exportMap()), "text/csv")}>ΣA(x) CSV</button>
           <button style={expBtn} disabled={!map} onClick={() => {
             const solids = G.ductSolids(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null });
             if (solids) dlBin(`${stem}_ducts${regTag}.stl`, G.buildSTL(solids, stem), "model/stl");
@@ -2115,9 +2001,18 @@ export default function GinkgoHorn() {
             setStepNote({ ok: true, msg: "building the shell — offsetting each duct outwards…" });
             setTimeout(() => {
             const em = exportMap();
+            // THE THROAT IS ALWAYS PLAIN. Its face is made by the loft's own
+            // end ring, which is planar in z = 0 by construction, and the
+            // kernel is asked for no cut there at all — which is exactly the
+            // operation (a plane split at z = 0) that has been measured
+            // failing on individual blanks. The extend/trim options for this
+            // end were removed on 2026-09-04: plain is what the owner has
+            // been exporting and what has worked. The price is the 27 pairs
+            // of coplanar overlapping throat caps coming back, and that is
+            // the accepted trade, not an oversight.
             const cfg = {
-              t: thickness, wall: shellWall, jitter: wallJitter, stations: shellStations,
-              extendThroat: endCfg(throatEnd).extend, trimThroat: endCfg(throatEnd).trim,
+              t: thickness, wall: shellWall, stations: shellStations,
+              extendThroat: false, trimThroat: false,
               extendMouth: endCfg(mouthEnd).extend, trimMouth: endCfg(mouthEnd).trim,
             };
             const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell` });
@@ -2131,13 +2026,12 @@ export default function GinkgoHorn() {
             // whole shared face; once 2·wall passes a cell's width, the blanks
             // on either side of that cell reach past each other and solids that
             // share no edge at all share material.
-            // Does the loft run past its own throat cap? Only meaningful when
-            // the throat is extended — a plain throat stops at its end ring.
-            const ov = endCfg(throatEnd).extend
-              ? G.shellCapOvershoot(throat, em, { t: thickness, wall: shellWall, jitter: wallJitter, stations: shellStations })
-              : null;
+            // The throat cap overshoot is not measured any more: it is a
+            // property of the EXTENSION ring the uniform loft parameterisation
+            // mis-spaces, and a plain throat has no extension ring at all —
+            // the wall stops exactly on its own end ring, measured 0.
             const cw = G.throatCellWidth(throat, em, { t: thickness });
-            const span = 2 * shellWall + wallJitter;
+            const span = 2 * shellWall;
             const reaches = cw && span > cw.min;
             // A region export rests on a mirror, so the mirror is MEASURED
             // rather than assumed — a world-axis bow breaks one of them.
@@ -2152,12 +2046,10 @@ export default function GinkgoHorn() {
             setStepNote({
               ok,
               msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
-                co ? ` · near-copy surface ${fmt(co.arc, 1)} mm${co.arc > 1 ? " — RAISE THE JITTER" : ""}` : ""}${
+                co ? ` · near-copy surface ${fmt(co.arc, 1)} mm` : ""}${
                 sov ? ` · blanks share material over ${fmt(sov.fracTouching * 100, 0)}% of the path` : ""}${
-                ov ? ` · throat cap overshoot ${fmt(ov.worst, 3)} mm${
-                  ov.worst > 1e-3 ? ` at cell ${ov.at} — the extension is ${fmt(ov.minRatio, 2)}x the station step, RAISE IT ABOVE 0.5x OR USE A PLAIN THROAT` : ""}` : ""}${
                 cw ? ` · throat cells ${fmt(cw.min, 1)}-${fmt(cw.max, 1)} mm wide against 2x wall ${fmt(span, 1)} mm${
-                  reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt((cw.min - wallJitter) / 2, 2)} mm to stop it` : ""}` : ""}${
+                  reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt(cw.min / 2, 2)} mm to stop it` : ""}` : ""}${
                 r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
                   mirWorst > 1e-3 ? " — MIRROR BROKEN, this region is not the whole horn" : ""}${
                   r.region.onPlane.length ? `, ${r.region.onPlane.length} cell(s) on the plane (${r.region.onPlane.join(" ")}) — do not duplicate them` : ""}` : ""} · ${
@@ -2183,8 +2075,8 @@ export default function GinkgoHorn() {
               }
             }
             const r = lab && G.buildShellSTEP(throat, em, {
-              t: thickness, wall: shellWall, jitter: wallJitter,
-              extendThroat: endCfg(throatEnd).extend, extendMouth: endCfg(mouthEnd).extend,
+              t: thickness, wall: shellWall,
+              extendThroat: false, extendMouth: endCfg(mouthEnd).extend,
               stations: shellStations, only: lab, params: exportParams(), name: `${stem}_twocell`,
             });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
@@ -2197,14 +2089,13 @@ export default function GinkgoHorn() {
             });
             if (ok) dl(`${stem}_twocell.step`, r.text, "application/step");
           }}>STEP · two-cell test</button>
-          {[["throat", throatEnd, setThroatEnd], ["mouth", mouthEnd, setMouthEnd]].map(([lab, val, set]) => (
-            <div key={lab} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, width: 40 }}>{lab}</span>
-              {[["trim", "extend + trim"], ["extend", "extend only"], ["plain", "plain"]].map(([v, l]) => (
-                <button key={v} onClick={() => set(v)} style={btn(val === v, C.series2)}>{l}</button>
-              ))}
-            </div>
-          ))}
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, width: 40 }}>mouth</span>
+            {[["trim", "extend + trim"], ["extend", "extend only"], ["plain", "plain"]].map(([v, l]) => (
+              <button key={v} onClick={() => setMouthEnd(v)} style={btn(mouthEnd === v, C.series2)}>{l}</button>
+            ))}
+            <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>· throat is always plain</span>
+          </div>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>region</span>
             {[[0, "both"], [1, "+x"], [-1, "\u2212x"]].map(([v, l]) => (
@@ -2222,11 +2113,6 @@ export default function GinkgoHorn() {
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
             shell wall (mm)
             <input type="number" value={shellWall} min={0.5} max={20} step={0.5} onChange={(e) => setShellWall(Math.max(0.5, Math.min(20, parseFloat(e.target.value) || 3)))}
-              style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
-          </label>
-          <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
-            wall jitter (mm)
-            <input type="number" value={wallJitter} min={0} max={2} step={0.1} onChange={(e) => setWallJitter(Math.max(0, Math.min(2, parseFloat(e.target.value) || 0)))}
               style={{ ...sInput, width: 60, padding: "3px 5px", fontSize: 11 }} />
           </label>
           <label style={{ fontSize: 10, color: C.inkMuted, display: "flex", gap: 5, alignItems: "center" }}>
@@ -2256,21 +2142,26 @@ export default function GinkgoHorn() {
           no unions</strong>, and what comes back is {throat.N} cell shells of exactly {fmt(shellWall, 1)} mm wall.
           {" "}Adjacent blanks share material wherever their ducts run closer than {fmt(2 * shellWall, 0)} mm — most of the throat half of
           the horn — which is what a multicell's shared walls are.
-          {" "}<strong style={{ color: C.inkDim }}>The two ends are set separately, because they are not the same problem.</strong>
-          {" "}<em>Extend + trim</em> runs the blanks past that face (staggered per cell, so no two adjacent ones end on the same plane)
-          and ships the trim solid that cuts them back, so the union never touches that plane — where 54 of the measured degeneracies
-          lived, 27 pairs of coplanar throat caps and 27 of co-surface mouth caps. <em>Extend only</em> ships the overlength blanks and
-          leaves the cut to you. <em>Plain</em> makes the face from the loft's own end ring and asks for no cut there at all.
+          {" "}<strong style={{ color: C.inkDim }}>Only the mouth end is settable; the throat is always plain.</strong> At the mouth,{" "}
+          <em>extend + trim</em> runs the blanks past the aperture (staggered per cell, so no two adjacent ones end on the same surface)
+          and ships the trim solid that cuts them back, so the union never touches that face — where 27 of the measured degeneracies
+          lived, one pair of co-surface mouth caps per adjacent pair. <em>Extend only</em> ships the overlength blanks and leaves the cut
+          to you. <em>Plain</em> makes the face from the loft's own end ring and asks for no cut there at all.
           {" "}<strong style={{ color: C.inkDim }}>The mouth trim cuts on the aperture surface itself</strong>, a curved face the blanks
-          cross transversally, and it has never been reported failing. <strong style={{ color: C.inkDim }}>The throat trim cuts on the
-          plane z = 0</strong> — the same operation as a plane split at the throat, which has been measured failing on individual blanks.
-          On a <em>plain</em> throat the end ring is planar in z = 0 by construction and the wall stops exactly there; extended, the loft
-          runs up to 0.016 mm past its own cap plane on the shortest-extension cells, measured. The price of a plain throat is the
-          coplanar overlapping caps coming back, so it is a trade, not a fix.
-          {" "}The <em>wall jitter</em> gives cells of opposite grid parity different walls: without it two adjacent blanks each offset
-          the same shared grid line by the same amount, so millimetres of their surfaces are the same surface computed twice, landing
-          under a micron apart — invisible, and below what a kernel can resolve. The note measures how much near-copy surface is left;
-          raise the jitter if it is not zero.
+          cross transversally, and it has never been reported failing — which is why that end kept its options.
+          {" "}A throat trim would cut on the <strong style={{ color: C.inkDim }}>plane z = 0</strong>, the same operation as a plane split
+          at the throat, which has been measured failing on individual blanks. A plain throat's end ring is planar in z = 0 by construction,
+          the wall stops exactly there, and the kernel is asked for no cut at all. What it costs is the 27 pairs of coplanar overlapping
+          throat caps the extension existed to remove — an accepted trade, on the evidence that plain is what has been exporting cleanly.
+          {" "}<strong style={{ color: C.inkDim }}>The cutters extend 1 mm past each end face</strong>, not the blank's 3 mm. All a cutter
+          has to clear is the cap-fill sag — how far the Coons fill of a mouth ring falls behind the aperture — and per cell that is
+          1e-13 mm on this vertically flat mouth, 0.018 mm at 90×40 and 0.038 mm at 90×60, so 1 mm leaves nearly all of itself as margin.
+          The blank's extension answers a different constraint and stays at 3 mm.
+          {" "}The note reports how much <em>near-copy surface</em> the kit carries: two adjacent blanks offset the same shared grid line
+          by the same amount, so millimetres of their surfaces are the same surface computed twice, landing under a micron apart —
+          invisible, and below what a kernel can resolve. A per-parity wall jitter that removed it was withdrawn on CAD evidence that it
+          changed no boolean outcome, so the figure now stands as a reported property rather than a knob's readout. What does sort the
+          unions is <strong style={{ color: C.inkDim }}>adjacency</strong>: 8 of 8 non-adjacent pairs have succeeded, 2 of 13 orthogonal.
           {" "}<strong style={{ color: C.inkDim }}>The wall has to be read against the throat cell width.</strong> The cells tile
           there, so each blank pushes the wall into its neighbour across the whole shared face; once 2x the wall passes a cell's width,
           the blanks on either side of that cell reach past each other and solids that share no edge at all share material. Measured at
@@ -2284,10 +2175,6 @@ export default function GinkgoHorn() {
             their own mirror image, so they are exported whole and must not be duplicated when the region is mirrored back.</> : null}
           {" "}The note measures the mirror it rests on rather than assuming it \u2014 a bow whose direction is a world axis breaks one of
           them outright, and the region would then be a different horn from the side it is meant to stand for.
-          {" "}<strong style={{ color: C.inkDim }}>Do not mirror a shell half and union it to itself</strong>: the wall jitter is keyed to
-          grid parity, so a mirrored copy carries the SAME wall as the cell it now sits beside, which is exactly the near-copy surface the
-          jitter exists to break. Export the opposite side here instead \u2014 the passages are mirror images either way, it is only the
-          blanks' walls that differ.
           {" "}<em>Shell stations</em> trades knots for fidelity: halving them measured 0.105 mm of departure from the full-station loft,
           and fewer knots is a better-conditioned boolean. Never offset one of our faces in CAD — that extrapolates the wall surfaces past
           their range and the corner identity breaks (a +1 mm throat offset succeeded and +2 mm failed); ask for the extension here instead,
@@ -2296,7 +2183,7 @@ export default function GinkgoHorn() {
           that outer rim edge is the one to fillet against edge diffraction. The wall is exactly {fmt(shellWall, 1)} mm on every face at
           every station — the blank is an offset of the duct's own rings, not a shape fitted to them — with two stated exceptions: a mitred
           corner reaches further than the wall by construction (1/sin of the half-angle), and the mouth lip measures about 0.26 mm under
-          because it is snapped onto the curved aperture. DXF is 2-D per plane, so only the throat layer imports as a sketch.
+          because it is snapped onto the curved aperture.
         </div>
       </Stage>
 

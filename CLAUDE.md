@@ -307,10 +307,17 @@ render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
 the longest cell's length in swept mode, and the tool previews the exported
 duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
 rule stands). The physical horn ships as a shell STEP kit — ONE BLANK AND ONE
-CUTTER PER CELL, N independent subtractions and no unions (`buildShellSTEP`;
-see the shell findings below, and read the evaluated-vs-searched rings finding
-before proposing any other shell construction). The canvas shows the AIR ONLY:
-a "horn" view was built twice and dropped at the owner's call.
+CUTTER PER CELL (`buildShellSTEP`; see the shell findings below, and read the
+evaluated-vs-searched rings finding before proposing any other shell
+construction). With the throat plain and the mouth extended, which is what
+ships, the CAD work is: union the N blanks, subtract the mouth trim, subtract
+the N cutters. The canvas shows the AIR ONLY: a "horn" view was built twice
+and dropped at the owner's call.
+**THE ONLY EXPORTS ARE THE THREE THAT CARRY A SOLID** — the STL, the duct
+STEP and the shell STEP kit (plus the two-cell test, which is the shell format
+on one adjacent pair). The DXF, JSON, per-cell CSV and ΣA(x) CSV were removed
+on 2026-09-04; with the last of those went the tool's only route into a 1-D
+simulator.
 
 Without a law imposed the schedule is still the emergent by-product it always
 was, and that setting is kept so the two can be compared: measured at 6x3, the
@@ -320,6 +327,125 @@ poorly-loaded case. That is the thing to move off, and the reason the profile
 exists.
 
 ## Known findings worth not re-deriving
+
+- **THE 2026-09-04 PASS REMOVED FOUR EXPORT FORMATS, THE WALL JITTER AND THE
+  THROAT-END OPTIONS, AND DROPPED THE CUTTER EXTENSION TO 1 mm. Read this
+  before hunting for something a note mentions.** Gone from the UI: the DXF
+  (one layer per station), the JSON cell definition, the per-cell CSV and the
+  ΣA(x) CSV. Gone from the model with them: `mapThroatToMouth`'s `sigma` (the
+  ΣA CSV was its only consumer), `cellParity` and every `jitter` argument.
+  **THE ΣA(x) CSV WAS THE TOOL'S ONLY ROUTE INTO A 1-D SIMULATOR** (Hornresp
+  / ABEC), so that handoff no longer exists; `sched[q].axial` — the projection
+  on the direction of travel, which is the flux-carrying cross-section a 1-D
+  schedule means, and which differs from the section's own `area` by up to
+  14.5% at 6x3 — is still on every row, so rebuilding it is a dozen lines.
+  Only the three exports that carry a SOLID survive: the STL, the duct STEP
+  and the shell STEP kit. The two-cell test was kept because it is the same
+  shell format on two cells, not a fourth format, and it is the documented
+  repro to reach for before exporting a full kit.
+
+- **A CUTTER NEEDS 1 mm, NOT 3, AND THE COMMENT THAT SAID OTHERWISE WAS
+  QUOTING A WHOLE-HORN NUMBER AT A PER-CELL CAP.** `extendSections`'s note
+  read "ext must exceed the cap-fill sag difference ... (order 1 mm on these
+  mouths); the default of 3 mm clears it with margin", and the ~1 mm came
+  from the deleted one-body construction, whose single cap spanned the whole
+  aperture (measured 5.6 mm there). A cutter's cap spans ONE CELL, and the
+  sag scales with the patch, so the two are three orders apart. Measured over
+  all 18 cells, worst sag of the duct mouth ring's Coons fill behind the
+  aperture, along the ring's own vector-area normal:
+    mouth              90x0 (shipped)   90x40      90x60
+    worst cap sag      1.2e-13 mm       0.018 mm   0.038 mm
+  The shipped mouth reads ZERO for a structural reason, not by luck: Th_v = 0
+  makes the aperture a CYLINDER — a ruled surface — and a Coons patch whose
+  sides run along the rulings lies on it exactly. At the throat there is
+  nothing to clear at all, both faces being parallel planes. So `cutterExt`
+  is now its own parameter at 1 mm, leaving 0.96 mm of margin on the worst
+  mouth curvature tried, and the extended cutter's mouth ring measures
+  0.9915 mm off the aperture (the 0.85% is the cosine between the ring's
+  vector-area normal and the aperture's local normal, not a shortfall).
+  **THE BLANK'S `ext` STAYS AT 3 mm because it answers a different
+  constraint**: it has to exceed about 0.4 of a station step or the uniformly
+  parameterised loft overshoots BACKWARDS through its own cap plane. The two
+  were one number and are no longer.
+
+- **THE THROAT RULE IS MONOTONE, NOT A RATE — there is no "how fast must the
+  cells expand" setting in this tool, and the min-gap number does not become
+  one.** Asked directly (owner, 2026-09-04) whether a rate set too high would
+  make the cells fan out from the throat unnecessarily. It cannot, because no
+  rate is ever asked for: a pair's throat run ends the moment the gap either
+  reaches the floor or DECREASES from the station before it, with a tolerance
+  of 1e-6 mm that is float noise rather than slack. The weakest requirement
+  that still refuses to call closing ducts a knife edge, and it is the whole
+  rule. Measured on the shipped horn at 64 stations, sweeping the floor over
+  the whole range the UI can ask for:
+    floor (mm)        0.1     0.5     1.0     1.5     2.0     3.0
+    minMid, no bow  -0.0531 -0.0531 -0.0531 -0.0531 -0.0531 -0.0531
+    throat.dip       0.0531  0.0531  0.0531  0.0531  0.0531  0.0531
+    knife reach          1       4       6       8      10      13  stations
+    thin count           6      24      36      48      60      88
+    saturated            0       0       0       0       0       0  of 47
+  **The defect gap and the dip are BIT-IDENTICAL at every floor**, which is
+  the point: the floor cannot forgive a dive and cannot invent one. What it
+  moves is how far the knife-edge run reaches and how many wall slivers fall
+  inside the thin band.
+  **WHAT THE FLOOR DOES CHANGE IS THE SEPARATION SOLVE'S WINDOW, AND IT
+  WIDENS THE END, NOT THE START.** `solveSeparation` derives its window from
+  the stations whose defect gap is under the floor, and the start is clamped
+  at u = 0.02 regardless. Measured on the shipped horn:
+    floor        0.5              1.0              1.5              2.0
+    no bow   [0.020, 0.244]   [0.020, 0.275]   [0.020, 0.306]   [0.020, 0.338]
+    bowed    [0.020, 0.291]   [0.020, 0.291]   [0.020, 0.322]   [0.020, 0.353]
+  So raising the minimum gap 0.5 -> 1.5 mm asks the field to act over more of
+  the path, never earlier on it. Where the fanning starts is set by where the
+  defect stations start — station 1 or 2, because the cells TILE at station 0
+  — and that is a property of the geometry, not of this number.
+  The floor's third job is the one worth watching: it is also `thinBand`, so
+  raising it 0.5 -> 1.5 takes the thin-sliver count 24 -> 48 on the unbowed
+  default horn. Those are readouts of the same walls, not new defects.
+
+- **THE BOW REGION DEFAULT MOVED TO [0.02, 0.22] WITH GRADE 0.15 (owner's
+  numbers, 2026-09-04), AND IT IS A REAL IMPROVEMENT ON WHAT IT REPLACED —
+  but it is still nowhere near what moving the region off the throat buys.**
+  The named presets went with it: all four started the window at u = 0, which
+  is the one case measured to drive the ducts through each other, so they
+  were four ways of asking for the expensive geometry. Steppers of ±0.01 and
+  ±0.05 replace them. Measured at 6x3, m 3, arcs 500x245, depth 300, T 0.7,
+  1-lobe radial, 64 stations, diagonals included:
+    region / grade        dL      amp    foldMin   worst gap   thin@1.5
+    off (shipped)       14.67       -    153.33     -0.053        48
+    [0.00, 0.20] g0.00   0.00    20.7      2.99     -7.436        22
+    [0.02, 0.22] g0.15   0.00    21.3      1.77     -3.967        12
+    [0.02, 0.22] g0.00   0.00    20.8      2.69     -6.462        19
+    [0.10, 0.30] g0.15   0.00    22.0      0.30     -2.396        30
+    [0.30, 0.95] g0.15   0.00    34.1     12.61     -0.050        48
+  Three things to read off it. The new default is **47% better on the worst
+  gap** than the old one (-3.97 against -7.44), and the GRADE is doing most of
+  that (-6.46 at grade 0 on the same window), which is the graded-region
+  mechanism working exactly as its own finding predicts. It pays in fold
+  margin — 2.99 -> 1.77 mm — because a narrowed window is a steeper turn, and
+  1.77 mm is thin enough to read before changing anything else. And the
+  comparison that still stands: **[0.30, 0.95] measures -0.050 mm, which is
+  bit-identical to the unbowed horn, with 12.61 mm of fold margin and the same
+  dL of exactly 0.** A window off the throat is free; [0.02, 0.22] costs
+  3.9 mm of interpenetration and buys acoustic placement with it. The 0.02
+  start does NOT clear the tiling region — the measured cliff is at u ~ 0.10,
+  not 0.02 — so this is a deliberate trade, not a fix, and the UI warns when
+  the worst overlap lands inside the window.
+  **AND THE DEPTH BUYS BOTH BACK, WHICH IS THE FOURTH TIME THIS FILE HAS
+  REACHED THAT CONCLUSION BY A DIFFERENT ROUTE.** Same bow, same grade,
+  sweeping only the axial depth:
+    depth        300     310    319.5     330      357
+    dL          0.00    0.00    0.00     0.00     0.00  mm
+    bow amp     21.3    21.2    21.0     22.4     26.1  mm
+    foldMin     1.77    3.07    4.51     5.10     4.94  mm
+    worst gap  -3.967  -2.665  -0.169   -0.004  +1.517  mm
+    contraction 0.00%   0.00%   0.00%    0.00%    0.00%
+  319.5 is this mouth's dL optimum. There the fold margin is back to 4.51 mm
+  and the interpenetration collapses from 3.97 mm to 0.17 — with the same bow,
+  in the same window, at zero cost in dL — and by 357 it clears the new 1.5 mm
+  floor outright. Moving the REGION instead is not the cheaper fix on this
+  horn: [0.10, 0.30] measures -2.40 mm but takes the fold margin to 0.30 mm,
+  worse than doing nothing. Solve the depth first.
 
 - **THE 2026-09-03 HOUSEKEEPING PASS DELETED THE O-GRID AND THREE DEAD
   SOLVERS. Read this before hunting for a function a note mentions.** Gone
@@ -359,7 +485,7 @@ exists.
   top of the file. `normalAt` used to blend z-hat, the tangent and the
   aperture normal over the WHOLE path on a quadratic Bernstein basis, so the
   tangent's weight was 2u(1-u) — never above 0.5, and 0.06 at u = 0.03, which
-  is exactly where the shipped throat-fifth bow puts all of its curvature.
+  is exactly where the then-shipped throat-fifth [0, 0.2] bow puts all of its curvature.
   Measured at the 2026-09-01 defaults with that bow, cell 4,2: the direction
   of travel was 56.5 deg off z-hat while the section plane had moved 3.0 deg,
   so the section ran **53.6 deg oblique**, and the TRUE perpendicular passage
@@ -469,7 +595,7 @@ exists.
     bendFoldMin      (shipped bow)       4.454 -> 3.034 mm   -31.9%
   So the sampling was never distorting the horn; it was mis-reading ONE
   metric, and in the optimistic direction. Convergence and cost, on the
-  shipped throat-fifth bow:
+  then-shipped throat-fifth [0, 0.2] bow:
     samples     64     128     256     512    1024    2048
     foldMin   4.455   3.980   3.349   3.034   2.871   2.853  mm
     error      +56%    +40%    +17%   +6.3%   +0.6%    0.0%
@@ -1001,17 +1127,25 @@ exists.
   INSIDE the domain, so the corner has to be healed and the discrepancy
   grows with distance. `extendSections` prepends a REAL ring instead, so the
   extension is part of the loft. That is why the cutters have never failed.
-- **THREE SWITCHES MAKE THE UNION TRACTABLE, and each is justified by the
-  number it moves.** All three leave the passages untouched — the cutters
-  are unchanged — and all three are measured on every export.
-  (1) `jitter` (default 0.5 mm): cells of opposite grid parity get different
-  walls, so no face is ever a near-copy of another. Orthogonal neighbours
-  always differ in parity, so the guarantee is structural. Measured
-  near-copy arc inside 50 um: **148 mm at jitter 0, 1.8 mm at 0.2, 0 at
-  0.4 and above**. WHICH value is clean is geometry-dependent (0.3 measured
-  85 mm on one map where 0.1 measured 17), so `shellCoincidence` MEASURES it
-  on every export and the note says to raise the jitter if anything is left.
-  The jitter only ever ADDS, so `wall` stays the minimum.
+- **TWO SWITCHES MAKE THE UNION TRACTABLE, and each is justified by the
+  number it moves.** Both leave the passages untouched — the cutters
+  are unchanged — and both are measured on every export.
+  (1) **`jitter` WAS THE THIRD AND IS GONE (owner's call, 2026-09-04), on the
+  owner's own CAD evidence rather than on a number here.** It gave cells of
+  opposite grid parity different walls, so no face was ever a near-copy of
+  another, and it worked on its own terms: near-copy arc inside 50 um went
+  **148 mm at jitter 0 to 1.8 mm at 0.2 and 0 at 0.4 and above**, structurally
+  guaranteed because orthogonal neighbours always differ in parity. What it
+  never did was change a boolean outcome the owner could observe, and the
+  finding that DOES sort the unions is adjacency (8 of 8 non-adjacent pairs
+  succeeding, 2 of 13 orthogonal). So it was measuring a real degeneracy that
+  is not the binding one. `shellCoincidence` still runs on every export and
+  the note still prints the arc — measured **148.2 mm in the browser at the
+  shipped defaults, 128.9 mm on the test geometry** — so the number stands as
+  a reported property of the kit rather than as a knob's readout. One small
+  gain came with the removal: the reach threshold is `2·wall` rather than
+  `2·wall + jitter`, so the wall that keeps blanks off their non-neighbours
+  goes from under 1.98 mm to under 2.23 mm on the tool's defaults.
   (2) `extend` (default on): the blanks run past both end faces, staggered
   per cell on a five-phase index that is guaranteed to differ between
   orthogonal neighbours, and two TRIM solids come with them — a slab below
@@ -1022,6 +1156,20 @@ exists.
   never touches an end plane and the two faces that must be exact are made
   by subtraction. `snapMouth` is off when extending: the trim makes that
   face, so the one-ring snap discontinuity is not needed.
+  **THE UI NOW OFFERS THIS AT THE MOUTH ONLY; THE THROAT IS PINNED PLAIN**
+  (owner's call, 2026-09-04, on the evidence that plain is what they have
+  been exporting and it has worked). The mouth trim cuts on the aperture
+  surface, which the blanks cross transversally and which has never been
+  reported failing; a throat trim would cut on the plane z = 0, the same
+  operation measured failing as a plane split on individual blanks. The
+  27/27 coplanar throat caps therefore come back, and that is the accepted
+  trade, not an oversight. Two things fall out of it: `shellCapOvershoot` is
+  no longer computed on an export (a plain throat has no extension ring, so
+  its overshoot is 0 by construction) and the shipped recipe is now
+  `union the N blanks (extended past the mouth face), subtract the mouth
+  trim, subtract the N cutters` — ONE trim, not two. The model keeps
+  `extendThroat` / `trimThroat` and their tests if the trade is ever worth
+  revisiting.
   (3) `stations` (default 32): the shell gets its own count, subsampled from
   the map's. Every wall face carries stations + 3 control points in v, and
   SSI of two nearly parallel high-knot NURBS is where a kernel spends its
@@ -1062,15 +1210,19 @@ exists.
   face offset alone does it: at the throat the cells TILE, so each blank pushes
   `wall` into its neighbour across the whole shared face, and the two blanks on
   either side of a narrow cell then meet inside it. Measured: throat cells
-  4.47-7.25 mm wide (duct rings, `throatCellWidth`) against 2·wall + jitter =
-  6.5 mm. Sweeping the wall moves both numbers together —
+  4.47-7.25 mm wide (duct rings, `throatCellWidth`) against 2·wall = 6.0 mm
+  (it was 2·wall + jitter = 6.5 mm before the jitter was removed).
+  Sweeping the wall moves both numbers together —
     wall           3.0   2.5   2.0   1.5   1.0
     throat stack     6     5     4     4     4
     area >=4 deep  309   226   133    69    26  mm2
     NON-adjacent    29    18     2     0     0  pairs of 153
-  — and the closed form predicts the crossing exactly: 2·wall + jitter is
+  — and the closed form predicts the crossing exactly: 2·wall + jitter was
   6.50 / 5.50 / 4.50 / 3.50 mm against a narrowest cell of 4.47, so the last
   clear wall is between 2.0 and 1.5, which is where the measurement puts it.
+  (Those figures were taken with jitter 0.5. Without it the span is 2·wall
+  exactly, which moves the threshold from under 1.98 mm to under 2.23 mm —
+  the same conclusion, a quarter of a millimetre more room.)
   **CLAMPING THE MITRE WAS TESTED AND IS NOT THE FIX**: a full round (clamp to
   1.0x wall, the tightest a corner can be without thinning the face) left the
   stack at 6 on the tool's defaults and took it 6 -> 5 on the test geometry,
@@ -1171,7 +1323,7 @@ exists.
   The test is a real TOKENISER over the header, not a substring search.
   **AND EVERY EXPORT NOW CARRIES THE SETTINGS THAT MADE IT**, as a second
   FILE_DESCRIPTION string: grid, R, t, seed, coverage, arcs, depth, T, section
-  mode, path knobs, bow/bulge/separate, wall, jitter, stations, region. A
+  mode, path knobs, bow/bulge/separate, wall, stations, region. A
   session was spent inferring wall, ext and the extension phases back out of an
   export's geometry, and depth and the arcs could not be recovered at all —
   which is why a per-body failure the owner reported could not be reproduced
@@ -1243,8 +1395,8 @@ exists.
   exact iso-curve, since the throat ring is planar in z = 0), with |dz/dv| >=
   294 mm per unit v, and no v-line crosses z = 0 more than once. So a failing
   split is not a wiggling wall.
-- **A HALF OR A QUARTER CAN BE EXPORTED (`xSide` / `ySide`), and the one thing
-  that does NOT survive mirroring is the wall jitter.** `symmetryRegion`
+- **A HALF OR A QUARTER CAN BE EXPORTED (`xSide` / `ySide`), and a cell that
+  sits ON a mirror plane is its own mirror image.** `symmetryRegion`
   selects cells by THROAT CENTROID, and a cell whose centroid sits ON a plane
   is its own mirror image: it is exported WHOLE and reported as `onPlane`, so
   it is never duplicated when the region is mirrored back. An odd row or
@@ -1257,13 +1409,14 @@ exists.
   axis with `dir: "y"`. The measurement pairs cells by mirrored centroid and
   compares each mirrored point against the partner's ring as a POLYLINE, so no
   index correspondence is assumed — a mirror reverses ring orientation.
-  **DO NOT MIRROR A SHELL HALF AND UNION IT TO ITSELF.** `jitter` is keyed to
-  grid PARITY, so a mirrored copy carries the same wall as the cell it now
-  sits beside and the near-copy surface the jitter exists to break comes
-  straight back at the seam. No label-based parity can fix this — the mirrored
-  solid is the same cell, so it carries the same number by construction.
-  Export the opposite side instead; the passages are mirror images either way
-  and only the blanks' walls differ.
+  **THE MIRRORING TRAP WENT WITH THE JITTER (2026-09-04).** While `jitter`
+  existed, mirroring a half and unioning it to itself brought the near-copy
+  surface straight back at the seam, because the jitter was keyed to grid
+  PARITY and the mirrored solid is the same cell carrying the same number.
+  With a single wall on every cell the two halves ARE exact mirror copies,
+  blanks included, so that is no longer a reason not to mirror. Exporting the
+  opposite side here is still the cleaner route, because `mirrorSymmetry`
+  then MEASURES the mirror on this geometry rather than assuming it.
 - **THE HORN SHELL IS EXPORTED AS ONE BLANK AND ONE CUTTER PER CELL, and the
   CAD work is N independent SUBTRACTIONS with no unions at all.** A blank is
   that cell's duct rings offset outward by `wall` on all four sides through
