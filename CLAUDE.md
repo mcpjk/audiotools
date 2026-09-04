@@ -1694,6 +1694,83 @@ exists.
   Higher floors saturate honestly: floor 1.0 reaches +0.73 at the 40 mm
   amplitude cap with dL 10.6 — the throat region genuinely runs out of
   room, and the report says so instead of pretending.
+- **THE LENGTHENING TARGET NEVER SEES THE SEPARATION FIELD, AND THAT STALE
+  TARGET IS AN ACCIDENTAL CLAMP — fixing it naively FOLDS the duct.**
+  `mapThroatToMouth` applies the separation displacement to each centreline
+  first and then runs the equalising bow on the separated path, which is
+  right and is what the comment says. But the bow's TARGET — the length
+  every cell is padded up to — is computed in its own loop over the BARE
+  trajectories and never sees the field. Sliding a duct sideways always
+  makes its path LONGER, and the bow can only ADD length, so any cell the
+  separation pushes past the old target is never caught up to. The leftover
+  spread is exactly the overshoot: measured at the defaults with the
+  throat-fifth bow, `Lmax - target` equals the reported dL to the last digit
+  in BOTH modes — 19.901 mm after repel (315.10 -> 335.00) and 0.910 after
+  nudge (315.10 -> 316.01). It is not repel-specific; whichever mode
+  displaces more overshoots more.
+  **THE OBVIOUS FIX MAKES THE HORN WORSE, and that is why this is recorded
+  rather than patched.** Simulated through the existing `lengthen.targetLen`
+  override — no code change needed to measure it — taking the target from the
+  separated paths closes dL to 0.000 in both modes and pays out of the fold
+  margin and the clearance, because every other cell must bow up to the
+  runaway one:
+                        dL      target   ampMax   fold     gap
+    nudge  today       0.910    315.1    20.5     2.77    -6.04
+    nudge  target fix  0.000    316.0    21.2     2.48    -6.10
+    repel  today      19.901    315.1    20.9     0.11    -4.31
+    repel  target fix  0.000    335.0    34.6    -1.10    -7.04  <- FOLDED
+  The cost scales with the overshoot: free at 0.9 mm, ruinous at 19.9 mm —
+  a 65% bigger bow, a folded duct and 2.7 mm more interpenetration. So the
+  stale target has been holding the bow down, and the fix is upstream.
+  **THE FIX SHIPPED IS A PATH-LENGTH BUDGET ON THE SOLVE, NOT A RE-TARGET.**
+  `solveSeparation` now scores on the gap AND on dL: a candidate can only
+  become the best state if `dL <= dLBefore + budget`, with the budget
+  lambda/8 at the partition target (2.18 mm at 20 kHz) — the same number
+  `band` and `wallSpreadMax` are already judged against, read from the
+  geometry rather than chosen. It is a bound on the GROWTH, so a horn whose
+  dL is already large (lengthening off) is held to what it has rather than
+  to zero. `dLOver`, `dLBudget` and `dLRefused` are reported, and the UI
+  names the mechanism rather than printing a bare number.
+  Measured at 20 rounds, before -> after the budget:
+    case                          gap            dL          refused
+    defaults + bow, nudge      -6.04  -6.04    0.91 -> 0.91      19
+    defaults + bow, repel      -4.31  -6.44   19.90 -> 0.00      19
+    depth 357 + bow, nudge     -2.79  -5.49   20.78 -> 0.00      19
+    depth 357 + bow, repel     -3.29  -3.29    0.01 -> 0.01      17
+    recorded 6x3 d320, nudge   +0.29  +0.29    2.09 -> 2.09       0
+    recorded 6x3 d320, repel   +0.27  +0.27    1.66 -> 1.66       0
+  Two properties worth reading off that table. **The budget is INERT where
+  the horn can actually be separated** — 0 states refused on the recorded
+  case, every statistic unchanged — so it is a guard rather than a
+  regression. And where it bites it is choosing honestly: repel on the
+  defaults gives up 2.1 mm of gap to give back 19.9 mm of dL, and the chain
+  at depth 357 finds NOTHING affordable and now says so instead of returning
+  a horn 20.8 mm worse in path spread.
+  **THE RESTORE HAS TO TEST THE BUDGET TOO, and this re-opened a bug that had
+  already been fixed once.** `best` is now a FILTERED maximum, so the last
+  iterate can beat it on the gap while being over budget; guarding the
+  restore on the gap alone handed that state back and made the budget
+  advisory — measured dL 30.5 mm returned by a solve whose budget was 2.14.
+  Both restores now test `best.gap > gapOf(cl) || !affordable(m)`.
+  Recomputing the bow target is only correct once the overshoot is bounded
+  this way, and once it is, it buys at most the budget and costs bow
+  amplitude — so it is not worth doing.
+  **THE BUDGET WAS FIRST WRITTEN 1000x TOO SMALL, AND ITS OWN TEST PASSED.**
+  `c` IS METRES PER SECOND everywhere in this file while lengths are mm —
+  `lam = (c / fTarget) * 1000` is the model's own convention — and the budget
+  was written `c / (8 f)`, giving **2.18 UM**. That refuses every state a
+  solve could take, silently, because a guard that never passes anything
+  looks exactly like a geometry with nothing to gain. The assertion written
+  beside it re-derived the SAME wrong expression and passed. What caught it
+  was three unrelated tests going red: both diagonal-blindness assertions
+  (the chain could no longer reach the deep state that damages a diagonal)
+  and the bulge-composition test (the solve returned -0.64 mm instead of
+  +0.16). **The rule is the one already in this file for `t` and for the
+  open-area mode: a derived constant must be asserted against an
+  INDEPENDENTLY known value, never against a second copy of its own
+  formula.** The test now checks 2.18 mm, which the suite already derives
+  from c and f at the top, and the two diagonal tests lift the budget
+  explicitly so they measure the pair set and nothing else.
 - **MUTUAL REPULSION IS BUILT (`solveSeparation` mode `"repel"`), AND WHAT IT
   BOUGHT IS THE DIAGONALS — not a better search.** The owner's proposal. Every
   pair under the floor contributes ONE linear constraint at that pair's own

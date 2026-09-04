@@ -2412,6 +2412,24 @@ export function solveSeparation(throat, opts, cfg = {}) {
     // the largest value that still finishes inside the UI's 20 rounds with
     // margin.
     ridge = 0.05, diagonals = true,
+    // ── THE PATH-LENGTH BUDGET ──────────────────────────────────────────────
+    // A separation displacement always makes a duct's path LONGER, and the
+    // equalising bow can only ADD length, so a duct the field pushes past the
+    // lengthening target is never caught up to and the overshoot survives as
+    // dL. Scoring on the gap alone therefore let a solve hand back a horn
+    // 19.9 mm worse in path spread and call it an improvement.
+    // THE BOUND IS lambda/8 AT THE PARTITION TARGET, which is the same budget
+    // `band` and `wallSpreadMax` are already judged against — 2.18 mm at
+    // 20 kHz — not a number invented here. It is a bound on the GROWTH, so a
+    // horn whose dL is already large (lengthening off) is held to what it
+    // has rather than to zero.
+    // WHY BOUND IT RATHER THAN RE-TARGET THE BOW: recomputing the target from
+    // the separated paths closes dL and pays for it out of the fold margin —
+    // measured on the repel field at the defaults, target 315.1 -> 335.0 mm,
+    // bow 20.9 -> 34.6 mm, fold +0.11 -> -1.10 mm (a FOLDED duct) and the gap
+    // -4.31 -> -7.04 mm. The stale target was acting as a clamp. Bounding the
+    // overshoot at source is what makes the clamp unnecessary.
+    dLBudget = null,
   } = cfg;
   const build = (separate) => mapThroatToMouth(throat, {
     ...opts, separate, keepGeometry: true, computeClearance: false,
@@ -2435,6 +2453,27 @@ export function solveSeparation(throat, opts, cfg = {}) {
   const clBase = measure(base);
   const gapOf = (cl) => cl.minMid;   // defect-scoped signed worst gap
   const gap0 = gapOf(clBase);
+  // lambda/8 at the partition target — the same budget `band` and
+  // `wallSpreadMax` are judged against, read from the geometry rather than
+  // chosen here
+  // UNITS: `c` IS METRES PER SECOND EVERYWHERE IN THIS FILE and lengths are
+  // mm, so the wavelength conversion is (c / f) * 1000 — the same expression
+  // `lam` uses for `band` and `dLfrac`. Writing it as c / (8 f) instead makes
+  // the budget 1000x too small: 2.18 UM, which refuses every state a solve
+  // could take, and it does it silently because the guard then simply never
+  // passes anything. Caught by three unrelated assertions, not by this one.
+  const budget = dLBudget != null ? dLBudget
+    : ((opts.c ?? 343) / (opts.fTarget || 20000)) * 1000 / 8;
+  const dLCap = base.dL + budget;
+  // how far the LONGEST separated path runs past the length every other cell
+  // is padded up to. Equal to the leftover dL whenever the bow reaches the
+  // target on every short cell, which is the normal case; reported either way
+  // so the number on screen has a mechanism attached to it.
+  const overOf = (m) => (m.lengthen ? Math.max(0, m.Lmax - m.lengthen.target) : 0);
+  // a candidate is only allowed to be BEST if it stays inside the budget —
+  // the gap is not the only thing a separation field moves
+  const affordable = (m) => m.dL <= dLCap + 1e-9;
+  let refused = 0;
   if (gap0 >= floor)
     return { ok: true, already: true, mode, gapBefore: gap0, gapAfter: gap0, amps: null, evals: 1 };
 
@@ -2477,16 +2516,16 @@ export function solveSeparation(throat, opts, cfg = {}) {
     const scan = [0.5, 1, 2, 4, 8, 16, Math.min(32, ampCap), ampCap];
     for (const a of scan) {
       const r = gapAt(a);
-      if (r.g > bestU.g) bestU = r;
-      if (r.g >= floor) break;
+      if (r.g > bestU.g && affordable(r.m)) bestU = r; else if (!affordable(r.m)) refused++;
+      if (r.g >= floor && affordable(r.m)) break;
     }
     // golden-ish local refinement around the best scanned amplitude
     let lo = Math.max(0, bestU.a / 2), hi2 = Math.min(ampCap, Math.max(bestU.a * 2, 1));
     for (let it = 0; it < 6; it++) {
       const m1 = lo + (hi2 - lo) * 0.382, m2 = lo + (hi2 - lo) * 0.618;
       const r1 = gapAt(m1), r2 = gapAt(m2);
-      if (r1.g > bestU.g) bestU = r1;
-      if (r2.g > bestU.g) bestU = r2;
+      if (r1.g > bestU.g && affordable(r1.m)) bestU = r1; else if (!affordable(r1.m)) refused++;
+      if (r2.g > bestU.g && affordable(r2.m)) bestU = r2; else if (!affordable(r2.m)) refused++;
       if (r1.g >= r2.g) hi2 = m2; else lo = m1;
     }
     const okU = bestU.g >= floor - tol;
@@ -2494,8 +2533,10 @@ export function solveSeparation(throat, opts, cfg = {}) {
       ok: okU, mode, amps: bestU.a > 0 ? ampsFor(bestU.a) : null, uStart, uEnd, lobes,
       gapBefore: gap0, gapAfter: bestU.g, ampMax: bestU.a,
       dL: bestU.m.dL, dLBefore: base.dL, evals, trace,
+      dLBudget: budget, dLOver: overOf(bestU.m), dLRefused: refused,
       reason: okU ? null
-        : `the best one-knob spread (${bestU.a.toFixed(1)} mm) leaves the worst gap at ${bestU.g.toFixed(2)} mm — try "nudge" or "repel"`,
+        : `the best one-knob spread (${bestU.a.toFixed(1)} mm) leaves the worst gap at ${bestU.g.toFixed(2)} mm — try "nudge" or "repel"`
+          + (refused ? `; ${refused} larger spread(s) were refused for pushing ΔL past the ${budget.toFixed(2)} mm budget` : ""),
     };
   }
 
@@ -2611,14 +2652,19 @@ export function solveSeparation(throat, opts, cfg = {}) {
       m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
       cl = measure(m);
       trace.push({ iter: iters, gap: +gapOf(cl).toFixed(4), cons: cons.length });
-      if (gapOf(cl) > best.gap)
+      if (gapOf(cl) > best.gap && affordable(m))
         best = { gap: gapOf(cl), dL: m.dL,
                  acc: Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, v.slice()])) };
+      else if (!affordable(m)) refused++;
       if (gapOf(cl) >= floor - tol) break;
     }
     // a solver that cannot improve on its input returns its input — the rule
     // the chain mode learned the hard way, applied here from the start
-    if (best.gap > gapOf(cl)) {
+    // RESTORE ON EITHER TEST, and the second one is why: `best` is now a
+    // filtered maximum (affordable states only), so the last iterate can beat
+    // it on the gap while being over the budget. Guarding on the gap alone
+    // would hand that state back and the budget would be advisory.
+    if (best.gap > gapOf(cl) || !affordable(m)) {
       if (best.acc) for (const id in best.acc) acc[id] = best.acc[id];
       else for (const id in acc) acc[id] = [0, 0];
       m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
@@ -2632,8 +2678,11 @@ export function solveSeparation(throat, opts, cfg = {}) {
       ampMax: Math.max(0, ...Object.values(ampsR).map((e) => e.amp)),
       iters, dL: m.dL, dLBefore: base.dL, evals, trace,
       pairs: cl.pairs, diagonals: STEPS.length > 2,
+      dLBudget: budget, dLOver: overOf(m), dLRefused: refused,
       reason: gR >= floor - tol ? null
-        : `after ${iters} rounds the worst gap is still ${gR.toFixed(2)} mm`,
+        : `after ${iters} rounds the worst gap is still ${gR.toFixed(2)} mm`      + (refused
+        ? `; ${refused} deeper state(s) were refused for pushing ΔL past the ${budget.toFixed(2)} mm budget`
+        : ""),
     };
   }
 
@@ -2756,9 +2805,10 @@ export function solveSeparation(throat, opts, cfg = {}) {
     cl = measure(m);
     const ampNow = Math.max(0, ...Object.values(ampsFromAcc()).map((e) => e.amp));
     trace.push({ iter: iters, gap: +gapOf(cl).toFixed(4), ampMax: +ampNow.toFixed(2) });
-    if (gapOf(cl) > best.gap)
+    if (gapOf(cl) > best.gap && affordable(m))
       best = { gap: gapOf(cl), acc: Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, v.slice()])), dL: m.dL };
-    if (gapOf(cl) >= floor - tol) break;
+    else if (!affordable(m)) refused++;
+    if (gapOf(cl) >= floor - tol && affordable(m)) break;
   }
   // Hand back the BEST configuration, rebuilt if the last step was not it.
   // `best` starts at the UNSEPARATED gap with a null field, so when no
@@ -2771,7 +2821,10 @@ export function solveSeparation(throat, opts, cfg = {}) {
   // and the UI applies whatever field comes back, so a failed solve made
   // the horn WORSE. A solver that cannot improve on the input must return
   // the input.
-  if (best.gap > gapOf(cl)) {
+  // same two tests as the repel restore: `best` only ever holds affordable
+  // states, so an over-budget last iterate must be discarded even when its
+  // gap is better
+  if (best.gap > gapOf(cl) || !affordable(m)) {
     if (best.acc) for (const id in best.acc) acc[id] = best.acc[id];
     else for (const id in acc) acc[id] = [0, 0];
     m = build({ amps: ampsFromAcc(), uStart, uEnd, lobes });
@@ -2783,7 +2836,11 @@ export function solveSeparation(throat, opts, cfg = {}) {
   return {
     ok: gA >= floor - tol, mode, amps: Object.keys(amps).length ? amps : null, uStart, uEnd, lobes,
     gapBefore: gap0, gapAfter: gA, ampMax, iters, dL: m.dL, dLBefore: base.dL, evals, trace,
-    reason: gA >= floor - tol ? null : `after ${iters} rounds the worst gap is still ${gA.toFixed(2)} mm`,
+    dLBudget: budget, dLOver: overOf(m), dLRefused: refused,
+    reason: gA >= floor - tol ? null
+      : `after ${iters} rounds the worst gap is still ${gA.toFixed(2)} mm`      + (refused
+        ? `; ${refused} deeper state(s) were refused for pushing ΔL past the ${budget.toFixed(2)} mm budget`
+        : ""),
   };
 }
 

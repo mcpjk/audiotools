@@ -2020,8 +2020,24 @@ export default function GinkgoHorn() {
                   <span style={{ color: C.inkMuted }}>
                     {" "}· amplitude up to {fmt(sepSolve.ampMax, 1)} mm over [{fmt(sepSolve.uStart, 2)}, {fmt(sepSolve.uEnd, 2)}] of the path
                     {" "}· ΔL {fmt(sepSolve.dLBefore, 2)} → {fmt(sepSolve.dL, 2)} mm
+                    {sepSolve.dLBudget != null && ` of ${fmt(sepSolve.dLBefore + sepSolve.dLBudget, 2)} allowed`}
                     {" "}· {sepSolve.iters != null ? `${sepSolve.iters} rounds` : `${sepSolve.evals} evaluations`}
                   </span>
+                  {sepSolve.dLRefused > 0 && (
+                    <div style={{ color: C.inkMuted }}>
+                      {sepSolve.dLRefused} deeper state(s) refused: they opened the gap further but pushed ΔL past the
+                      {" "}λ/8 budget of {fmt(sepSolve.dLBudget, 2)} mm. A separation displacement always makes a duct's path
+                      {" "}<em>longer</em>, and the equalising bow can only <em>add</em> length — so a duct pushed past the
+                      {" "}longest cell is never caught up to and the overshoot survives as ΔL.
+                    </div>
+                  )}
+                  {sepSolve.dLOver > 0.05 && (
+                    <div style={{ color: C.series5 }}>
+                      The field lengthens one duct {fmt(sepSolve.dLOver, 2)} mm past the equalisation target, and that is where the
+                      {" "}ΔL above comes from. Re-targeting the bow to chase it is not the fix: measured on this tool's defaults it
+                      {" "}takes the bow 20.9 → 34.6 mm and folds the duct.
+                    </div>
+                  )}
                   {!sepSolve.ok && <div style={{ color: C.series5 }}>{sepSolve.reason}</div>}
                 </>}
           </div>

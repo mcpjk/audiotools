@@ -2681,7 +2681,7 @@ head("Duct separation (field and solver)");
   // under 0.05 mm and at 512 it reads 0.109 — the arc lengths are simply
   // measured more accurately now, and 0.109 mm is 5% of the budget.
   checkTrue("lengthening re-equalises the separated paths", ml.dL < 0.25,
-    `dL ${ml.dL.toFixed(3)} mm with both fields on, against a lambda/8 budget of ${(343000 / 20000 / 8).toFixed(2)} mm`);
+    `dL ${ml.dL.toFixed(3)} mm with both fields on, against a lambda/8 budget of ${((343 / 20000) * 1000 / 8).toFixed(2)} mm`);
 
   // the cheap mode is honest about its limit on this case
   const u = M.solveSeparation(th, opts, { floor: 0.5, mode: "uniform" });
@@ -2799,8 +2799,12 @@ head("Duct separation (field and solver)");
         ? { amps: r.amps, uStart: r.uStart, uEnd: r.uEnd, lobes: r.lobes } : null);
       // `diagonals: false` reproduces the scoring every mode used before this
       // change — orthogonal pairs only — and that is what leaves the damage
+      // `dLBudget` is lifted here so this pair measures the PAIR SET and
+      // nothing else — the budget refuses the deep states the chain needs to
+      // reach before it damages a diagonal, which would make the block pass
+      // for the wrong reason
       const rn = M.solveSeparation(th, oB,
-        { floor: 0.5, mode: "nudge", maxIter: 4, diagonals: false });
+        { floor: 0.5, mode: "nudge", maxIter: 4, diagonals: false, dLBudget: 1e6 });
       const mn = M.mapThroatToMouth(th, { ...oB, separate: fieldOf(rn) });
       const gO = M.ductClearance(mn.rows, { throatFloor: 0.5 }).minMid;
       const gD = M.ductClearance(mn.rows, { throatFloor: 0.5, pairSteps: DG }).minMid;
@@ -2811,12 +2815,57 @@ head("Duct separation (field and solver)");
       // cannot PUSH on a diagonal pair — the walk is by row and column — so
       // what fixes this is the SCORE: a state that damages a diagonal pair can
       // no longer be the best state visited.
-      const rn2 = M.solveSeparation(th, oB, { floor: 0.5, mode: "nudge", maxIter: 4 });
+      const rn2 = M.solveSeparation(th, oB, { floor: 0.5, mode: "nudge", maxIter: 4, dLBudget: 1e6 });
       const mn2 = M.mapThroatToMouth(th, { ...oB, separate: fieldOf(rn2) });
       const gD2 = M.ductClearance(mn2.rows, { throatFloor: 0.5, pairSteps: DG }).minMid;
       checkTrue("...and the same mode scored WITH the diagonals does not",
         Math.abs(gD2 - rn2.gapAfter) < 1e-9 && gD2 > gD + 1.0,
         `reported ${rn2.gapAfter.toFixed(2)} mm and leaves exactly that, against ${gD.toFixed(2)} mm before`);
+    }
+
+    // ── THE PATH-LENGTH BUDGET ───────────────────────────────────────────
+    // A separation displacement always LENGTHENS a duct, and the equalising
+    // bow can only ADD length, so a duct pushed past the lengthening target
+    // is never caught up to and the overshoot survives as dL. Scoring on the
+    // gap alone let a solve hand back a horn 19.9 mm worse in path spread.
+    {
+      const oB = { ...opts, exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245,
+        depth: 300, divergeLen: 3, stations: 32,
+        lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2 } };
+      // The budget is lambda/8 at the partition target. ASSERTED AGAINST THE
+      // INDEPENDENTLY KNOWN VALUE (2.18 mm at 20 kHz, which this suite already
+      // checks near the top from c and f directly) and NOT against a re-derived
+      // copy of the solver's own expression — the first version of this test
+      // did the latter and passed happily while the solver was computing the
+      // budget 1000x too small from c in the wrong units.
+      for (const mode of ["nudge", "repel"]) {
+        const r = M.solveSeparation(th, oB, { floor: 0.5, mode, maxIter: 8 });
+        checkTrue(`${mode} keeps the returned field inside the ΔL budget`,
+          r.dL <= r.dLBefore + r.dLBudget + 1e-9 && Math.abs(r.dLBudget - 2.18) < 0.01,
+          `ΔL ${r.dLBefore.toFixed(3)} -> ${r.dL.toFixed(3)} mm against a budget of ${r.dLBudget.toFixed(3)}`);
+        // and the field it returns must REPRODUCE that dL on a fresh build,
+        // so the budget is a property of the geometry and not of bookkeeping
+        const mR = M.mapThroatToMouth(th, { ...oB, separate: r.amps
+          ? { amps: r.amps, uStart: r.uStart, uEnd: r.uEnd, lobes: r.lobes } : null });
+        check(`${mode}'s reported ΔL survives an independent rebuild`, mR.dL, r.dL, 1e-9, "mm");
+        // dLOver is the MECHANISM behind that dL, and the identity is exact
+        // whenever the bow reaches the target on every short cell
+        check(`${mode}'s ΔL is exactly the overshoot past the bow target`,
+          Math.max(0, mR.Lmax - mR.lengthen.target), r.dLOver, 1e-9, "mm");
+      }
+      // THE BUDGET MUST BITE, or the assertions above pass vacuously on a
+      // horn no field could have pushed over it anyway
+      const rTight = M.solveSeparation(th, oB, { floor: 0.5, mode: "repel", maxIter: 8 });
+      const rLoose = M.solveSeparation(th, oB, { floor: 0.5, mode: "repel", maxIter: 8, dLBudget: 1e6 });
+      checkTrue("the budget refuses states an unbudgeted solve would have taken",
+        rTight.dLRefused > 0 && rLoose.dL > rTight.dL + 1,
+        `${rTight.dLRefused} refused; unbudgeted lands ΔL ${rLoose.dL.toFixed(1)} mm against ${rTight.dL.toFixed(1)}`);
+      // ...and it must be INERT where the geometry can actually be separated,
+      // or it would be a regression dressed as a guard
+      const rEasy = M.solveSeparation(th, opts, { floor: 0.2, mode: "repel", maxIter: 16 });
+      checkTrue("the budget does not bind on a horn that can be separated",
+        rEasy.ok && rEasy.dLRefused === 0,
+        `solved to ${rEasy.gapAfter.toFixed(2)} mm with 0 states refused`);
     }
 
     // A SOLVER THAT CANNOT IMPROVE MUST RETURN ITS INPUT — the rule the chain
