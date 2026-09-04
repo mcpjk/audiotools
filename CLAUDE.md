@@ -303,8 +303,12 @@ mouth can be stated as coverage angles instead of millimetres (`mouthMode:
 Depth can likewise be solved for the dL MINIMUM (`solveDepthForMinDL`) — the
 other leg of the pick-two-of-three — and the signed clearance is separable
 (`ductClearance`, `computeClearance: false`) so the UI measures it off the
-render pass. Per-cell path lengthening (`lengthen`) bows short cells out to
-the longest cell's length in swept mode, and the tool previews the exported
+render pass, and it now compares the SOLIDS rather than equal fractions of
+travel (`compare: "solid"` — a station is not a place; see the finding).
+Per-cell path lengthening (`lengthen`) bows short cells out to
+the longest cell's length in swept mode, square to the cell's own row by
+default (`dir: "crossRow"`, because the clearance around a cell is not
+isotropic and the radial field spends the scarce half), and the tool previews the exported
 duct solids on a hand-rolled canvas (no three.js — the no-external-libraries
 rule stands). The physical horn ships as a shell STEP kit — ONE BLANK AND ONE
 CUTTER PER CELL (`buildShellSTEP`; see the shell findings below, and read the
@@ -337,6 +341,108 @@ poorly-loaded case. That is the thing to move off, and the reason the profile
 exists.
 
 ## Known findings worth not re-deriving
+
+- **THE CLEARANCE AROUND A CELL IS NOT ISOTROPIC, AND THE RADIAL BOW SPENDS
+  THE SCARCE HALF OF IT. `dir: "crossRow"` is the fix, it is the new default,
+  and it is FREE on every acoustic quantity the tool reports.** A throat cell
+  is tall and narrow, and the expansion profile opens a gap in proportion to
+  the section's extent along the line joining two neighbours, so the row gap
+  opens far more slowly than the column gap. Measured on the unbowed default
+  horn, tightest pair of each kind, signed gap in mm:
+    station        0      4      8     12     16
+    row pairs    0.40   0.54   1.21   2.25   3.60
+    column pairs 0.40   0.91   5.91   9.45  13.31
+  About 5x more room vertically by station 8. The aspect argument predicts
+  about 2x on its own, so the centreline fan contributes as well and the two
+  have NOT been decomposed — the ratio is measured, the direction understood.
+  **THE MECHANISM OF THE FAILURE**: an OUTER-ROW cell's outward ray points
+  diagonally, so part of its bow runs along the row, straight at a corner
+  cell — the longest cell in the horn, which therefore carries NO bow of its
+  own. Nobody moves out of the way. At the shipped defaults that is the whole
+  of the -2.61 mm worst gap, and the deficient set is exactly the four pairs
+  (0,0)-(1,0), (4,0)-(5,0), (0,2)-(1,2) and (4,2)-(5,2), asserted by name.
+  **WHY A GEOMETRIC ARGUMENT IS ALLOWED TO SETTLE THIS ONE**, given the
+  standing priority at the top of the file: the bow exists to add PATH
+  LENGTH, and the length it adds depends on the amplitude and the window
+  span, never on the direction. Measured across the change, ONLY the
+  clearance moves — and the geometry really does move, worst vertex 6.4 mm:
+    dL 0.000 both          bow ampMax 21.75 both     bendFoldMin 1.10 both
+    obliqMax 24.39 both    wallSpreadMax 14.44 both  fluxContract 0.00% both
+    worst same-station gap  -2.611 -> +0.282 mm
+  Both options were measured against the acoustic quantities and came back
+  equal, so the wave cannot tell them apart and only the neighbours can. That
+  is the test a construction has to pass before tidiness gets a vote.
+  **WHICH LINE THE PERPENDICULAR COMES FROM MATTERS, and the three candidates
+  measured 1.7 mm apart.** The cells tile a DISC, so a row's centroids do not
+  lie on a straight line. Measured worst gap on the same horn:
+    neighbour-to-neighbour row line   -1.46 mm
+    the cell's own column line        -0.00 mm
+    the ROW AXIS taken END TO END     +0.28 mm
+  End to end, a row's two outermost centroids are mirror images on any layout
+  with a vertical mirror, so the axis lands exactly on the row's direction and
+  the perpendicular removes the whole row component. The other two keep part
+  of it. Both mirrors hold at 1e-6 mm, by construction rather than by hand.
+  **IT IS NOT UNCONDITIONALLY BETTER.** On a vertically CURVED mouth the
+  deficit spreads over the outer ring instead of sitting in one row and the
+  column gaps are not as generous, so the recorded finding that direction cost
+  is geometry-dependent and must be READ still stands. This is a third member
+  of that family, not a replacement for the choice.
+
+- **A STATION IS NOT A PLACE, AND THE CLEARANCE METRIC WAS COMPARING RING q
+  OF ONE DUCT WITH RING q OF ITS NEIGHBOUR. `compare: "solid"` is the honest
+  read, and it found a defect the tool had been calling clear.** A station is
+  a fraction of each duct's OWN arc length, so two same-index rings are at the
+  same PHASE OF TRAVEL and not at the same place — measured up to 40 mm apart
+  axially on the shipped horn. That is a wavefront question, and it is the
+  right one when every path is the same length and the ducts run parallel.
+  CAD asks a different one: is there material everywhere between these two
+  bodies. Nearest approach between two surfaces has nothing to do with phase.
+  **THE TWO SEPARATE EXACTLY WHERE THE DUCTS STOP RUNNING PARALLEL**, which is
+  the bow region — and the REGION GRADE makes it worse by design, since it
+  gives adjacent cells windows of different width and so puts them at
+  different points of their own turn at equal fractions of travel. Measured on
+  the shipped default with the crossRow bow, middle-row pair (3,1)-(4,1),
+  whose two windows differ in span by a fifth:
+    same-station rings   +0.49 mm of wall, reported at station 1
+    solid                -0.43 mm, between stations 7 and 9
+    ray cast into the exported triangles
+                         34 wall points inside the neighbour, deepest 0.423 mm
+  The third knows nothing about stations and shares no code with the metric,
+  and it agrees with the second to 7 um. So this is a mutual check rather than
+  a tautology, and the tool was reporting a horn as clear while a CAD
+  subtraction would find the passages overlapping.
+  **THE INVARIANT THAT MAKES IT A FINDING RATHER THAN A BUG IN THE NEW CODE**:
+  with no bow the ducts run NEARLY parallel, equal fractions of travel are
+  nearly equal places, and the two reads agree to **0.46 um** — same station,
+  same thin-sliver count. Not bit-identical, and the residual is the
+  measurement rather than a tolerance: an unbowed horn's ducts still fan, so
+  the solid read picks up that last half-micron. What makes it a finding
+  rather than a bug in the new code is the ratio: the disagreement is a
+  thousand times smaller here than in the bow region, where it crosses zero.
+  Over all 47 pairs on the shipped bow, 36 of them read their gap MORE than
+  0.1 mm optimistic by station, up to 1.0 mm on the corner-to-centre
+  diagonals. The worst pair happens to agree to 0.07 mm; the one that matters
+  is the one that crosses zero.
+  **THE DEFAULT STAYS `"station"`** so every figure recorded in this file
+  reproduces. The UI readout and the separation solver ask for `"solid"`,
+  exactly as they already ask for the inset outline. Cost measured at 6x3,
+  64 stations, 47 pairs: 0.9 s by station against 3.0 s by solid, which is
+  fine for a measurement already deferred off the render pass and too slow to
+  run once per solver round.
+  **SO THE SOLVER'S INNER LOOP STILL SCORES BY STATION AND ITS ANSWER IS
+  RE-READ AS A SOLID.** A field the station read likes can still drive a duct
+  into a neighbour it never looked at, so the returned state is re-measured
+  against the input measured the same way, and a field that does not improve
+  the honest number is NOT APPLIED. That is the rule the chain mode already
+  learned — a solver that cannot improve on its input returns its input —
+  restated on the metric that decides the export. Making the loop itself
+  optimise the solid read is part of the per-station-field build, not a
+  tuning change.
+  **WHAT NEITHER READ REMOVES**: both measure the FACETTED duct, rings joined
+  by straight runs, which is the solid the STL writes. The STEP's B-spline
+  lofts through the same rings and departs from the facets by the loft's own
+  sagitta, order 0.1 mm at the default station step. That is the same
+  approximation the recorded ring-refinement figures already carry.
 
 - **THE 2026-09-04 PASS REMOVED FOUR EXPORT FORMATS, THE WALL JITTER AND THE
   THROAT-END OPTIONS, AND DROPPED THE CUTTER EXTENSION TO 1 mm. Read this
@@ -1065,6 +1171,13 @@ exists.
   axes were REMOVED from the tool at the owner's request; the axes survive in
   the model because the straight-path closed-form test needs a direction that
   works on a cell sitting ON the axis, where no outward ray exists.
+  **`dir: "crossRow"` (2026-09-04) IS THE THIRD MEMBER OF THIS FAMILY AND IS
+  NOW THE DEFAULT**, and it is what "+y" was reaching for on the flat mouth
+  without the hard-coding: it removes the along-row component from the
+  outward ray by taking the perpendicular to the ROW'S OWN AXIS, so it is
+  derived from the layout and keeps both mirrors. See the first finding in
+  this section. Everything above still stands — the ranking is
+  geometry-dependent and must be READ.
 - **THE BOW REGION IS A SUPPORT, AND THE STRAIGHT RUNS ARE CUT OUT OF IT.**
   The window spans [uStart, uEnd] of arc length rather than the whole path;
   sin^2 has zero value AND zero slope at both ends of its support, so

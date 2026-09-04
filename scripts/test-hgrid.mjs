@@ -4060,5 +4060,248 @@ head("Aperture surface, per-cell shell, orientation");
   }
 }
 
+head("Bow direction across the row, and the station-free clearance");
+{
+  // The shipped default horn, at the EXPORT station count, on the INSET
+  // outlines and the UI's own pair set — so the numbers here are the numbers
+  // the tool prints rather than a near-miss at some other resolution.
+  const t = 0.4, ST = 64, FLOOR = 1.5;
+  const th = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c }).throat;
+  const dflt = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, stations: ST, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", keepGeometry: true, computeClearance: false, ...o,
+  });
+  const STEPS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+  const BOW = (dir) => ({ lobes: 1, dir, uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 });
+  const clear = (m, compare) => M.ductClearance(m.rows, {
+    jointAware: false, throatFloor: FLOOR, thinBand: FLOOR, pairSteps: STEPS,
+    outline: "inset", t, floor: FLOOR, compare,
+  });
+  const bare = M.mapThroatToMouth(th, dflt({ lengthen: null }));
+  const rad = M.mapThroatToMouth(th, dflt({ lengthen: BOW("radial") }));
+  const cro = M.mapThroatToMouth(th, dflt({ lengthen: BOW("crossRow") }));
+
+  // ── 1. THE DIRECTION IS ACOUSTICALLY FREE, AND THAT IS WHAT LICENSES IT ──
+  // The standing priority says a geometric choice must be argued as an
+  // acoustic one. Here the acoustic quantities are IDENTICAL between the two
+  // directions, because a bow's added length depends on its amplitude and its
+  // window span and never on which way it points — so the wave cannot tell
+  // them apart and only the neighbours can. Asserted rather than argued.
+  check("crossRow vs radial: dL unchanged", cro.dL - rad.dL, 0, 1e-9, "mm");
+  check("crossRow vs radial: bow amplitude unchanged",
+    cro.lengthen.ampMax - rad.lengthen.ampMax, 0, 1e-9, "mm");
+  check("crossRow vs radial: fold margin unchanged",
+    cro.bendFoldMin - rad.bendFoldMin, 0, 1e-9, "mm");
+  check("crossRow vs radial: section obliquity unchanged",
+    cro.sectionObliqMax - rad.sectionObliqMax, 0, 1e-9, "deg");
+  check("crossRow vs radial: wall spread unchanged",
+    cro.wallSpreadMax - rad.wallSpreadMax, 0, 1e-9, "mm");
+  check("crossRow vs radial: passage contraction unchanged",
+    cro.fluxContractMax - rad.fluxContractMax, 0, 1e-12, "");
+  // ...and the geometry really did move, or the six checks above are vacuous
+  {
+    let worstMove = 0;
+    for (const A of rad.rows) {
+      const B = cro.rows.find((r) => r.id === A.id);
+      for (let q = 0; q <= ST; q++)
+        for (let k = 0; k < A.sched[q].pts.length; k++)
+          worstMove = Math.max(worstMove, Math.hypot(
+            A.sched[q].pts[k][0] - B.sched[q].pts[k][0],
+            A.sched[q].pts[k][1] - B.sched[q].pts[k][1],
+            A.sched[q].pts[k][2] - B.sched[q].pts[k][2]));
+    }
+    checkTrue("...and the geometry moved, so those are not vacuous",
+      worstMove > 5, `worst vertex moved ${worstMove.toFixed(2)} mm`);
+  }
+
+  // ── 2. WHAT IT BUYS, AND WHERE THE RADIAL FIELD SPENDS IT ────────────────
+  const gRad = clear(rad, "station").minMid, gCro = clear(cro, "station").minMid;
+  check("radial bow, worst same-station gap", gRad, -2.611, 0.01, "mm");
+  check("crossRow bow, worst same-station gap", gCro, 0.282, 0.01, "mm");
+  // the four failing pairs under the radial field are the OUTER-ROW pairs
+  // where a bowed cell moves along the row into a corner cell that carries no
+  // bow at all. Named, so the mechanism is asserted and not just the number.
+  {
+    const nm = (id) => { const r = rad.rows.find((x) => x.id === id); return `${r.i},${r.j}`; };
+    const bad = clear(rad, "station").pairWorst.filter((p) => p.gap < -1)
+      .map((p) => [nm(p.a), nm(p.b)].sort().join("-")).sort();
+    checkTrue("radial's deficit is the four outer-row corner pairs",
+      bad.join(" ") === "0,0-1,0 0,2-1,2 4,0-5,0 4,2-5,2", bad.join(" "));
+    const amp = (i, j) => rad.rows.find((r) => r.i === i && r.j === j).snakeAmp;
+    checkTrue("...and the corner cell they are pushed into carries no bow",
+      amp(0, 0) < 1e-9 && amp(5, 2) < 1e-9,
+      `corner ${amp(0, 0).toFixed(2)} mm against inboard ${amp(1, 0).toFixed(1)} mm`);
+  }
+  // BOTH MIRRORS SURVIVE. The field is keyed to the row's own axis taken end
+  // to end and oriented against the outward ray, both of which a mirror maps
+  // onto themselves, so this is a property of the construction — asserted
+  // because a world-axis field would pass every other check here and break it.
+  {
+    const mir = M.mirrorSymmetry(th, cro, { t });
+    checkTrue("crossRow keeps BOTH mirrors",
+      mir.x.worst < 1e-6 && mir.y.worst < 1e-6 && mir.x.paired === th.cells.length,
+      `x ${mir.x.worst.toExponential(2)} mm, y ${mir.y.worst.toExponential(2)} mm, ${mir.x.paired} pairs`);
+  }
+
+  // ── 3. THE SOLID READ AGREES WITH THE STATION READ WHERE IT MUST ─────────
+  // With no bow the ducts run parallel, so equal fractions of travel ARE
+  // equal places and the two questions have one answer. If this ever drifts,
+  // the solid read has a bug rather than a finding.
+  {
+    const a = clear(bare, "station"), b = clear(bare, "solid");
+    // NOT bit-identical, and the residual is the measurement rather than a
+    // tolerance: an unbowed horn's ducts still FAN, so equal fractions of
+    // travel are only NEARLY equal places, and the solid read picks up that
+    // last half-micron. What matters is that the disagreement is 1000x
+    // smaller here than in the bow region, where it crosses zero.
+    checkTrue("no bow: solid read reproduces the station read",
+      Math.abs(b.minMid - a.minMid) < 1e-3,
+      `station ${a.minMid.toFixed(6)} vs solid ${b.minMid.toFixed(6)} mm, ` +
+      `differ ${(Math.abs(b.minMid - a.minMid) * 1000).toFixed(2)} um`);
+    checkTrue("...at the same station", a.minMidAt === b.minMidAt,
+      `station ${a.minMidAt} both`);
+    check("...and the same thin-sliver count", b.thin.count, a.thin.count, 0, "");
+  }
+
+  // ── 4. AND DISAGREES WHERE THE DUCTS STOP RUNNING PARALLEL ───────────────
+  // The region grade gives adjacent cells windows of DIFFERENT width, so at
+  // equal fractions of travel they sit at different points of their own turn.
+  // The middle-row pair is the case: the station read calls it clear.
+  {
+    const st = clear(cro, "station"), so = clear(cro, "solid");
+    checkTrue("crossRow: the station read calls the horn clear", st.minMid > 0,
+      `${st.minMid.toFixed(3)} mm at station ${st.minMidAt}`);
+    checkTrue("...while the solid read finds real interpenetration", so.minMid < -0.3,
+      `${so.minMid.toFixed(3)} mm at station ${so.minMidAt}`);
+    const nm = (id) => { const r = cro.rows.find((x) => x.id === id); return `${r.i},${r.j}`; };
+    const w = so.pairWorst.slice().sort((a, b) => a.gap - b.gap)[0];
+    checkTrue("...on a MIDDLE-ROW pair, which the station read ranked fifth",
+      [nm(w.a), nm(w.b)].sort().join("-") === "3,1-4,1",
+      `${nm(w.a)}-${nm(w.b)} at ${w.gap.toFixed(3)} mm, station read ` +
+      `${st.pairWorst.find((p) => p.a === w.a && p.b === w.b).gap.toFixed(3)} mm`);
+  }
+
+  // ── 5. AN INDEPENDENT CHECK ON THE SOLID READ ────────────────────────────
+  // Point-in-closed-mesh by jittered ray casting over the triangles the STL
+  // writes, with a closed-form point-triangle distance. It shares NO code
+  // with `ductClearance` and knows nothing about stations: it asks whether a
+  // point of one duct's wall lies inside the other duct's solid, and how far
+  // it is from that solid's surface. Both primitives are unit-tested against
+  // a cube first, so a false agreement needs two independent bugs.
+  {
+    const rayTri = (o, d, a, b, cc) => {
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const e2 = [cc[0] - a[0], cc[1] - a[1], cc[2] - a[2]];
+      const pv = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+      const det = e1[0] * pv[0] + e1[1] * pv[1] + e1[2] * pv[2];
+      if (Math.abs(det) < 1e-12) return false;
+      const inv = 1 / det, sv = [o[0] - a[0], o[1] - a[1], o[2] - a[2]];
+      const u = (sv[0] * pv[0] + sv[1] * pv[1] + sv[2] * pv[2]) * inv;
+      if (u < 0 || u > 1) return false;
+      const qv = [sv[1] * e1[2] - sv[2] * e1[1], sv[2] * e1[0] - sv[0] * e1[2], sv[0] * e1[1] - sv[1] * e1[0]];
+      const v = (d[0] * qv[0] + d[1] * qv[1] + d[2] * qv[2]) * inv;
+      if (v < 0 || u + v > 1) return false;
+      return (e2[0] * qv[0] + e2[1] * qv[1] + e2[2] * qv[2]) * inv > 1e-9;
+    };
+    const ptTri = (p, a, b, cc) => {
+      const sub = (x, y) => [x[0] - y[0], x[1] - y[1], x[2] - y[2]];
+      const dot = (x, y) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+      const dist = (q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+      const ab = sub(b, a), ac = sub(cc, a), ap = sub(p, a);
+      const d1 = dot(ab, ap), d2 = dot(ac, ap);
+      if (d1 <= 0 && d2 <= 0) return dist(a);
+      const bp = sub(p, b), d3 = dot(ab, bp), d4 = dot(ac, bp);
+      if (d3 >= 0 && d4 <= d3) return dist(b);
+      const vc = d1 * d4 - d3 * d2;
+      if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3);
+        return dist([a[0] + ab[0] * v, a[1] + ab[1] * v, a[2] + ab[2] * v]); }
+      const cp = sub(p, cc), d5 = dot(ab, cp), d6 = dot(ac, cp);
+      if (d6 >= 0 && d5 <= d6) return dist(cc);
+      const vb = d5 * d2 - d1 * d6;
+      if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6);
+        return dist([a[0] + ac[0] * w, a[1] + ac[1] * w, a[2] + ac[2] * w]); }
+      const va = d3 * d6 - d5 * d4;
+      if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return dist([b[0] + (cc[0] - b[0]) * w, b[1] + (cc[1] - b[1]) * w, b[2] + (cc[2] - b[2]) * w]); }
+      const den = 1 / (va + vb + vc), v = vb * den, w = vc * den;
+      return dist([a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w, a[2] + ab[2] * v + ac[2] * w]);
+    };
+    const DIRS = [[0.3, 0.51, 0.81], [-0.62, 0.27, 0.74], [0.11, -0.77, 0.63]];
+    const inside = (p, mesh) => {
+      let votes = 0;
+      for (const d of DIRS) { let n = 0;
+        for (const [i, j, k] of mesh.tris)
+          if (rayTri(p, d, mesh.verts[i], mesh.verts[j], mesh.verts[k])) n++;
+        if (n % 2 === 1) votes++; }
+      return votes >= 2;
+    };
+    const depthOf = (p, mesh) => { let d = Infinity;
+      for (const [i, j, k] of mesh.tris) d = Math.min(d, ptTri(p, mesh.verts[i], mesh.verts[j], mesh.verts[k]));
+      return d; };
+    {
+      const v = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]];
+      const f = [[0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6], [0, 4, 5], [0, 5, 1],
+                 [1, 5, 6], [1, 6, 2], [2, 6, 7], [2, 7, 3], [3, 7, 4], [3, 4, 0]];
+      const cube = { verts: v, tris: f };
+      checkTrue("ray cast: a cube's centre is inside and a point beside it is not",
+        inside([0.5, 0.5, 0.5], cube) && !inside([1.5, 0.5, 0.5], cube), "");
+      check("point-triangle distance on the cube", depthOf([0.5, 0.5, 0.2], cube), 0.2, 1e-12, "");
+    }
+    // the one pair the station read misses, both ways round, over the
+    // stations the solid read names — enough to settle it without meshing
+    // the whole horn against itself
+    const meshOf = (i, j) => {
+      const row = cro.rows.find((r) => r.i === i && r.j === j);
+      const rec = th.cells.find((x) => x.id === row.id);
+      return { row, mesh: M.ductMesh(M.ductSections(rec, row, { t })) };
+    };
+    const A = meshOf(3, 1), B = meshOf(4, 1);
+    const N = A.row.sched[0].pts.length;
+    let nIn = 0, deepest = 0;
+    const scan = (X, Y) => {
+      for (let q = 4; q <= 12; q++)
+        for (let k = 0; k < N; k++) {
+          const p = X.mesh.verts[q * N + k];
+          if (!inside(p, Y.mesh)) continue;
+          nIn++; deepest = Math.max(deepest, depthOf(p, Y.mesh));
+        }
+    };
+    scan(A, B); scan(B, A);
+    checkTrue("ray cast confirms the pair the station read calls clear",
+      nIn > 0, `${nIn} wall points inside the neighbour`);
+    const solidGap = -clear(cro, "solid").pairWorst
+      .find((p) => (p.a === A.row.id && p.b === B.row.id) || (p.a === B.row.id && p.b === A.row.id)).gap;
+    check("...to the same depth as the solid read, sharing no code",
+      deepest, solidGap, 0.02, "mm");
+  }
+
+  // ── 6. THE SOLVER CANNOT APPLY A FIELD THE HONEST METRIC REJECTS ─────────
+  // The inner loop measures at equal fractions of travel, because a solid
+  // read costs about 3x and runs once per round. So the returned state is
+  // re-read as a solid against the input read the same way, and a field that
+  // does not improve THAT number is not applied. Checked on the case where
+  // the two metrics disagree most.
+  {
+    // at the PREVIEW station count, because this asserts the wrapper's
+    // contract rather than a figure, and a solid re-read costs about 3x
+    const r = M.solveSeparation(th, dflt({ lengthen: BOW("crossRow"), stations: 24 }),
+      { floor: FLOOR, mode: "repel", maxIter: 2, outline: "inset", compare: "solid" });
+    checkTrue("the solve reports the honest reading whatever it returns",
+      r.gapSolidBefore != null && r.gapSolidAfter != null,
+      `station ${r.gapBefore.toFixed(2)} -> ${r.gapAfter.toFixed(2)}, ` +
+      `solid ${r.gapSolidBefore.toFixed(2)} -> ${r.gapSolidAfter.toFixed(2)} mm` +
+      (r.amps ? "" : " (no field returned)"));
+    checkTrue("...and never returns a state worse than its input on the solid read",
+      r.gapSolidAfter >= r.gapSolidBefore - 1e-9,
+      `${r.gapSolidBefore.toFixed(3)} -> ${r.gapSolidAfter.toFixed(3)} mm` +
+      (r.solidRefused ? " (field refused)" : ""));
+    checkTrue("...and a refused field is not handed back",
+      !r.solidRefused || r.amps === null, r.solidRefused ? "refused, amps null" : "no refusal");
+  }
+}
+
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
