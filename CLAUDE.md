@@ -330,7 +330,9 @@ exists.
 
 - **THE 2026-09-04 PASS REMOVED FOUR EXPORT FORMATS, THE WALL JITTER AND THE
   THROAT-END OPTIONS, AND DROPPED THE CUTTER EXTENSION TO 1 mm. Read this
-  before hunting for something a note mentions.** Gone from the UI: the DXF
+  before hunting for something a note mentions.** (The 1 mm was WRONG and was
+  corrected the same day — the cutter is now flush at the throat and sized
+  from the station step at the mouth. See the fold finding two bullets down.) Gone from the UI: the DXF
   (one layer per station), the JSON cell definition, the per-cell CSV and the
   ΣA(x) CSV. Gone from the model with them: `mapThroatToMouth`'s `sigma` (the
   ΣA CSV was its only consumer), `cellParity` and every `jitter` argument.
@@ -359,14 +361,64 @@ exists.
   makes the aperture a CYLINDER — a ruled surface — and a Coons patch whose
   sides run along the rulings lies on it exactly. At the throat there is
   nothing to clear at all, both faces being parallel planes. So `cutterExt`
-  is now its own parameter at 1 mm, leaving 0.96 mm of margin on the worst
-  mouth curvature tried, and the extended cutter's mouth ring measures
-  0.9915 mm off the aperture (the 0.85% is the cosine between the ring's
-  vector-area normal and the aperture's local normal, not a shortfall).
+  is now its own parameter, and the sag is the number it must EXCEED. What
+  the 2026-09-04 pass got wrong was treating that as the ONLY constraint —
+  see the next finding, which is the correction.
   **THE BLANK'S `ext` STAYS AT 3 mm because it answers a different
   constraint**: it has to exceed about 0.4 of a station step or the uniformly
   parameterised loft overshoots BACKWARDS through its own cap plane. The two
   were one number and are no longer.
+
+- **A FIXED-MILLIMETRE CUTTER EXTENSION CANNOT BE SAFE, BECAUSE THE FOLD
+  THRESHOLD IS A RATIO — and the 1 mm shipped on 2026-09-04 folded the wall
+  at BOTH ends. The owner found it in CAD before it had shipped a part.**
+  The reported symptom: "the side walls fold back on themselves before
+  reaching a 1 mm extended surface." That is exactly the mechanism already
+  recorded for the blank — `extendSections` prepends ONE ring, `ductBrep`
+  interpolates with a UNIFORM parameterisation, so a short first gap against
+  a full station step is told the two are equal and the cubic overshoots
+  BACKWARDS through the cap it was meant to close. It bites the CUTTER far
+  harder than the blank because the cutter runs at the MAP's station count
+  (64) and the blank at the shell's (32), so the cutter's steps are half as
+  long and any fixed extension is half the ratio.
+  The previous session applied the cap-fill sag argument (1 mm clears
+  0.038 mm with margin) and never checked this second constraint against it.
+  Measured at 6x3, 64 stations, duct step 4.87 mm, as the distance the wall
+  travels back OUT while the parameter walks IN — a REVERSAL, so no point
+  correspondence is assumed and it is exact at the end ring:
+    ext (mm)      0.5     1.0     1.5     2.0     3.0
+    ext/step     0.101   0.202   0.302   0.403   0.605
+    throat       0.418   0.154   0.000   0.000   0.000  mm
+    mouth        0.428   0.161   0.002   0.000   0.000  mm
+  Same ~0.4-of-a-step threshold as the blank, at both ends. **The old 3 mm
+  sat at 0.605 of a step and was safe by accident**, which is why this had
+  never been seen.
+  **THE THROAT EXTENSION IS REMOVED OUTRIGHT (owner's call), and it was never
+  buying anything.** The membrane an extension exists to punch needs the
+  blank's cap fill and the duct's to differ, and at the throat both rings are
+  planar in z = 0, so both Coons fills are that plane — measured 0.00e+0 mm
+  off z = 0 for the duct cap and for the blank cap, over all 18 cells. So the
+  throat extension was pure cost. The owner's independent CAD result agrees
+  from the other side: putting the cutter IN PLANE with the blank at the
+  throat took a subtraction from failing to succeeding.
+  **THE MOUTH KEEPS ONE, SIZED FROM THE STATION STEP RATHER THAN IN mm.**
+  There the aperture is curved and the sag is real (0.018 mm at 90x40,
+  0.038 at 90x60), so something must protrude. `cutterExt` is now the MINIMUM
+  protrusion and the extension actually used is
+  `max(cutterExt, 0.5 x station step)` — 2.4 mm at 64 export stations,
+  6.7 mm on the 24-station test map, reported as `cutterExtMouth` and stamped
+  in the header. A constant cannot work: 1 mm is 0.20 of a step at 64
+  stations and 0.10 at 32, so whatever clears the fold at one count folds at
+  another.
+  **THE GENERAL LESSON, and it is the one at the top of this file in a new
+  costume**: a threshold expressed as a RATIO must not be satisfied with a
+  constant. Two independent constraints acted on one number, the pass that
+  set it measured only the one it had gone looking for, and the number got
+  safer-looking (1 mm of margin on a 0.038 mm sag) while crossing the other.
+  Both are now asserted, and the fold test is a REVERSAL rather than a
+  distance so it cannot be fooled by point correspondence — the first attempt
+  at measuring the mouth end read ~2.7 mm at every extension including the
+  safe 3 mm, because it was measuring the ring's own extent.
 
 - **THE THROAT RULE IS MONOTONE, NOT A RATE — there is no "how fast must the
   cells expand" setting in this tool, and the min-gap number does not become
@@ -1508,13 +1560,15 @@ exists.
   in returns every line, measured 1e-14 at the throat, where the outset
   segments lie ON the offset lines), and a ring translated along its own unit
   vector-area normal spans a prism of exactly |A_vec|·ext whatever caps it, so
-  the cutter extension's added volume is ext·(|A_throat|+|A_mouth|) to 1e-9
+  the cutter extension's added volume is ext·|A_end| per extended end to 1e-9
   relative — and the throat ring's vector-area normal is exactly −z (planar
-  ring), so the cutter's throat cap is exactly planar in z = −ext. The
-  extension is not optional: without it the blank's cap and the duct's cap are
-  two different fills of nearly the same ring (the cap-fill finding below) and
-  the subtraction leaves a MEMBRANE over the passage wherever the blank's fill
-  lies in front; the default 3 mm clears the ~1 mm sag difference.
+  ring), so a throat-extended cutter's cap is exactly planar in z = −ext.
+  **"THE EXTENSION IS NOT OPTIONAL" WAS TRUE OF THE MOUTH AND FALSE OF THE
+  THROAT, and this bullet asserted it of both for months.** The membrane
+  argument requires the blank's cap fill and the duct's to DIFFER. At the
+  throat they cannot: both rings are planar in z = 0, so both Coons fills are
+  that plane exactly (measured 0.00e+0 mm on all 18 cells, both solids). The
+  cutter is therefore flush at the throat — see the cutter-fold finding.
   **THE 3-D VIEWPORT NO LONGER DRAWS THE SHELL** (owner's call, 2026-09-02).
   A "horn — shell blanks" option was built alongside the kit and removed one
   session later as adding nothing for a designer: a blank is an INTERMEDIATE
