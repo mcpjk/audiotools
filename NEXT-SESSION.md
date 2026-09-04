@@ -137,6 +137,46 @@ is 1.77 mm**, the thinnest any shipped default has carried. Not folded, and the
 owner's call — but read `bendFoldMin` in the verdict strip before committing a
 print.
 
+### 0. SOLVE OR RE-PIN `tightThroat` — the largest free improvement on the shipped horn
+
+Measured 2026-09-04 on the current defaults, and it contradicts the standing
+CLAUDE.md finding, which was taken on the old curved mouth at depth 425 and
+judged on `wallSpread` before `bendFold` existed.
+
+At depth 300 with the shipped bow, moving `tightThroat` 0.5 → 0.25:
+
+| | 0.5 (shipped) | 0.25 |
+|---|---|---|
+| fold margin | 1.50 mm | **2.83** |
+| wall gap | **−2.845 mm** | **+0.049** |
+| wallSpread | 14.37 mm | 12.64 |
+| obliquity | 20.7° | 16.3° |
+| 1.5 mm reach | 78% | 85% |
+| ΔL | 0.00 | 0.00 |
+
+Every metric improves and the interpenetration crosses zero. Ends stay exact
+(station 0 at 0.0e+0, mouth on the aperture to 5.7e-14).
+
+**It is compensating for depth 300 being off its optimum**, which is the real
+finding: at 319.5 and 357 the shipped 0.5 is the better value on both fold and
+gap. Depth 300 is settled for UI reasons, so `tightThroat` is the lever that
+pays for it — and it is currently pinned at the value that suits a depth we
+are not using.
+
+Three options, in order of what they cost:
+1. **Re-pin at 0.25.** One line. Wrong if the depth ever moves.
+2. **Make it adjustable again** — it was a slider once.
+3. **Solve it, like depth.** The right value tracks the depth, and the depth
+   solve is a button the owner presses. This is what the old finding's own
+   closing line proposed.
+
+Do NOT fold it into the region-grade solve: the grade sets each cell's window
+width, `tight` sets the base centreline for all cells. Lumping them hides
+which is doing the work.
+
+The plateau is 0.18–0.28 with a cliff at 0.30 (gap +0.09 → −1.30 for a 0.02
+step). Read it; do not extrapolate.
+
 ### 1. Raise the PREVIEW station count
 
 **The `samples` half landed 2026-09-03** (64 -> 512, and `stations` can no

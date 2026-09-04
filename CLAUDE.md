@@ -929,7 +929,51 @@ exists.
   stayed on the current one, and a real 40x12 drag still moved it. A test
   that dragged by a real distance could not have told the two apart.
 
-- **BEND TIGHTNESS IS PINNED AT 0.5, and the minimum is NOT the safe end.**
+- **BEND TIGHTNESS IS THE LARGEST UNUSED LEVER ON THE SHIPPED HORN, AND THE
+  FINDING BELOW IS STALE — it was measured on a geometry this tool no longer
+  builds.** `tight` was pinned at 0.5 on the curved 90x40 / depth 425 mouth,
+  judged on `wallSpread`, before the section planes followed the tangent,
+  before the mouth went vertically flat at arcH 500, before depth 300, and
+  before `bendFold` existed at all. Re-measured on the CURRENT defaults with
+  the shipped bow (samples 1024-2048, stations 64, diagonals in, INSET
+  outlines), sweeping `tightThroat` with `tightMouth` at 0.5:
+    tightThroat   0.20    0.25    0.30    0.35    0.40    0.50
+    foldMin       2.79    2.87    2.72    2.33    2.15   1.55  mm
+    wall gap     -0.002  +0.049  -1.295  -1.891  -2.466 -2.845 mm
+    wallSpread   12.71   12.64   12.55   12.85   13.24  14.37  mm
+    obliquity     16.2    16.3    16.0    17.3    18.6   20.7  deg
+    1.5 mm reach   87%     85%     82%     80%     80%    78%
+    dL            0.00    0.00    0.00    0.00    0.00   0.00  mm
+  **Every metric the tool reports improves at once, and the interpenetration
+  crosses zero.** At 0.25 the ducts stop passing through each other entirely
+  (+0.049 mm of real wall) where the shipped 0.5 leaves -2.845 mm, the fold
+  margin nearly doubles, and dL does not move. Ends stay exact: station 0 in
+  the throat plane to 0.0e+0 and the mouth on the aperture to 5.7e-14 at every
+  value. `fluxContractMax` is 0.00% throughout.
+  **BUT IT IS COMPENSATING FOR A DEPTH THAT IS OFF ITS OPTIMUM, and that is
+  the finding rather than "0.25 is better".** Measured at samples 2048:
+    depth        fold @0.5   fold @0.25   gap @0.5   gap @0.25
+    300           1.496       2.833       -2.845     +0.049
+    319.5         4.224       2.839       +0.290     +0.081
+    357           4.756       3.259       +1.554     +0.138
+  At the dL optimum 0.5 is the better value on both counts; at depth 300 it is
+  0.25 by a wide margin. So the tangent magnitude and the axial depth are
+  COUPLED, and the pinned 0.5 suits a depth the tool is deliberately not
+  using. Depth 300 is settled for UI reasons (it is what the dL solve is read
+  against), which makes `tightThroat` the lever that pays for that choice.
+  **THE OPTIMUM IS A PLATEAU WITH A CLIFF ON ONE SIDE.** Gap by tightThroat:
+  -0.026 / -0.002 / +0.004 / +0.034 / +0.049 / +0.103 / +0.091 / **-1.295** at
+  0.18 / 0.20 / 0.22 / 0.24 / 0.25 / 0.26 / 0.28 / 0.30. Flat from 0.18 to
+  0.28 and then a 1.4 mm drop for a 0.02 step. Read it; do not extrapolate
+  past 0.28.
+  **WHAT TO DO WITH IT**: the old note's own closing line — "if it is ever
+  worth per-geometry accuracy, SOLVE it like depth" — is now clearly worth it,
+  because the right value tracks the depth. Do NOT fold it into the region
+  grade: the grade sets each cell's own window width and `tight` sets the base
+  centreline for all of them, so lumping them hides which one is doing the
+  work, which is the mistake this file has already recorded twice.
+
+- **(STALE — see above.) BEND TIGHTNESS IS PINNED AT 0.5, and the minimum is NOT the safe end.**
   The two Hermite tangent magnitudes are the cubic's only remaining freedom
   and the measured optimum barely moves: wallSpread bottoms at 0.45-0.55 on
   every well-posed geometry (curved 90x40 d425: 5.63 mm at 0.55; narrow
