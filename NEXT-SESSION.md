@@ -150,31 +150,29 @@ shipped bow — ΔL, Lmin, Lmax, mouth area, f_c and turn are IDENTICAL at 24,
 count. wallSpread moves 0.32%. So every number you drag a slider against is
 already exact, which is worth knowing before budgeting a session here.
 
-**Two things do move, and only one of them is resolution.** The discriminator
-is whether the metric converges with the count or keys on DIVISIBILITY:
+**Two things do move.** Measured at the defaults with the shipped bow:
 
 | stations | 24 | 32 | 48 | 64 | 128 | 256 |
 |---|---|---|---|---|---|---|
-| 512 ÷ stations | 21.33 | **16** | 10.67 | **8** | **4** | **2** |
 | sectionObliqMax (deg) | 40.91 | 34.52 | 26.14 | 20.67 | 20.98 | 21.36 |
 | bendFoldMin (mm) | 1.6122 | 1.7732 | 1.6122 | 1.7732 | 1.7732 | 1.7096 |
 
 - **Obliquity is genuine under-resolution**: monotone, converged by 64. So the
   export is right and **the 24-station preview reads the section tilt nearly
   TWICE as bad as it is** — pessimistic, where the clearance is optimistic.
-- **The fold margin is the SNAPPING** (item 3): it does not converge, it flips
-  between two values on whether the count divides 512. 24 and 48 both read
-  1.6122; 32, 64 and 128 all read 1.7732. A 9% error tracking the
-  parameterisation rather than the horn.
+- **THE FOLD MARGIN IS NOT A STATION PROBLEM AT ALL** — see the finding it now
+  carries in CLAUDE.md. An earlier version of this section attributed the
+  24/48-vs-32/64 pairing to station SNAPPING and told the reader to use counts
+  that divide 512. **That was wrong and the test that would have caught it is
+  one line**: at samples 480, where 24/32/48 all divide and 64 does not, the
+  pairing does not move at all. The station count is a weak effect here; the
+  binding resolution is `samples`.
 
 And the live cost of the preview count: on the current default bow the
 clearance would read **−2.11 mm at 24 stations against −3.97 at 64**. The
 readout already dodges this by building its own 64-station map, so what is
 still exposed is the 3-D preview — the picture the horn is judged by is a
 coarser horn than the one exported.
-
-**Until this lands: use station counts that DIVIDE 512** — 32, 64, 128. The
-64-station export is exact; the 24-station preview is not.
 
 ### 2. Chord-length parameterisation in `ductBrep` — the root cause of three symptoms
 
@@ -197,7 +195,8 @@ Three recorded symptoms, one bug:
    gaps alternating 1 and 2, and the loft ran **4.6 mm** off its own rings.
    Worked around by snapping the count to a divisor.
 3. **The station snapping** (the map defect below) — rings land on 21/22-sample
-   gaps and are told they are equal.
+   gaps and are told they are equal. (Note this is NOT what moves the fold
+   margin; see item 1.)
 
 The fix is to measure the real distance between consecutive rings and hand it
 to the spline. It **subsumes item 3 and the divisor rule**, and it frees the
