@@ -476,7 +476,7 @@ export default function GinkgoHorn() {
   // whose window is already clear of the throat, grading makes the clearance
   // WORSE, because it widens the outer cells' bows into neighbours they were
   // missing.
-  const [bowGrade, setBowGrade] = useState(0.15);
+  const [bowGrade, setBowGrade] = useState(0.2);
   // THERE IS NO "SOLVE THE BOW" BUTTON, and the reason is the ranking
   // metric rather than the search. `solveBow` ranks candidates on wall
   // spread, and wall spread measures the length each wall fibre has run BY

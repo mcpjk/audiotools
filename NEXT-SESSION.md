@@ -42,7 +42,8 @@ Owner's edits. Every number is a CLAUDE.md finding.
 - **Bow region presets replaced by ±0.01 / ±0.05 steppers**, and the default
   moved to [0.02, 0.22] grade 0.15. All four presets started at u = 0, the one
   case measured to drive the ducts through each other.
-- **Defaults**: bow region [0.02, 0.22], region grade 0.15, min gap 1.5 mm.
+- **Defaults**: bow region [0.02, 0.22], region grade 0.20, min gap 1.5 mm,
+  export region the -x -y quarter.
 - **The shell kit ships as a STEP assembly** — blanks, cutters and trims in
   separate folders, each body named for its cell. Every occurrence carries the
   identity transform and the geometry is the flat file's point for point (both
@@ -50,7 +51,8 @@ Owner's edits. Every number is a CLAUDE.md finding.
   it; the duct export is unchanged.
 
 **The one number worth acting on**: at the new bow default the fold margin is
-**1.77 mm**, down from 2.99 at the old [0, 0.20] grade 0 — the grade buys its
+**1.10 mm displayed and 0.87 mm converged** at grade 0.20 (1.77 / 1.47 at the
+0.15 it replaced), down from 2.99 at the old [0, 0.20] grade 0 — the grade buys its
 47% better clearance (−7.44 → −3.97 mm) by narrowing the inner cells' windows,
 and a narrower window is a steeper turn. It is not folded, but it is the
 thinnest margin any shipped default has carried. Moving the region start to
