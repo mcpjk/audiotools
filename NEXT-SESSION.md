@@ -146,23 +146,26 @@ print.
 
 ### 0. SOLVE OR RE-PIN `tightThroat` — the largest free improvement on the shipped horn
 
-Measured 2026-09-04 on the current defaults, and it contradicts the standing
-CLAUDE.md finding, which was taken on the old curved mouth at depth 425 and
-judged on `wallSpread` before `bendFold` existed.
+Measured 2026-09-04 on the current defaults (region grade 0.20, samples 2048,
+stations 64, inset outlines, diagonals in, floor 1.5 mm), and it contradicts
+the standing CLAUDE.md finding, which was taken on the old curved mouth at
+depth 425 and judged on `wallSpread` before `bendFold` existed.
 
-At depth 300 with the shipped bow, moving `tightThroat` 0.5 → 0.25:
+At depth 300 with the shipped bow, moving `tightThroat` 0.5 -> 0.25:
 
 | | 0.5 (shipped) | 0.25 |
 |---|---|---|
-| fold margin | 1.50 mm | **2.83** |
-| wall gap | **−2.845 mm** | **+0.049** |
-| wallSpread | 14.37 mm | 12.64 |
-| obliquity | 20.7° | 16.3° |
-| 1.5 mm reach | 78% | 85% |
-| ΔL | 0.00 | 0.00 |
+| fold margin | **0.898 mm** | **2.106** |
+| wall gap | **-2.639 mm** | **+0.049** |
+| wallSpread | 14.37 mm | 12.70 |
+| obliquity | 24.3 deg | 18.4 |
+| 1.5 mm reach | 77% | 85% |
+| dL | 0.000 | 0.009 |
 
 Every metric improves and the interpenetration crosses zero. Ends stay exact
-(station 0 at 0.0e+0, mouth on the aperture to 5.7e-14).
+(station 0 at 0.0e+0, mouth on the aperture to 5.7e-14). The fold margin it
+more than doubles is the 0.898 mm the grade-0.20 default carries, which is the
+thinnest any shipped default has had.
 
 **It is compensating for depth 300 being off its optimum**, which is the real
 finding: at 319.5 and 357 the shipped 0.5 is the better value on both fold and
@@ -179,10 +182,12 @@ Three options, in order of what they cost:
 
 Do NOT fold it into the region-grade solve: the grade sets each cell's window
 width, `tight` sets the base centreline for all cells. Lumping them hides
-which is doing the work.
+which is doing the work — and the grade moves this knob's usable window, so a
+joint solve would be searching a space whose shape it cannot report.
 
-The plateau is 0.18–0.28 with a cliff at 0.30 (gap +0.09 → −1.30 for a 0.02
-step). Read it; do not extrapolate.
+The plateau is 0.20-0.25 at the shipped grade 0.20 (it was 0.18-0.28 at grade
+0.15), with a cliff at 0.28 (gap +0.049 -> -0.491). Read it; do not
+extrapolate.
 
 ### 1. Raise the PREVIEW station count
 

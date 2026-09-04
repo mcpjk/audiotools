@@ -965,38 +965,44 @@ exists.
   builds.** `tight` was pinned at 0.5 on the curved 90x40 / depth 425 mouth,
   judged on `wallSpread`, before the section planes followed the tangent,
   before the mouth went vertically flat at arcH 500, before depth 300, and
-  before `bendFold` existed at all. Re-measured on the CURRENT defaults with
-  the shipped bow (samples 1024-2048, stations 64, diagonals in, INSET
-  outlines), sweeping `tightThroat` with `tightMouth` at 0.5:
-    tightThroat   0.20    0.25    0.30    0.35    0.40    0.50
-    foldMin       2.79    2.87    2.72    2.33    2.15   1.55  mm
-    wall gap     -0.002  +0.049  -1.295  -1.891  -2.466 -2.845 mm
-    wallSpread   12.71   12.64   12.55   12.85   13.24  14.37  mm
-    obliquity     16.2    16.3    16.0    17.3    18.6   20.7  deg
-    1.5 mm reach   87%     85%     82%     80%     80%    78%
-    dL            0.00    0.00    0.00    0.00    0.00   0.00  mm
+  before `bendFold` existed at all. Re-measured on the CURRENT defaults —
+  6x3, m 3, arcs 500x245, depth 300, T 0.7, 1-lobe radial over [0.02, 0.22]
+  at **region grade 0.20**, samples 2048, stations 64, the UI's own pair set
+  with diagonals in, INSET outlines, floor 1.5 mm — sweeping `tightThroat`
+  with `tightMouth` at 0.5:
+    tightThroat   0.20    0.22    0.25    0.28    0.30    0.40    0.50
+    foldMin       2.209   2.101   2.106   2.055   2.006   1.473  0.898  mm
+    wall gap     -0.002  +0.004  +0.049  -0.491  -1.428  -2.600 -2.639  mm
+    wallSpread    12.79   12.71   12.70   12.44   12.55   13.24  14.37  mm
+    obliquity     18.51   18.52   18.37   18.32   18.88   21.66  24.30  deg
+    1.5 mm reach    87%     86%     85%     83%     82%     79%    77%
+    dL            0.000   0.000   0.009   0.001   0.000   0.000  0.000  mm
   **Every metric the tool reports improves at once, and the interpenetration
   crosses zero.** At 0.25 the ducts stop passing through each other entirely
-  (+0.049 mm of real wall) where the shipped 0.5 leaves -2.845 mm, the fold
-  margin nearly doubles, and dL does not move. Ends stay exact: station 0 in
-  the throat plane to 0.0e+0 and the mouth on the aperture to 5.7e-14 at every
-  value. `fluxContractMax` is 0.00% throughout.
+  (+0.049 mm of real wall) where the shipped 0.5 leaves -2.639 mm, and the
+  fold margin — 0.898 mm at grade 0.20, the thinnest any shipped default has
+  carried — goes to 2.106 mm, a factor of 2.3, for no dL at all. Ends stay
+  exact: station 0 in the throat plane to 0.0e+0 and the mouth on the
+  aperture to 5.7e-14 at every value. `fluxContractMax` is 0.00% throughout.
   **BUT IT IS COMPENSATING FOR A DEPTH THAT IS OFF ITS OPTIMUM, and that is
-  the finding rather than "0.25 is better".** Measured at samples 2048:
+  the finding rather than "0.25 is better".** Same settings, sweeping depth:
     depth        fold @0.5   fold @0.25   gap @0.5   gap @0.25
-    300           1.496       2.833       -2.845     +0.049
-    319.5         4.224       2.839       +0.290     +0.081
-    357           4.756       3.259       +1.554     +0.138
+    300           0.898       2.106       -2.639     +0.049
+    319.5         3.389       3.215       +0.224     +0.081
+    357           5.339       3.580       +1.645     +0.138
   At the dL optimum 0.5 is the better value on both counts; at depth 300 it is
   0.25 by a wide margin. So the tangent magnitude and the axial depth are
   COUPLED, and the pinned 0.5 suits a depth the tool is deliberately not
   using. Depth 300 is settled for UI reasons (it is what the dL solve is read
   against), which makes `tightThroat` the lever that pays for that choice.
-  **THE OPTIMUM IS A PLATEAU WITH A CLIFF ON ONE SIDE.** Gap by tightThroat:
-  -0.026 / -0.002 / +0.004 / +0.034 / +0.049 / +0.103 / +0.091 / **-1.295** at
-  0.18 / 0.20 / 0.22 / 0.24 / 0.25 / 0.26 / 0.28 / 0.30. Flat from 0.18 to
-  0.28 and then a 1.4 mm drop for a 0.02 step. Read it; do not extrapolate
-  past 0.28.
+  **THE OPTIMUM IS A PLATEAU AND THE REGION GRADE MOVES ITS EDGE.** At grade
+  0.15 the gap is flat from 0.18 to 0.28 and drops 1.4 mm at 0.30; at the
+  shipped grade 0.20 the cliff has moved in to 0.28 (-0.491 mm). So the
+  usable window is **0.20 to 0.25** as the tool ships, and it NARROWS as the
+  grade rises — the two knobs are not independent, which is the second reason
+  not to lump them. The conclusion itself is unchanged across the grade
+  change: at 0.15 the same move read 1.496 -> 2.833 mm of fold and
+  -2.845 -> +0.049 mm of gap.
   **WHAT TO DO WITH IT**: the old note's own closing line — "if it is ever
   worth per-geometry accuracy, SOLVE it like depth" — is now clearly worth it,
   because the right value tracks the depth. Do NOT fold it into the region
