@@ -1808,24 +1808,15 @@ export function mapThroatToMouth(throat, opts) {
     return { id: r.id, label: r.label, pts: st.pts };
   });
 
-  // sum of cross-sections at each station, for a Hornresp / ABEC handoff
-  // Both areas are carried. `area` is the sum of the sections' own areas;
-  // `axial` is the sum of their projections on the direction of travel, which
-  // is the flux-carrying cross-section and therefore the one a 1-D horn area
-  // schedule means. They differ by the sections' obliquity — up to 14.5% at
-  // 6x3 — so which one is handed to Hornresp is not a detail.
-  const sigma = [];
-  for (let q = 0; q <= stations; q++) {
-    let A = 0, Ax = 0, z = 0, sl = 0;
-    rows.forEach((r) => {
-      A += r.sched[q].area; Ax += r.sched[q].axial;
-      z += r.sched[q].zc; sl += r.sched[q].sc;
-    });
-    // zMean/sMean are CENTROID-derived, so each summed area is attributed to
-    // the position of the sections that produced it rather than to the
-    // centreline's, which sits up to 4.5 mm away in arc mode
-    sigma.push({ s: q / stations, area: A, axial: Ax, zMean: z / rows.length, sMean: sl / rows.length });
-  }
+  // The summed cross-section schedule that used to be carried here as
+  // `sigma` was for one consumer only — the sigma-A(x) CSV, the tool's route
+  // into a 1-D simulator — and that export was removed on 2026-09-04 at the
+  // owner's call, so this went with it. It was a sum over `sched[q].area`,
+  // `axial`, `zc` and `sc`, all of which are still on every row: the
+  // distinction worth keeping is that `axial` (the projection on the
+  // direction of travel) is the flux-carrying cross-section a 1-D horn
+  // schedule means, and it differs from the sections' own `area` by their
+  // obliquity — up to 14.5% at 6x3. Rebuilding it is a dozen lines.
 
   // ── SIGNED CLEARANCE BETWEEN NEIGHBOURING DUCTS ─────────────────────────
   // The measurement itself is ductClearance below; it is separable because it
@@ -1953,7 +1944,7 @@ export function mapThroatToMouth(throat, opts) {
     aimMax: Math.max(...rows.map((r) => r.aimErrDeg)),
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
     aimLimitDeg: (lam / (4 * (mouthWEff / nc))) * R2D,
-    sigma, stations, sectionAt,
+    stations, sectionAt,
     // the UNION — what radiates, and what the loading limit must key on.
     // Under interior-edge symmetric bulges the union IS the tiled total, so
     // it is summed from the unbulged shares; summing bulged outlines would
@@ -4503,9 +4494,16 @@ export function apertureCapGrid(ring, ap) {
 // blank's fill lies in front. The throat extension is exact: the ring is
 // planar in z = 0, so its vector-area normal is exactly -z and the
 // prepended ring is planar in z = -ext. The mouth extension follows the
-// mouth ring's own vector-area normal. ext must exceed the cap-fill sag
-// difference between the blank's cap and the duct's (order 1 mm on these
-// mouths); the default of 3 mm clears it with margin.
+// mouth ring's own vector-area normal.
+// A CUTTER'S extension has to exceed the cap-fill sag — how far the Coons
+// fill of a mouth ring falls behind the aperture the trim cuts on. That is a
+// PER-CELL cap and it is far smaller than the whole-horn figure this comment
+// once carried: measured over all 18 cells, 1.2e-13 mm at the tool's own
+// vertically flat mouth (a Coons patch on a ruled surface is exact), 0.018 mm
+// at 90x40 and 0.038 mm at 90x60. So the cutter ships at 1 mm.
+// A BLANK's extension is a different constraint and stays at 3 mm: it has to
+// exceed about 0.4 of a station step or the uniformly parameterised loft
+// overshoots backwards through its own cap plane (see `shellCapOvershoot`).
 //
 // Both end faces are shared exactly with the duct's: the throat ring is
 // planar in z = 0 so the blank's is too, and the mouth ring is SNAPPED to
@@ -4518,15 +4516,16 @@ export function apertureCapGrid(ring, ap) {
 // 50 um apart: measured 5-6.5 mm of arc per pair inside 10 um, 172 mm inside
 // 50 um, over 27 pairs. A kernel's linear tolerance is around 1 um, so that
 // is not a shape it can resolve — and it is invisible at any zoom, which is
-// why the owner could not find it. `jitter` breaks the tie by giving cells of
-// opposite grid parity different walls; any two orthogonally adjacent cells
-// then differ, so no face is ever a near-copy of another. The wall is only
-// ever ADDED to, never taken away, so `wall` stays the minimum.
-export function cellParity(label) {
-  const [col, row] = String(label).split(",").map(Number);
-  return Number.isFinite(col) && Number.isFinite(row) ? (col + row) % 2 : 0;
-}
-
+// why the owner could not find it.
+// A `jitter` — a per-parity wall offset that broke the tie — was built for
+// exactly this and REMOVED on 2026-09-04 at the owner's call, on their CAD
+// evidence: it took the near-copy arc to 0 and changed no boolean outcome
+// they could observe, while the finding that DID sort the unions is
+// adjacency (8 of 8 non-adjacent pairs succeeding, 2 of 13 orthogonal). It
+// was measuring a real degeneracy that is not the binding one.
+// `shellCoincidence` still measures the arc and the export still prints it,
+// so nothing is hidden — the number now simply stands as a reported property
+// of the kit (~148 mm inside 50 um at the defaults) rather than as a knob.
 // A five-phase index that is guaranteed to DIFFER between any two
 // orthogonally adjacent cells (7 and 3 are both non-zero mod 5), used to
 // stagger the end-cap planes of the extended blanks. Two-phase parity is not
@@ -4566,13 +4565,12 @@ function stationIndices(Q, stations) {
   return out;
 }
 
-export function shellSections(cellRec, row, { t = 0, wall = 3, surf = null, jitter = 0, stations = null, snapMouth = true } = {}) {
+export function shellSections(cellRec, row, { t = 0, wall = 3, surf = null, stations = null, snapMouth = true } = {}) {
   const duct = ductSections(cellRec, row, { t });
   if (!duct) return null;
   const Q = duct.length - 1;
   const ap = surf ? apertureFrame(surf) : null;
-  const w = wall + jitter * cellParity(cellRec.label);
-  const d = [-w, -w, -w, -w];
+  const d = [-wall, -wall, -wall, -wall];
   const out = [];
   for (const q of stationIndices(Q, stations)) {
     let pts = insetSection3(duct[q].pts, d);
@@ -5499,13 +5497,13 @@ export function throatCellWidth(throat, map = null, { t = 0 } = {}) {
 // phase-0 cells sit at 0.26 and DO overshoot. Reported, not clamped: raising
 // `ext` or lowering `stations` both fix it, and which one the owner wants is
 // not this function's call.
-export function shellCapOvershoot(throat, map, { t = 0, wall = 3, jitter = 0.5, stations = 32, ext = 3, samples = 24 } = {}) {
+export function shellCapOvershoot(throat, map, { t = 0, wall = 3, stations = 32, ext = 3, samples = 24 } = {}) {
   if (!map) return null;
   let worst = 0, at = null, minRatio = Infinity, stepSum = 0, nStep = 0;
   for (const cellRec of throat.cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
-    const blank = shellSections(cellRec, row, { t, wall, surf: map.mouthSurf, jitter, stations, snapMouth: false });
+    const blank = shellSections(cellRec, row, { t, wall, surf: map.mouthSurf, stations, snapMouth: false });
     if (!blank) return null;
     let tot = 0;
     for (let q = 1; q < blank.length; q++) {
@@ -5643,10 +5641,10 @@ export function mirrorSymmetry(throat, map, { t = 0, every = 2 } = {}) {
 // overlap near both ends and stand apart mid-path, so every neighbouring pair
 // passes through exact tangential contact twice (measured, all 27 pairs, at
 // u = 0.056-0.125, u ~ 0.30 and u = 0.970-0.976), and they carry near-copies
-// of each other's faces besides. `jitter` and `stations` are what make the
-// extended union tractable; see their comments above.
+// of each other's faces besides. `stations` is what makes the extended union
+// tractable; see its comment above.
 export function buildShellSTEP(throat, map, {
-  t = 0, wall = 3, ext = 3, extend = true, jitter = 0.5, stations = 32,
+  t = 0, wall = 3, ext = 3, cutterExt = 1, extend = true, stations = 32,
   extendThroat = null, extendMouth = null, trimThroat = null, trimMouth = null,
   only = null, xSide = 0, ySide = 0, params = null, name = "ginkgo_horn_shell",
 } = {}) {
@@ -5685,7 +5683,7 @@ export function buildShellSTEP(throat, map, {
     const duct = ductSections(cellRec, row, { t });
     // the mouth ring is snapped onto the aperture only when the trim is not
     // the thing that makes that face
-    const blank = shellSections(cellRec, row, { t, wall, surf, jitter, stations, snapMouth: !eM });
+    const blank = shellSections(cellRec, row, { t, wall, surf, stations, snapMouth: !eM });
     if (!duct || !blank) return null;
     // staggered per cell so no two adjacent blanks end on the same plane
     const e = ext * (1 + 0.4 * cellPhase5(cellRec.label));
@@ -5696,7 +5694,21 @@ export function buildShellSTEP(throat, map, {
       capZ: eT ? -e : 0,
       ...(eM ? {} : { capMouthPts: capOf(blank) }),
     });
-    solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, ext), capZ: -ext });
+    // THE CUTTER'S EXTENSION IS ITS OWN NUMBER, and it is much smaller than
+    // the blank's. All the cutter has to do is protrude past the two faces it
+    // opens, so what it must clear is the CAP-FILL SAG — how far the Coons
+    // fill of a mouth ring falls behind the aperture the trim cuts on. That
+    // is a PER-CELL cap, not the whole horn's, and it is tiny: measured over
+    // all 18 cells, worst sag 1.2e-13 mm at the tool's own vertically flat
+    // mouth (the aperture is then a cylinder, and a Coons patch on a ruled
+    // surface is exact), 0.018 mm at 90x40 and 0.038 mm at 90x60. At the
+    // throat the two faces are parallel planes, so there is nothing to clear
+    // at all. 1 mm therefore leaves ~0.96 mm of margin on the worst mouth
+    // curvature tried, against the 3 mm this used to inherit from the blank.
+    // The blank's `ext` is a different problem — it has to exceed 0.4 of a
+    // station step or the loft overshoots its own cap plane — so the two are
+    // no longer one number.
+    solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, cutterExt), capZ: -cutterExt });
   }
   const n = cells.length;
   const trims = [];
@@ -5708,7 +5720,7 @@ export function buildShellSTEP(throat, map, {
       trims.push("throat trim");
     }
     if (tM) {
-      const mo = mouthTrimSections(throat, map, { t, wall, ext: ext * 3, jitter, per: 8 });
+      const mo = mouthTrimSections(throat, map, { t, wall, ext: ext * 3, per: 8 });
       if (!mo) return null;
       solidsSpec.push({ label: "mouth trim", sections: mo, capMouthPts: capOf(mo) });
       trims.push("mouth trim");
@@ -5723,7 +5735,7 @@ export function buildShellSTEP(throat, map, {
     : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
   const out = stepEmit({
     name, solidsSpec,
-    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} jitter=${jitter} stations=${stations} xSide=${xSide} ySide=${ySide}`,
+    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExt=${cutterExt} extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide}`,
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
     fileDesc: `ginkgo multicell horn shell kit: ${recipe}`,
   });
@@ -5742,21 +5754,21 @@ export function buildShellSTEP(throat, map, {
 // Two adjacent cells share a grid line, so on their other sides both blanks
 // offset the SAME curve by the SAME distance: the identical surface computed
 // twice, differing only by the two cells' best-fit planes. Measured without
-// jitter: 37 mm of arc inside 10 um and 172 mm inside 50 um over 27 pairs,
-// with the two surfaces closing to 0.4 um. A kernel's linear tolerance is
-// around 1 um, so that is not a shape it can resolve, and it is invisible at
-// any zoom. `jitter` separates them — but WHICH value is clean depends on
-// the geometry (0.1 and 0.5 mm measure 17.5 and 0 mm of arc inside 50 um on
-// the tool's defaults, while 0.3 measures 85.5), so it is MEASURED and
-// reported rather than assumed. Sampled every `every` stations to stay cheap
-// enough to run on every export.
-export function shellCoincidence(throat, map, { t = 0, wall = 3, jitter = 0, stations = null, eps = 0.05, every = 4 } = {}) {
+// 37 mm of arc inside 10 um and 172 mm inside 50 um over 27 pairs, with the
+// two surfaces closing to 0.4 um. A kernel's linear tolerance is around
+// 1 um, so that is not a shape it can resolve, and it is invisible at any
+// zoom — which is why it has to be MEASURED and reported rather than looked
+// for. The per-parity `jitter` that used to remove it was withdrawn on the
+// owner's CAD evidence (it changed no boolean outcome), so this is now a
+// standing property of every kit rather than a knob's readout. Sampled every
+// `every` stations to stay cheap enough to run on every export.
+export function shellCoincidence(throat, map, { t = 0, wall = 3, stations = null, eps = 0.05, every = 4 } = {}) {
   const surf = map.mouthSurf || null;
   const B = new Map();
   for (const c of throat.cells) {
     const row = map.rows.find((r) => r.id === c.id);
     if (!row) return null;
-    const b = shellSections(c, row, { t, wall, surf, jitter, stations, snapMouth: false });
+    const b = shellSections(c, row, { t, wall, surf, stations, snapMouth: false });
     if (!b) return null;
     B.set(c.label, b);
   }
@@ -5850,7 +5862,7 @@ export function throatTrimSections(throat, map, { t = 0, wall = 3, ext = 3, per 
 // ITSELF, emitted through `apertureCapGrid` so the cut lands on the analytic
 // surface rather than on a chord across it. The parametric domain is taken
 // from where the blanks actually reach, plus a margin.
-export function mouthTrimSections(throat, map, { t = 0, wall = 3, ext = 3, jitter = 0, per = 8, pad = 12, thick = 40 } = {}) {
+export function mouthTrimSections(throat, map, { t = 0, wall = 3, ext = 3, per = 8, pad = 12, thick = 40 } = {}) {
   const surf = map.mouthSurf;
   if (!surf) return null;
   const ap = apertureFrame(surf);
@@ -5858,7 +5870,7 @@ export function mouthTrimSections(throat, map, { t = 0, wall = 3, ext = 3, jitte
   for (const cellRec of throat.cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
-    const b = shellSections(cellRec, row, { t, wall, surf, jitter, snapMouth: false });
+    const b = shellSections(cellRec, row, { t, wall, surf, snapMouth: false });
     if (!b) return null;
     for (const p of b[b.length - 1].pts) {
       const pr = ap.param(p);
