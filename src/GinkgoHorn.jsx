@@ -556,8 +556,16 @@ export default function GinkgoHorn() {
   // half in CAD is no longer the near-copy trap it was — exporting the other
   // side here is still the cleaner route, since the mirror is MEASURED on
   // this geometry rather than assumed.
-  const [regX, setRegX] = useState(0);
-  const [regY, setRegY] = useState(0);
+  // THE DEFAULT IS THE −x −y QUARTER (owner's call, 2026-09-04), not the whole
+  // horn. A quarter is a quarter of the booleans and a quarter of the file,
+  // and the other three follow from it by mirroring in CAD. What it costs is
+  // that the region rests on BOTH mirrors, so both are measured on every
+  // export rather than assumed — a world-axis bow breaks one of them — and on
+  // an odd row or column count the region straddles a plane, so the cells
+  // sitting ON it are exported whole and must not be duplicated when the
+  // quarter is mirrored back. Both are reported in the export note.
+  const [regX, setRegX] = useState(-1);
+  const [regY, setRegY] = useState(-1);
   // HOW THE SHELL IS DELIVERED. "solid" is one horn body plus one cutter per
   // duct, so the CAD work is subtractions only — no unions at all. "bundle"
   // is a blank per cell, the literal multicell form, and it needs the union
@@ -2251,6 +2259,8 @@ export default function GinkgoHorn() {
           sharing 29 / 18 / 2 pairs at wall 3 / 2.5 / 2, and zero at 1.5. The note prints both numbers on every export.
           {" "}<strong style={{ color: C.inkDim }}>Region</strong> exports one side of each mirror \u2014 a half, or a quarter \u2014 so the CAD
           work is a quarter of the booleans. It applies to all three solid exports and the filename carries the side.
+          {" "}<strong style={{ color: C.inkDim }}>The \u2212x \u2212y quarter is the default</strong>: <em>both</em> on an axis keeps that
+          whole axis, and <em>both</em> on each gives the entire horn.
           {regSel && regSel.onPlane.length ? <> On this grid the {regX && regY ? "quarter" : "half"} straddles a plane:{" "}
             <strong style={{ color: C.inkDim }}>{regSel.onPlane.length} cell(s) sit ON it</strong> ({regSel.onPlane.join(", ")}) and are
             their own mirror image, so they are exported whole and must not be duplicated when the region is mirrored back.</> : null}
