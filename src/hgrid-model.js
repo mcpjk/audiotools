@@ -4495,15 +4495,22 @@ export function apertureCapGrid(ring, ap) {
 // planar in z = 0, so its vector-area normal is exactly -z and the
 // prepended ring is planar in z = -ext. The mouth extension follows the
 // mouth ring's own vector-area normal.
-// A CUTTER'S extension has to exceed the cap-fill sag — how far the Coons
-// fill of a mouth ring falls behind the aperture the trim cuts on. That is a
-// PER-CELL cap and it is far smaller than the whole-horn figure this comment
-// once carried: measured over all 18 cells, 1.2e-13 mm at the tool's own
-// vertically flat mouth (a Coons patch on a ruled surface is exact), 0.018 mm
-// at 90x40 and 0.038 mm at 90x60. So the cutter ships at 1 mm.
-// A BLANK's extension is a different constraint and stays at 3 mm: it has to
-// exceed about 0.4 of a station step or the uniformly parameterised loft
-// overshoots backwards through its own cap plane (see `shellCapOvershoot`).
+// AN EXTENSION HAS TWO CONSTRAINTS PULLING OPPOSITE WAYS, and both are
+// ratios or sags rather than round numbers.
+// (1) It must exceed the CAP-FILL SAG it is there to punch through — how far
+// the Coons fill of an end ring falls behind the face the blank presents
+// there. That is a per-cell cap and it is small: measured over all 18 cells,
+// 1.2e-13 mm at the tool's own vertically flat mouth (its aperture is a
+// cylinder, and a Coons patch on a ruled surface is exact), 0.018 mm at 90x40
+// and 0.038 mm at 90x60. At the THROAT it is exactly zero — both the duct's
+// ring and the blank's are planar in z = 0, so both fills are that plane —
+// which is why the cutter is not extended there at all.
+// (2) It must exceed about 0.4 of a STATION STEP, or the uniformly
+// parameterised loft overshoots BACKWARDS through the very cap it was meant
+// to close (see `shellCapOvershoot`, and the measurement in `buildShellSTEP`).
+// A fixed millimetre value cannot satisfy (2) at every station count, so the
+// cutter's mouth extension is sized from the step; the BLANK's stays at 3 mm
+// because it runs at the shell's own coarser count.
 //
 // Both end faces are shared exactly with the duct's: the throat ring is
 // planar in z = 0 so the blank's is too, and the mouth ring is SNAPPED to
@@ -5677,6 +5684,7 @@ export function buildShellSTEP(throat, map, {
   const cells = sel ? throat.cells.filter((c) => sel.includes(c.label)) : throat.cells;
   if (!cells.length) return null;
   const solidsSpec = [];
+  let cutterExtUsed = 0;
   for (const cellRec of cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
     if (!row) continue;
@@ -5694,21 +5702,60 @@ export function buildShellSTEP(throat, map, {
       capZ: eT ? -e : 0,
       ...(eM ? {} : { capMouthPts: capOf(blank) }),
     });
-    // THE CUTTER'S EXTENSION IS ITS OWN NUMBER, and it is much smaller than
-    // the blank's. All the cutter has to do is protrude past the two faces it
-    // opens, so what it must clear is the CAP-FILL SAG — how far the Coons
-    // fill of a mouth ring falls behind the aperture the trim cuts on. That
-    // is a PER-CELL cap, not the whole horn's, and it is tiny: measured over
-    // all 18 cells, worst sag 1.2e-13 mm at the tool's own vertically flat
-    // mouth (the aperture is then a cylinder, and a Coons patch on a ruled
-    // surface is exact), 0.018 mm at 90x40 and 0.038 mm at 90x60. At the
-    // throat the two faces are parallel planes, so there is nothing to clear
-    // at all. 1 mm therefore leaves ~0.96 mm of margin on the worst mouth
-    // curvature tried, against the 3 mm this used to inherit from the blank.
-    // The blank's `ext` is a different problem — it has to exceed 0.4 of a
-    // station step or the loft overshoots its own cap plane — so the two are
-    // no longer one number.
-    solidsSpec.push({ label: `duct cutter ${cellRec.label}`, sections: extendSections(duct, cutterExt), capZ: -cutterExt });
+    // THE CUTTER IS NOT EXTENDED AT THE THROAT AT ALL, and that is a physical
+    // argument rather than a saving.
+    //
+    // WHAT AN EXTENSION IS FOR is punching through a cap the blank fills
+    // differently from the duct — the MEMBRANE case. At the throat there is
+    // no such difference to punch: the duct's throat ring and the blank's are
+    // both planar in z = 0 (the blank is an offset of a planar ring in its own
+    // best-fit plane, which is that plane), and a Coons blend of boundary
+    // curves that all lie in one plane lies in that plane. Measured over all
+    // 18 cells, worst |z| off z = 0: duct cap 0.00e+0 mm, blank cap 0.00e+0.
+    // The two fills are the same plane, so the subtraction has nothing to
+    // reach past and an extension buys exactly nothing there.
+    //
+    // WHAT IT COSTS IS A FOLDED WALL. `extendSections` prepends ONE ring and
+    // `ductBrep` interpolates with a UNIFORM parameterisation, so a short
+    // first gap followed by a full station step is told the two are equal and
+    // the cubic overshoots BACKWARDS through the cap it was meant to close —
+    // the mechanism already recorded for the blank, which bites the cutter far
+    // harder because the cutter runs at the MAP's station count, not the
+    // shell's. Measured at 6x3, 64 stations (duct step 4.87 mm), as the
+    // distance the wall travels back OUT while the parameter walks IN:
+    //   ext         0.5     1.0     1.5     2.0     3.0  mm
+    //   ext/step   0.101   0.202   0.302   0.403   0.605
+    //   throat     0.418   0.154   0.000   0.000   0.000  mm
+    //   mouth      0.428   0.161   0.002   0.000   0.000  mm
+    // So the threshold is the same ~0.4 of a station step as the blank's, and
+    // a 1 mm extension sits well inside it at both ends. Owner-reported from
+    // CAD: the cutter's side walls fold back on themselves before reaching the
+    // extended face, and putting the cutter IN PLANE with the blank at the
+    // throat took a subtraction from failing to succeeding.
+    //
+    // AT THE MOUTH THE MEMBRANE IS REAL — the aperture is curved, so the
+    // duct's Coons cap does sag behind it (0.018 mm at 90x40, 0.038 at 90x60)
+    // — so that end keeps an extension. It is sized FROM THE STATION STEP
+    // rather than fixed in mm, because the threshold is a ratio: a fixed
+    // 1 mm is 0.20 of a step at 64 export stations and 0.10 at 32, so any
+    // constant that clears the fold at one count folds at another.
+    // `cutterExt` is therefore the MINIMUM protrusion (the sag it must clear),
+    // and half a station step is the floor that keeps the loft monotone.
+    let stepSum = 0;
+    for (let q = 1; q < duct.length; q++) {
+      const A = duct[q - 1].pts, B = duct[q].pts;
+      let d = 0;
+      for (let k = 0; k < A.length; k++)
+        d += Math.hypot(B[k][0] - A[k][0], B[k][1] - A[k][1], B[k][2] - A[k][2]) / A.length;
+      stepSum += d;
+    }
+    const cutE = Math.max(cutterExt, 0.5 * (stepSum / Math.max(1, duct.length - 1)));
+    cutterExtUsed = Math.max(cutterExtUsed, cutE);
+    solidsSpec.push({
+      label: `duct cutter ${cellRec.label}`,
+      sections: extendSections(duct, cutE, { throat: false, mouth: true }),
+      capZ: 0,
+    });
   }
   const n = cells.length;
   const trims = [];
@@ -5735,7 +5782,7 @@ export function buildShellSTEP(throat, map, {
     : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
   const out = stepEmit({
     name, solidsSpec,
-    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExt=${cutterExt} extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide}`,
+    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExtMouth=${+cutterExtUsed.toFixed(3)} cutterExtThroat=0 extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide}`,
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
     fileDesc: `ginkgo multicell horn shell kit: ${recipe}`,
   });
@@ -5745,6 +5792,9 @@ export function buildShellSTEP(throat, map, {
     out.trims = trims.length;
     out.trimNames = trims;
     out.ends = { throat: eT, mouth: eM };
+    // the cutter's mouth extension actually used — it is the larger of the
+    // requested minimum and half a station step, so it is not `cutterExt`
+    out.cutterExtMouth = cutterExtUsed;
     out.region = region;
   }
   return out;

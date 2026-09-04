@@ -30,11 +30,15 @@ Owner's edits. Every number is a CLAUDE.md finding.
 - **The throat end is pinned PLAIN**; only the mouth keeps extend/trim/plain.
   The recipe is now one trim, not two, and the 27/27 coplanar throat caps come
   back as the accepted trade.
-- **`cutterExt` is its own parameter at 1 mm** (was inheriting the blank's 3).
-  What a cutter must clear is the PER-CELL cap-fill sag, measured 1.2e-13 mm
-  on the shipped vertically flat mouth (its aperture is a cylinder, so a Coons
-  patch on it is exact), 0.018 mm at 90×40 and 0.038 mm at 90×60 — three
-  orders below the whole-horn figure the old comment was quoting.
+- **The cutter is FLUSH at the throat and sized from the station step at the
+  mouth.** It went to a fixed 1 mm first, on the cap-fill sag alone, and the
+  owner found in CAD that the side walls folded back before reaching it. The
+  fold threshold is a RATIO (~0.4 of a station step), so no constant is safe:
+  1 mm is 0.20 of a step at 64 export stations and folded 0.15 mm at the
+  throat and 0.16 at the mouth. The throat extension was never buying anything
+  either — both cap fills there are the plane z = 0 exactly — so it is gone,
+  which also puts the cutter in plane with the blank, a change the owner has
+  measured taking a subtraction from failing to succeeding.
 - **Bow region presets replaced by ±0.01 / ±0.05 steppers**, and the default
   moved to [0.02, 0.22] grade 0.15. All four presets started at u = 0, the one
   case measured to drive the ducts through each other.

@@ -2048,6 +2048,7 @@ export default function GinkgoHorn() {
               msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
                 co ? ` · near-copy surface ${fmt(co.arc, 1)} mm` : ""}${
                 sov ? ` · blanks share material over ${fmt(sov.fracTouching * 100, 0)}% of the path` : ""}${
+                r.cutterExtMouth ? ` · cutters flush at the throat, ${fmt(r.cutterExtMouth, 2)} mm past the aperture (half a station step)` : ""}${
                 cw ? ` · throat cells ${fmt(cw.min, 1)}-${fmt(cw.max, 1)} mm wide against 2x wall ${fmt(span, 1)} mm${
                   reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt(cw.min / 2, 2)} mm to stop it` : ""}` : ""}${
                 r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
@@ -2137,7 +2138,7 @@ export default function GinkgoHorn() {
           <br />
           The <strong style={{ color: C.inkDim }}>horn shell</strong> is the material around that air, and it ships as{" "}
           <strong style={{ color: C.inkDim }}>one blank and one cutter per cell</strong>: the blank is that cell's duct offset outwards by{" "}
-          {fmt(shellWall, 1)} mm on every side, the cutter is the duct extended past both end faces. In CAD you{" "}
+          {fmt(shellWall, 1)} mm on every side, the cutter is the duct itself, flush at the throat and run past the aperture. In CAD you{" "}
           <strong style={{ color: C.inkDim }}>subtract each cutter from the blank of the same cell — {throat.N} independent subtractions,
           no unions</strong>, and what comes back is {throat.N} cell shells of exactly {fmt(shellWall, 1)} mm wall.
           {" "}Adjacent blanks share material wherever their ducts run closer than {fmt(2 * shellWall, 0)} mm — most of the throat half of
@@ -2153,10 +2154,19 @@ export default function GinkgoHorn() {
           at the throat, which has been measured failing on individual blanks. A plain throat's end ring is planar in z = 0 by construction,
           the wall stops exactly there, and the kernel is asked for no cut at all. What it costs is the 27 pairs of coplanar overlapping
           throat caps the extension existed to remove — an accepted trade, on the evidence that plain is what has been exporting cleanly.
-          {" "}<strong style={{ color: C.inkDim }}>The cutters extend 1 mm past each end face</strong>, not the blank's 3 mm. All a cutter
-          has to clear is the cap-fill sag — how far the Coons fill of a mouth ring falls behind the aperture — and per cell that is
-          1e-13 mm on this vertically flat mouth, 0.018 mm at 90×40 and 0.038 mm at 90×60, so 1 mm leaves nearly all of itself as margin.
-          The blank's extension answers a different constraint and stays at 3 mm.
+          {" "}<strong style={{ color: C.inkDim }}>The cutters are flush with the throat — not extended past it at all.</strong> An
+          extension exists to punch through a cap the blank fills differently from the duct, and at the throat there is no such
+          difference: both rings are planar in z = 0, so both Coons fills are that plane, measured to 0.0e+0 mm on all {throat.N} cells.
+          What an extension there does cost is a <em>folded wall</em> — the loft interpolates with a uniform parameterisation, so a short
+          first gap against a full station step makes the cubic overshoot backwards through the very cap it was closing. Measured at 64
+          stations (4.87 mm step), the wall runs 0.42 / 0.15 / 0.00 mm back at extensions of 0.5 / 1 / 1.5 mm — the same ~0.4-of-a-step
+          threshold the blank has. Flush also puts the cutter's throat face in plane with the blank's, which has taken a failing
+          subtraction to a succeeding one in CAD.
+          {" "}<strong style={{ color: C.inkDim }}>At the mouth the membrane is real</strong>, because the aperture is curved and the
+          duct's cap does sag behind it (0.018 mm at 90×40, 0.038 at 90×60), so that end keeps an extension. It is sized from the station
+          step rather than fixed in millimetres, because the fold threshold is a ratio: 1 mm is 0.20 of a step at 64 export stations and
+          0.10 at 32, so any constant that is safe at one count folds at another. The note prints what was actually used.
+          The blank's own extension answers the same ratio at the shell's coarser count and stays at 3 mm.
           {" "}The note reports how much <em>near-copy surface</em> the kit carries: two adjacent blanks offset the same shared grid line
           by the same amount, so millimetres of their surfaces are the same surface computed twice, landing under a micron apart —
           invisible, and below what a kernel can resolve. A per-parity wall jitter that removed it was withdrawn on CAD evidence that it

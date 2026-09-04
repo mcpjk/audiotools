@@ -3002,7 +3002,9 @@ head("Horn shell export (blanks + cutters)");
     const cell = th.cells[7];
     const rowR = map.rows.find((r) => r.id === cell.id);
     const duct = M.ductSections(cell, rowR, { t });
-    const extd = M.extendSections(duct, ext);
+    // both ends, which is what the identity is written for; the SHIPPED cutter
+    // extends the mouth only, and the same identity then reads |A_mouth| alone
+    const extd = M.extendSections(duct, ext, { throat: true, mouth: true });
     const dm = M.ductMesh(duct), em = M.ductMesh(extd);
     const v0 = Math.abs(M.meshVolume(dm.verts, dm.tris));
     const v1 = Math.abs(M.meshVolume(em.verts, em.tris));
@@ -3088,13 +3090,109 @@ head("Horn shell export (blanks + cutters)");
       sag40 > 0 && sag60 > sag40, `${sag40.toFixed(4)} mm at 90x40, ${sag60.toFixed(4)} at 90x60`);
     checkTrue("even at 90x60 the per-cell cap sag is under a tenth of a millimetre",
       sag60 < 0.1, `${sag60.toFixed(4)} mm`);
-    checkTrue("so the 1 mm cutter extension clears it with over 0.9 mm of margin",
+    checkTrue("so even the 1 mm MINIMUM protrusion clears it with over 0.9 mm to spare",
       1 - sag60 > 0.9, `margin ${(1 - sag60).toFixed(4)} mm`);
-    // the default is 1 mm, and it is NOT the blank's — the blank has to
-    // exceed ~0.4 of a station step or its loft overshoots its own cap plane
+    // ── AND THE CUTTER IS NOT EXTENDED AT THE THROAT AT ALL ───────────────
+    // Two reasons, both measured here rather than asserted.
+    // (a) There is nothing to punch through. The membrane an extension exists
+    //     to clear needs the blank's cap fill and the duct's to DIFFER, and at
+    //     the throat both rings are planar in z = 0, so both Coons fills are
+    //     that plane exactly.
+    const capZspread = (ring) => {
+      const N = ring.length, q = N / 4;
+      const bot = [], top = [], left = [], right = [];
+      for (let i = 0; i <= q; i++) { bot.push(ring[i % N]); top.push(ring[(3 * q - i + N) % N]); }
+      for (let j = 0; j <= q; j++) { right.push(ring[(q + j) % N]); left.push(ring[(4 * q - j) % N]); }
+      let m = 0;
+      for (let i = 0; i <= q; i++) {
+        const u = i / q;
+        for (let j = 0; j <= q; j++) {
+          const v = j / q;
+          m = Math.max(m, Math.abs((1 - v) * bot[i][2] + v * top[i][2] + (1 - u) * left[j][2] + u * right[j][2]
+            - ((1 - u) * (1 - v) * bot[0][2] + u * (1 - v) * bot[q][2] + u * v * top[q][2] + (1 - u) * v * top[0][2])));
+        }
+      }
+      return m;
+    };
+    let zD = 0, zB = 0;
+    for (const cc of th.cells) {
+      const rr = map.rows.find((r) => r.id === cc.id);
+      zD = Math.max(zD, capZspread(M.ductSections(cc, rr, { t })[0].pts));
+      zB = Math.max(zB, capZspread(M.shellSections(cc, rr, { t, wall, surf: map.mouthSurf, stations: 32, snapMouth: false })[0].pts));
+    }
+    checkTrue("at the throat the duct cap and the blank cap are the SAME plane",
+      zD < 1e-12 && zB < 1e-12, `duct ${zD.toExponential(1)} mm, blank ${zB.toExponential(1)} mm off z = 0`);
+
+    // (b) A short extension FOLDS the wall. `ductBrep` interpolates with a
+    //     UNIFORM parameterisation, so a short first gap against a full
+    //     station step makes the cubic overshoot backwards through the cap it
+    //     was meant to close. An overshoot is a REVERSAL, so it is measured as
+    //     the wall travelling back OUT while the parameter walks IN — no point
+    //     correspondence assumed, exact at the end ring.
+    const reversal = (e, end) => {
+      let worst = 0;
+      for (const cc of th.cells) {
+        const rr = map.rows.find((r) => r.id === cc.id);
+        const dd = M.ductSections(cc, rr, { t });
+        const sec = M.extendSections(dd, e, { throat: end === "throat", mouth: end === "mouth" });
+        const br = M.ductBrep(sec);
+        if (!br) continue;
+        const j0 = end === "throat" ? 0 : sec.length - 1;
+        const j1 = end === "throat" ? 1 : sec.length - 2;
+        const nn = [sec[j0].pts[0][0] - sec[j1].pts[0][0], sec[j0].pts[0][1] - sec[j1].pts[0][1], sec[j0].pts[0][2] - sec[j1].pts[0][2]];
+        const LL = Math.hypot(nn[0], nn[1], nn[2]) || 1;
+        nn[0] /= LL; nn[1] /= LL; nn[2] /= LL;      // points OUT of the solid
+        for (let i = 0; i < br.n; i++) {
+          for (const w of br.walls) {
+            let prev = null, run = 0;
+            for (let sIdx = 0; sIdx <= 40; sIdx++) {
+              const v = end === "throat" ? (0.05 * sIdx) / 40 : 1 - (0.05 * sIdx) / 40;
+              const pp = M.evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, v);
+              const dd2 = pp[0] * nn[0] + pp[1] * nn[1] + pp[2] * nn[2];
+              if (prev !== null && dd2 > prev) run += dd2 - prev;
+              prev = dd2;
+            }
+            worst = Math.max(worst, run);
+          }
+        }
+      }
+      return worst;
+    };
+    // the duct step at this map's station count, which is what the threshold
+    // is a fraction OF
+    let stepSum = 0, nCell = 0;
+    for (const cc of th.cells) {
+      const dd = M.ductSections(cc, map.rows.find((r) => r.id === cc.id), { t });
+      let tot = 0;
+      for (let q = 1; q < dd.length; q++) {
+        const A = dd[q - 1].pts, B = dd[q].pts;
+        let d = 0;
+        for (let k = 0; k < A.length; k++) d += Math.hypot(B[k][0] - A[k][0], B[k][1] - A[k][1], B[k][2] - A[k][2]) / A.length;
+        tot += d;
+      }
+      stepSum += tot / (dd.length - 1); nCell++;
+    }
+    const dStep = stepSum / nCell;
+    const foldShort = reversal(1, "throat"), foldOk = reversal(0.5 * dStep + 0.5, "throat");
+    checkTrue("a 1 mm throat extension FOLDS the cutter wall back through its cap",
+      foldShort > 0.05, `${foldShort.toFixed(4)} mm of reversal at ${(1 / dStep).toFixed(2)} of a ${dStep.toFixed(2)} mm step`);
+    checkTrue("and past ~0.4 of a station step it does not", foldOk < 1e-6, `${foldOk.toExponential(1)} mm`);
+    checkTrue("the same fold happens at the MOUTH end, which is why that extension is sized from the step",
+      reversal(1, "mouth") > 0.05 && reversal(0.5 * dStep + 0.5, "mouth") < 1e-6,
+      `${reversal(1, "mouth").toFixed(4)} mm at 1 mm`);
+
+    // (c) so the shipped cutter has NO throat extension and its throat cap is
+    //     the loft's own end ring, planar in z = 0 — in plane with the blank's
     const kit = M.buildShellSTEP(th, map, { t, wall, extend: false, stations: null, name: "cutext" });
-    checkTrue("the shipped cutter default is 1 mm, stamped separately from the blank's ext",
-      /cutterExt=1\b/.test(kit.text) && /ext=3\b/.test(kit.text), "");
+    checkTrue("the shipped cutter is not extended at the throat, and says so",
+      /cutterExtThroat=0/.test(kit.text) && /ext=3\b/.test(kit.text), "");
+    checkTrue("its mouth extension is at least half a station step, not a fixed 1 mm",
+      kit.cutterExtMouth >= 0.5 * dStep - 1e-9 && kit.cutterExtMouth >= 1,
+      `${kit.cutterExtMouth.toFixed(3)} mm against half a ${dStep.toFixed(2)} mm step`);
+    // and the un-extended throat cap is exactly the throat plane
+    const noExt = M.extendSections(M.ductSections(th.cells[0], map.rows.find((r) => r.id === th.cells[0].id), { t }), 2, { throat: false, mouth: true });
+    checkTrue("an unextended throat ring stays exactly in z = 0",
+      noExt[0].pts.every((pp) => Math.abs(pp[2]) < 1e-12), "");
   }
 
   // ── the emitted file ──────────────────────────────────────────────────────
@@ -3277,9 +3375,15 @@ head("Aperture surface, per-cell shell, orientation");
     check("every surface passes through its samples", out.checks.residual, 0, 1e-9, "mm");
     checkTrue("every solid's edges pair up", out.checks.edgePairing, "");
     checkTrue("the file is referentially intact", M.stepIntegrity(out.text).ok, "");
-    // the cutter's throat cap is exactly planar below the blank's, so the
-    // subtraction cannot leave a membrane over the passage
-    checkTrue("cutters overhang both end faces", out.checks.capPlanarZ < 1e-9, `${out.checks.capPlanarZ.toExponential(1)} mm`);
+    // EVERY throat cap lands exactly on the plane its spec names — and for
+    // both the blank and the cutter that plane is now z = 0, because a plain
+    // blank is not extended and the cutter is not extended at the throat at
+    // all. Coplanar, not overhanging: the two fills are the same plane, so
+    // there is no membrane for an overhang to punch (measured above).
+    checkTrue("every throat cap is exactly on the plane its solid names",
+      out.checks.capPlanarZ < 1e-9, `${out.checks.capPlanarZ.toExponential(1)} mm`);
+    checkTrue("and for a plain kit that plane is z = 0 for blank and cutter alike",
+      out.text.includes("'duct cutter") && out.checks.capPlanarZ < 1e-9, "");
   }
 
   // ── PHASE 1: WHAT MAKES THE UNION OF THE BLANKS TRACTABLE ────────────────
