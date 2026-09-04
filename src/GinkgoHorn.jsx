@@ -455,6 +455,11 @@ export default function GinkgoHorn() {
   // so the choice is a deliberate trade of phase error against how the part
   // looks and prints, not an oversight.
   const [lengthLobes, setLengthLobes] = useState(1);
+  // REGION GRADE (owner's proposal): widen the bow window with the cell's
+  // distance from the axis, centre fixed. Off by default — grade 0 reproduces
+  // the ungraded geometry bit for bit, and the measurement says this is a
+  // 10-20% correction that has to be READ rather than turned up.
+  const [bowGrade, setBowGrade] = useState(0);
   // THERE IS NO "SOLVE THE BOW" BUTTON, and the reason is the ranking
   // metric rather than the search. `solveBow` ranks candidates on wall
   // spread, and wall spread measures the length each wall fibre has run BY
@@ -706,7 +711,9 @@ export default function GinkgoHorn() {
     t: thickness, profileArea,
     tightThroat: tight, tightMouth: tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
-    lengthen: lengthenOn ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo } : null,
+    lengthen: lengthenOn
+      ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo, regionGrade: bowGrade }
+      : null,
     bulge: bulgeOn ? { amp: bulgeAmp } : null,
     separate: sepSolve && sepSolve.amps
       ? { amps: sepSolve.amps, uStart: sepSolve.uStart, uEnd: sepSolve.uEnd,
@@ -715,7 +722,7 @@ export default function GinkgoHorn() {
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     thetaH, thetaV, arcH, arcV,
     fTarget, thickness, profileArea,
-    lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes,
+    lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes, bowGrade,
     bulgeOn, bulgeAmp, sepSolve]);
 
   // The clearance is skipped HERE and measured in the deferred effect below:
@@ -1857,6 +1864,19 @@ export default function GinkgoHorn() {
               style={btn(Math.abs(bowFrom - a) < 1e-9 && Math.abs(bowTo - b) < 1e-9, C.series7)}>{l}</button>
           ))}
         </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: lengthenOn ? 1 : 0.4 }}>
+          <span style={{ fontSize: 10, color: C.inkMuted }}>region grade</span>
+          <input type="range" min={0} max={0.5} step={0.01} value={bowGrade} disabled={!lengthenOn}
+            onChange={(e) => setBowGrade(parseFloat(e.target.value))}
+            style={{ width: 100, accentColor: C.series1 }} />
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkDim }}>{bowGrade.toFixed(2)}</span>
+          {lengthenOn && map && map.lengthen && bowGrade > 0 && map.lengthen.ampMin != null && (
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
+              span {fmt(map.lengthen.spanMin, 3)} → {fmt(map.lengthen.spanMax, 3)}
+              {" · "}amplitude {fmt(map.lengthen.ampMin, 1)} → {fmt(map.lengthen.ampMax, 1)} mm
+            </span>
+          )}
+        </div>
         {lengthenOn && map && map.lengthen && (
           <div style={{ marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
             <span><span style={{ color: C.inkMuted }}>target </span>{fmt(map.lengthen.target, 1)} mm
@@ -1876,6 +1896,19 @@ export default function GinkgoHorn() {
           and unwinds it before the mouth, so it kept placing the bow out in the expanded end of the passage. Judge a bow by
           <strong style={{ color: C.inkDim }}> wall spread</strong> in the verdict pane, never by gross turning. Sections are swept in
           specified planes{map && map.sweptRollMax != null ? ` — imposed roll ${fmt(map.sweptRollMax, 1)}°, landing to ${map.sweptAimMax.toExponential(0)}°` : ""}.
+          <br />
+          <strong style={{ color: C.inkDim }}>Region grade</strong> widens the window with the cell's distance from the axis, centre
+          fixed — innermost span × (1−grade), outermost × (1+grade). The point is the <em>amplitude ordering</em>: a narrower window buys
+          its length with a smaller displacement, so grading the span makes displacement grow outward while every cell still lands on the
+          same target length. A row of cells sharing one outward direction then <strong style={{ color: C.inkDim }}>expands instead of
+          translating</strong>, and the spacing between them opens. ΔL is untouched (measured exactly 0), and both mirrors survive.
+          <br />
+          It is a <em>correction, not a fix</em>, and it must be read rather than turned up. Measured on the throat fifth at 6×3: grade
+          0.3 takes the worst gap −6.75 → −5.32 mm at depth 300 and −5.49 → −4.79 at the ΔL-solved 357 — 13–21%, and non-monotone past
+          that. It also spends fold margin at the shallow depth (2.35 → 0.47 mm), so
+          <strong style={{ color: C.inkDim }}> watch the fold margin</strong> beside the gap. And it does not compete with moving the
+          region: a bow starting at u ≥ 0.10 reads −0.06 mm on the same horn, forty times better and free. Grade the region when you want
+          the bow <em>at</em> the throat on acoustic grounds and are paying for it.
         </div>
       </Stage>
 

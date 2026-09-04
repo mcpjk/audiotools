@@ -1269,6 +1269,76 @@ head("Per-cell path lengthening");
   checkTrue("a duct on the axis is reported, not bowed in an arbitrary direction",
     oddMap.lengthen.onAxis === 1 && oddMap.lengthen.shortfall > 1,
     `${oddMap.lengthen.onAxis} on-axis duct, ${oddMap.lengthen.shortfall.toFixed(1)} mm left short`);
+
+  // ── THE GRADED BOW REGION (owner's proposal, 2026-09-03) ─────────────────
+  // The window widens with the cell's distance from the axis, centre fixed.
+  // The POINT is the amplitude ordering: amplitude for a given added length
+  // goes as sqrt(span), so a narrower window buys its length with a smaller
+  // displacement. Grading the span therefore makes displacement grow outward
+  // while every cell still lands on the same target length, and a row sharing
+  // one outward direction EXPANDS rather than translating.
+  {
+    const gOpts = {
+      c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55,
+      divergeLen: 3, arriveLen: 0, tight: 0.5, tightThroat: 0.5, tightMouth: 0.5,
+      fTarget: 20000, t: 0.4, profileArea: "open",
+      mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+      sectionMode: "swept", stations: 64, depth: 300, profileT: 0.7,
+      keepGeometry: true, computeClearance: false,
+    };
+    const gLay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t: 0.4, c });
+    const gTh = gLay.throat;
+    const bow = (extra) => M.mapThroatToMouth(gTh, { ...gOpts,
+      lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2, ...extra } });
+    // GRADE 0 MUST BE THE UNGRADED GEOMETRY BIT FOR BIT, or every recorded
+    // number in CLAUDE.md is re-baselined by a feature nobody switched on
+    const gOff = bow({}), gZero = bow({ regionGrade: 0 });
+    let dv = 0;
+    for (let i = 0; i < gOff.rows.length; i++)
+      for (let q = 0; q < gOff.rows[i].sched.length; q += 8)
+        for (let k = 0; k < gOff.rows[i].sched[q].pts.length; k += 8)
+          dv = Math.max(dv, Math.hypot(...gOff.rows[i].sched[q].pts[k]
+            .map((v, d) => v - gZero.rows[i].sched[q].pts[k][d])));
+    check("grade 0 reproduces the ungraded bow exactly", dv, 0, 0, "mm");
+
+    const g3 = bow({ regionGrade: 0.3 });
+    // the ordering itself, read off the cells rather than assumed from the
+    // formula: span and amplitude both rise with the cell's own radius
+    const ranked = g3.rows.filter((r) => r.snakeAmp > 1e-9).map((r) => {
+      const cc = gTh.cells.find((x) => x.id === r.id);
+      return { rad: Math.hypot(cc.centroid[0], cc.centroid[1]),
+               amp: r.snakeAmp, span: r.snakeSpan };
+    }).sort((a, b) => a.rad - b.rad);
+    checkTrue("the graded window widens outward, and so does the displacement",
+      ranked.every((p, i) => i === 0 || p.span >= ranked[i - 1].span - 1e-9)
+      && ranked[ranked.length - 1].amp > ranked[0].amp,
+      `span ${ranked[0].span.toFixed(3)} -> ${ranked[ranked.length - 1].span.toFixed(3)}, amplitude ${ranked[0].amp.toFixed(1)} -> ${ranked[ranked.length - 1].amp.toFixed(1)} mm`);
+    // THE WHOLE CLAIM: the ordering is bought for NOTHING in path length,
+    // because each cell's amplitude is still solved to the same target
+    check("the grade leaves the equalised length untouched", g3.dL, 0, 1e-6, "mm");
+    // mirror-safe by construction — the grade is keyed to |radius|, which a
+    // mirror does not change — and asserted rather than assumed
+    const byG = {};
+    for (const r of g3.rows) byG[`${r.i},${r.j}`] = r;
+    let asymG = 0;
+    for (const r of g3.rows) {
+      const mx = byG[`${5 - r.i},${r.j}`], my = byG[`${r.i},${2 - r.j}`];
+      asymG = Math.max(asymG, Math.abs(r.snakeAmp - mx.snakeAmp),
+        Math.abs(r.snakeAmp - my.snakeAmp), Math.abs(r.snakeSpan - mx.snakeSpan));
+    }
+    check("the graded field keeps both mirrors", asymG, 0, 1e-8, "mm");
+    // and it does open the passage — modestly. This is the measurement that
+    // stops it being read as a fix: it recovers a fifth of what a
+    // throat-anchored bow costs, where MOVING the region recovers all of it.
+    const PS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+    const gapOf = (m) => M.ductClearance(m.rows, { throatFloor: 0.5, pairSteps: PS }).minMid;
+    const gap0 = gapOf(gZero), gap3 = gapOf(g3);
+    const moved = gapOf(M.mapThroatToMouth(gTh, { ...gOpts,
+      lengthen: { lobes: 1, dir: "radial", uStart: 0.3, uEnd: 0.95 } }));
+    checkTrue("the grade helps the throat bow, and moving the region helps far more",
+      gap3 > gap0 + 0.5 && moved > gap3 + 3,
+      `grade 0 ${gap0.toFixed(2)} mm, grade 0.3 ${gap3.toFixed(2)} mm, region [0.3,0.95] ${moved.toFixed(2)} mm`);
+  }
 }
 
 // ── 10a6b. the volume identity, done properly ──────────────────────────────

@@ -1502,6 +1502,55 @@ exists.
   at peak displacement its neighbour is back at zero, so the peak lands on an
   undisplaced duct. Synchronised motion is the feature, not the problem. The
   problem is where the motion happens, which is the finding above.
+- **THE GRADED BOW REGION IS BUILT (`lengthen.regionGrade`), THE MECHANISM IS
+  REAL, AND IT IS A 13-21% CORRECTION THAT MOVING THE REGION BEATS FORTY
+  TIMES OVER** (owner's proposal, 2026-09-03). The window widens with the
+  cell's distance from the axis, CENTRE FIXED: innermost span x (1 - grade),
+  outermost x (1 + grade), interpolated on each cell's own throat radius.
+  **WHY IT WORKS AT ALL, and it is not the stagger's mechanism.** Amplitude
+  for a given added length goes as sqrt(span), so a narrow window buys its
+  length with a SMALL displacement and a wide one with a large one. Grading
+  the span therefore makes displacement grow outward WHILE EVERY CELL STILL
+  LANDS ON THE SAME TARGET LENGTH — so a row of cells sharing one outward
+  direction EXPANDS instead of translating, and the spacing between them
+  opens. Measured on the middle row at the defaults, half-row inner to outer:
+    grade 0     20.5 / 20.0 / 19.5 mm   — flat, in fact slightly the WRONG way
+    grade 0.6   14.5 / 19.4 / 22.1 mm   — 1.53x, monotone outward
+  dL stays EXACTLY 0.000 through all of it, which is the whole point: the
+  ordering is bought for nothing in path length. Both mirrors hold at
+  5.7e-11 mm (the grade is keyed to |radius|, which a mirror does not
+  change), and grade 0 reproduces the ungraded geometry BIT FOR BIT.
+  **WHAT IT BUYS, AND WHY IT IS NOT THE ANSWER.** Measured at 6x3, throat
+  fifth, 1-lobe radial, 64 stations, diagonal pair set:
+    depth 300   grade  0    0.1    0.2    0.3    0.35   0.4    0.5
+                gap  -6.75 -5.58  -5.66  -5.32  -5.29  -5.26  -5.25
+                fold  2.35  2.54   1.20   0.47   0.04  -0.52  -1.28
+    depth 357   gap  -5.49 -5.23  -4.99  -4.79  -5.68  -5.49  -5.28
+                fold  3.27  3.50   4.00   4.35   3.66   2.70   1.16
+  So it recovers 13-21% of what a throat-anchored bow costs, it is NOT
+  monotone (0.35 is worse than 0.30 at depth 357), and at the shallow depth
+  it spends fold margin down to 0.04 mm by grade 0.35 and FOLDS at 0.4 —
+  because a narrowed window is a steeper turn. **The comparison that settles
+  it**: on the same horn, moving the bow to [0.3, 0.95] measures -0.12 mm
+  with fold 18.9 and dL 0.000, and grading changes that by nothing at any
+  grade. A bow starting at u >= 0.10 is already the free fix; the grade only
+  makes the region the owner prefers on ACOUSTIC grounds (bend where the
+  passage is small) less bad, and does not make it viable.
+  **AND IT IS ACTIVELY HARMFUL ON A CLEAN GEOMETRY.** At depth 357 with the
+  window at [0.10, 0.30] the ungraded horn reads -0.055 mm; grade 1 takes it
+  to -4.21 and grade 2 to -5.09. Grading a window that is already clear
+  widens the outer cells' bows into neighbours they were missing. This is a
+  knob to READ, never to turn up.
+  **TWO OTHER ANCHORINGS WERE BUILT AND MEASURED, and both were dropped.**
+  Growing the outer window instead of shrinking the inner one ("widen", about
+  the centre with a clamp at 0; "tail", the start kept and only the end moved
+  out) produces the same ordering and CANNOT fold — fold margin improves,
+  2.35 -> 2.78 at depth 300 and 3.27 -> 9.45 at 357 — and gets a slightly
+  better gap (-4.90 against -5.32 at depth 300). They were dropped anyway
+  because they buy it by INFLATING the outer displacement: amplitude 20.5 ->
+  61.3 mm at grade 3 on a 325 mm path, against 20.5 -> 21.7 concentric. With
+  a throat-anchored window the two are the same family (the clamp makes
+  "widen" g equal "tail" g/2 exactly), so only the concentric form ships.
 - **THE BOW'S CURVATURE REALLY IS CONCENTRATED AT THREE PLACES, and that is
   the sin^2 window, not a defect.** The displacement is a sin^2 lobe, so its
   second derivative goes as cos(2 pi s): |kappa| is extremal at the window's

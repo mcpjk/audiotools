@@ -62,6 +62,27 @@ small enough that it may not be.
 - **A bang-bang (constant-curvature) bow window**: would cut the peak
   curvature ~19% against sin^2 but buys a curvature discontinuity at each
   junction. Trade recorded in CLAUDE.md, not built.
+- **Growing the OUTER bow window instead of shrinking the inner one** (the
+  "widen" and "tail" anchorings of the region grade): same amplitude
+  ordering, no fold risk, marginally better gap — but it buys that by
+  inflating the outer cell's displacement to 61 mm on a 325 mm path. Dropped
+  in favour of the concentric form. Numbers in CLAUDE.md.
+
+## SHIPPED — the graded bow region (owner's proposal)
+
+`lengthen.regionGrade`, off by default, grade 0 bit-identical. The window
+widens with the cell's distance from the axis, centre fixed, so displacement
+grows outward while every cell still lands on the same target length: a row
+sharing one outward direction EXPANDS instead of translating. The mechanism
+is confirmed (middle-row amplitude 20.5/20.0/19.5 flat at grade 0 against
+14.5/19.4/22.1 at 0.6, dL exactly 0 throughout, both mirrors at 5.7e-11).
+
+**What it is worth is 13–21% of the damage a throat-anchored bow does**, it
+is non-monotone, and it spends fold margin at shallow depths. Moving the bow
+region to u ≥ 0.10 recovers essentially all of that damage instead, for
+nothing. So the grade is for when you want the bow AT the throat on acoustic
+grounds and are knowingly paying for it — not a lever to turn up. Full
+numbers, and the two rejected anchorings, in CLAUDE.md.
 
 ## SHIPPED, and what it did NOT fix — separation as mutual repulsion
 
@@ -86,7 +107,33 @@ Two things it deliberately did not do, both still open:
 
 In priority order. Each rests on a measurement, named.
 
-### 1. What a FAILED separation solve should return
+### 1. The lengthening TARGET does not see the separation field — a real defect
+
+Found while answering a question about whether separation preserves path
+length. `mapThroatToMouth` applies the separation displacement to each
+centreline FIRST and then runs the equalising bow on the separated path,
+which is right and is what the comment says. But the bow's TARGET — the one
+length every cell is padded up to — is computed in its own loop over the BARE
+trajectories (`src/hgrid-model.js`, the `snake` IIFE) and never sees the
+field. So a cell the separation pushes PAST the old target has nothing
+brought up to it, and the leftover spread is exactly that overshoot.
+
+Measured at the defaults with the throat-fifth bow, and the identity is exact
+in both modes:
+
+| | target | lengths after | ΔL | Lmax − target |
+|---|---|---|---|---|
+| no separation | 315.10 | 315.10 – 315.10 | 0.000 | — |
+| repel | 315.10 (stale) | 315.10 – 335.00 | 19.901 | 19.901 |
+| nudge | 315.10 (stale) | 315.10 – 316.01 | 0.910 | 0.910 |
+
+It is not repel-specific: whichever mode displaces more overshoots more. Fix
+is to take the target from the separated paths — cheap, but it is geometry in
+the model, so it needs its own test and a re-measure of the head-to-head
+table in CLAUDE.md. **Do this before the item below**, which it partly
+subsumes: most of the "separation costs ΔL" trade is this bug.
+
+### 2. What a FAILED separation solve should return
 
 All three modes return the best GAP they visited, with no account of dL. On a
 horn with no room that state can carry tens of millimetres of extra path
@@ -111,7 +158,7 @@ Note also that `ampCap` is 40 mm and both modes hit it on the hard cases. A
 40 mm displacement on a horn whose throat cells are 4.5-7.3 mm wide is not a
 correction, and the cap is what permits the dL above.
 
-### 2. Raise the PREVIEW station count
+### 3. Raise the PREVIEW station count
 
 **The `samples` half of this landed 2026-09-03** (64 -> 512, and `stations`
 can no longer exceed `samples`, so the aliasing trap is unreachable rather
@@ -125,16 +172,16 @@ straddles it; 24 misses it. The clearance readout and the separation solve
 already build their own 64-station map, so what remains is the geometry the
 sliders and the 3-D preview show.
 
-### 3. Interpolate the station position and frame between samples
+### 4. Interpolate the station position and frame between samples
 
-Pairs naturally with (2) — same subsystem. See the map defect below, which
+Pairs naturally with (3) — same subsystem. See the map defect below, which
 the `samples` raise has already taken from a 2.4x irregularity to 1.15x.
 
-### 4. Decide whether depth 300 stays the default
+### 5. Decide whether depth 300 stays the default
 
 See the note above. Owner's call, numbers ready.
 
-### 5. The clearance metric reads GROSS outlines; the export carries INSET ones
+### 6. The clearance metric reads GROSS outlines; the export carries INSET ones
 
 Offered and declined once, and still open. On the default horn the gross
 outlines interpenetrate 0.242 mm while the EXPORTED ones do not interpenetrate
