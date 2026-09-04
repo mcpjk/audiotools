@@ -68,6 +68,25 @@ small enough that it may not be.
   inflating the outer cell's displacement to 61 mm on a 325 mm path. Dropped
   in favour of the concentric form. Numbers in CLAUDE.md.
 
+## SHIPPED — the separation solve now knows about path length
+
+Items 1 and 2 of the previous queue, which turned out to be one task.
+
+A separation displacement always makes a duct's path LONGER and the
+equalising bow can only ADD length, so a duct pushed past the lengthening
+target was never caught up to and the overshoot survived as ΔL — `Lmax −
+target` equalled the reported ΔL to the last digit, 19.9 mm after repel.
+Scoring on the gap alone let a solve hand that back as an improvement.
+
+The fix is a **budget, not a re-target**: a candidate can only become the
+best state if ΔL stays within λ/8 of where it started (2.14 mm at 20 kHz —
+the number `band` already uses). Re-targeting the bow to chase the runaway
+cell was measured first and is the wrong fix: it closes ΔL and folds the
+duct. Full numbers in CLAUDE.md.
+
+It is inert where the horn can actually be separated (0 states refused on
+the recorded case, every statistic unchanged) and honest where it bites.
+
 ## SHIPPED — the graded bow region (owner's proposal)
 
 `lengthen.regionGrade`, off by default, grade 0 bit-identical. The window
@@ -93,7 +112,7 @@ comparison set that can actually be separated the two modes land within
 less displacement and less dL. On the cases that cannot be separated they
 trade, and neither reaching the floor is the signal to move the DEPTH.
 
-Two things it deliberately did not do, both still open:
+One thing it deliberately did not do, still open:
 
 - **The field is one vector per cell times one window**, so it can slide a
   duct but not re-route it. The chain's third structural limit — a pair's
@@ -101,93 +120,14 @@ Two things it deliberately did not do, both still open:
   per-STATION field is the next step and is a bigger build: the amplitude
   becomes a profile, the windowing stops being a window, and the mirror and
   end-pinning guarantees have to be re-established per station.
-- **No mode accounts for dL when it picks its answer** — see the queue.
+
+(The other one — no mode accounting for dL — was fixed by the budget above.)
 
 ## The queue
 
 In priority order. Each rests on a measurement, named.
 
-### 1. The lengthening TARGET does not see the separation field — a real defect
-
-Found while answering a question about whether separation preserves path
-length. `mapThroatToMouth` applies the separation displacement to each
-centreline FIRST and then runs the equalising bow on the separated path,
-which is right and is what the comment says. But the bow's TARGET — the one
-length every cell is padded up to — is computed in its own loop over the BARE
-trajectories (`src/hgrid-model.js`, the `snake` IIFE) and never sees the
-field. So a cell the separation pushes PAST the old target has nothing
-brought up to it, and the leftover spread is exactly that overshoot.
-
-Measured at the defaults with the throat-fifth bow, and the identity is exact
-in both modes:
-
-| | target | lengths after | ΔL | Lmax − target |
-|---|---|---|---|---|
-| no separation | 315.10 | 315.10 – 315.10 | 0.000 | — |
-| repel | 315.10 (stale) | 315.10 – 335.00 | 19.901 | 19.901 |
-| nudge | 315.10 (stale) | 315.10 – 316.01 | 0.910 | 0.910 |
-
-It is not repel-specific: whichever mode displaces more overshoots more.
-
-**THE OBVIOUS FIX IS WRONG, AND THAT IS THE MEASUREMENT THAT MATTERS HERE.**
-Taking the target from the separated paths does close ΔL — simulated through
-the existing `lengthen.targetLen` override, no code change needed — but it
-pays for it out of the fold margin and the clearance, because every other
-cell then has to bow up to the runaway one:
-
-| after | ΔL | target | ampMax | fold | gap |
-|---|---|---|---|---|---|
-| nudge, today | 0.910 | 315.1 | 20.5 | 2.77 | −6.04 |
-| nudge, target fixed | **0.000** | 316.0 | 21.2 | 2.48 | −6.10 |
-| repel, today | 19.901 | 315.1 | 20.9 | 0.11 | −4.31 |
-| repel, target fixed | **0.000** | 335.0 | **34.6** | **−1.10** | **−7.04** |
-
-So the cost scales with the overshoot: free when it is small (nudge, 0.9 mm)
-and ruinous when it is large (repel, 19.9 mm → a 65% bigger bow, a FOLDED
-duct, and 2.7 mm more interpenetration). **The stale target has been acting
-as an accidental clamp**, and removing it without replacing it trades a
-reporting defect for a broken solid.
-
-What the item actually needs, in order:
-1. **Stop the separation solver lengthening a duct past the target in the
-   first place** — then there is nothing to chase. That means path length
-   enters the solve, which is item 2 below; the two collapse into one task.
-2. Failing that, **report it**: the ΔL the tool prints after a separation
-   solve currently arrives with no explanation of why the lengthening did
-   not close it. "The separation lengthened cell X 19.9 mm past the
-   equalisation target; closing that needs a 34.6 mm bow, which folds" is
-   the sentence the stage should say.
-3. Recomputing the target is only right once (1) bounds the overshoot.
-
-### 2. What a FAILED separation solve should return — and path length in the solve
-
-**Merged with item 1's real conclusion**: the separation solve has to know
-about path length, not only the gap.
-
-All three modes return the best GAP they visited, with no account of dL. On a
-horn with no room that state can carry tens of millimetres of extra path
-spread, and it is applied to the geometry the moment the solve returns.
-Measured at 20 rounds, both modes on the same 47 pairs:
-
-- the tool's defaults with the throat-fifth bow: repulsion buys 1.7 mm more
-  gap than the chain for **19 mm more dL**
-- at the dL-solved depth 357: the chain buys 0.5 mm more gap for **20.8 mm
-  more dL**
-
-Same flaw from both sides. It only bites where the floor cannot be met, which
-is exactly where the honest answer is that there is no room — so one option is
-to return the INPUT whenever the floor is unreachable, and another is to
-report both states and let the owner apply either. A lexicographic rule (best
-gap, ties inside `tol` broken on dL) was checked against these numbers and
-changes nothing: the differences are 30x the tolerance. **This is a decision,
-not a bug hunt** — what to trade is the owner's call, which is why nothing was
-invented here.
-
-Note also that `ampCap` is 40 mm and both modes hit it on the hard cases. A
-40 mm displacement on a horn whose throat cells are 4.5-7.3 mm wide is not a
-correction, and the cap is what permits the dL above.
-
-### 3. Raise the PREVIEW station count
+### 1. Raise the PREVIEW station count
 
 **The `samples` half of this landed 2026-09-03** (64 -> 512, and `stations`
 can no longer exceed `samples`, so the aliasing trap is unreachable rather
@@ -201,16 +141,16 @@ straddles it; 24 misses it. The clearance readout and the separation solve
 already build their own 64-station map, so what remains is the geometry the
 sliders and the 3-D preview show.
 
-### 4. Interpolate the station position and frame between samples
+### 2. Interpolate the station position and frame between samples
 
-Pairs naturally with (3) — same subsystem. See the map defect below, which
+Pairs naturally with (1) — same subsystem. See the map defect below, which
 the `samples` raise has already taken from a 2.4x irregularity to 1.15x.
 
-### 5. Decide whether depth 300 stays the default
+### 3. Decide whether depth 300 stays the default
 
 See the note above. Owner's call, numbers ready.
 
-### 6. The clearance metric reads GROSS outlines; the export carries INSET ones
+### 4. The clearance metric reads GROSS outlines; the export carries INSET ones
 
 Offered and declined once, and still open. On the default horn the gross
 outlines interpenetrate 0.242 mm while the EXPORTED ones do not interpenetrate
