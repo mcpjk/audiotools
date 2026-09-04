@@ -5375,7 +5375,7 @@ const stepStr = (v) => String(v ?? "")
   .replace(/\\/g, "\\\\")
   .replace(/'/g, "''");
 
-function stepEmit({ name, desc, fileDesc, params, solidsSpec }) {
+function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true }) {
   const E = [];
   let nid = 0;
   const add = (txt) => { E.push(`#${++nid}=${txt};`); return nid; };
@@ -5385,21 +5385,33 @@ function stepEmit({ name, desc, fileDesc, params, solidsSpec }) {
   const appCtx = add(`APPLICATION_CONTEXT('automotive design')`);
   add(`APPLICATION_PROTOCOL_DEFINITION('draft international standard','automotive_design',1998,#${appCtx})`);
   const prodCtx = add(`PRODUCT_CONTEXT('',#${appCtx},'mechanical')`);
-  const prod = add(`PRODUCT('${stepStr(name)}','${stepStr(desc)}','',(#${prodCtx}))`);
-  add(`PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#${prod}))`);
-  const pdf = add(`PRODUCT_DEFINITION_FORMATION('','',#${prod})`);
   const pdCtx = add(`PRODUCT_DEFINITION_CONTEXT('part definition',#${appCtx},'design')`);
-  const pd = add(`PRODUCT_DEFINITION('design','',#${pdf},#${pdCtx})`);
-  const pds = add(`PRODUCT_DEFINITION_SHAPE('','',#${pd})`);
   const uLen = add(`(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))`);
   const uAng = add(`(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))`);
   const uSol = add(`(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())`);
   const unc = add(`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-4),#${uLen},'distance_accuracy_value','')`);
   const geoCtx = add(`(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#${unc}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#${uLen},#${uAng},#${uSol}))REPRESENTATION_CONTEXT('',''))`);
-  const org = pt([0, 0, 0]);
-  const dz = add(`DIRECTION('',(0.,0.,1.))`);
-  const dx = add(`DIRECTION('',(1.,0.,0.))`);
-  const place = add(`AXIS2_PLACEMENT_3D('',#${org},#${dz},#${dx})`);
+  // A fresh identity placement per representation. Sharing one across several
+  // representations is legal and common, but an assembly's ITEM_DEFINED_
+  // TRANSFORMATION names the parent's and the child's placements as two
+  // distinct arguments, and a reader that follows the reference back to a
+  // shared entity has no way to tell whose frame it is.
+  const mkPlace = () => {
+    const o = pt([0, 0, 0]);
+    const d1 = add(`DIRECTION('',(0.,0.,1.))`);
+    const d2 = add(`DIRECTION('',(1.,0.,0.))`);
+    return add(`AXIS2_PLACEMENT_3D('',#${o},#${d1},#${d2})`);
+  };
+  const place = mkPlace();
+  // One PRODUCT per node of the product tree — the root, each folder, and
+  // each leaf that carries geometry. The flat case builds exactly one.
+  const mkNode = (pname, pdesc) => {
+    const p = add(`PRODUCT('${stepStr(pname)}','${stepStr(pdesc ?? pname)}','',(#${prodCtx}))`);
+    add(`PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#${p}))`);
+    const f = add(`PRODUCT_DEFINITION_FORMATION('','',#${p})`);
+    const d = add(`PRODUCT_DEFINITION('design','',#${f},#${pdCtx})`);
+    return { pd: d, pds: add(`PRODUCT_DEFINITION_SHAPE('','',#${d})`) };
+  };
 
   const knotTxt = (knots) => {
     const vals = [], mult = [];
@@ -5504,11 +5516,66 @@ function stepEmit({ name, desc, fileDesc, params, solidsSpec }) {
       if (e.uses.length !== 2 || e.uses[0] === e.uses[1]) checks.edgePairing = false;
 
     const shell = add(`CLOSED_SHELL('',(${faces.map((i) => "#" + i).join(",")}))`);
-    solids.push(add(`MANIFOLD_SOLID_BREP('${stepStr(spec.label)}',#${shell})`));
+    solids.push({
+      id: add(`MANIFOLD_SOLID_BREP('${stepStr(spec.label)}',#${shell})`),
+      label: spec.label,
+      group: spec.group || null,
+    });
   }
 
-  const rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${place},${solids.map((i) => "#" + i).join(",")}),#${geoCtx})`);
-  add(`SHAPE_DEFINITION_REPRESENTATION(#${pds},#${rep})`);
+  // ── THE PRODUCT TREE ──────────────────────────────────────────────────────
+  //
+  // A kit is one file carrying two kinds of solid that are used in opposite
+  // senses — the blanks are the material, the cutters are what is removed
+  // from it — and one flat list of 36 bodies makes the reader sort them by
+  // reading names. A STEP ASSEMBLY says it structurally: a root PRODUCT with
+  // NEXT_ASSEMBLY_USAGE_OCCURRENCE children, which every CAD importer shows
+  // as a folder tree. The tree is a NAMING and GROUPING device only: every
+  // occurrence carries the identity transform, so each solid sits at exactly
+  // the coordinates it would have had in the flat file. Nothing moves.
+  //
+  // Emitted only when the specs actually name more than one folder; a single
+  // group is not worth a level of nesting, and buildSTEP (ducts alone) still
+  // ships the flat single-PRODUCT form it always has.
+  const names = [];
+  for (const s of solids) if (s.group && !names.includes(s.group)) names.push(s.group);
+  const grouped = folders && names.length > 1 && solids.every((s) => s.group);
+  const bind = (node, rep) => add(`SHAPE_DEFINITION_REPRESENTATION(#${node.pds},#${rep})`);
+  // parent contains child, with no transform between their frames
+  const contain = (parent, child, occ, nm) => {
+    const nauo = add(`NEXT_ASSEMBLY_USAGE_OCCURRENCE('${occ}','${stepStr(nm)}','',#${parent.node.pd},#${child.node.pd},$)`);
+    const pdsN = add(`PRODUCT_DEFINITION_SHAPE('','',#${nauo})`);
+    const idt = add(`ITEM_DEFINED_TRANSFORMATION('','',#${parent.place},#${child.place})`);
+    const rr = add(`(REPRESENTATION_RELATIONSHIP('','',#${child.rep},#${parent.rep})REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#${idt})SHAPE_REPRESENTATION_RELATIONSHIP())`);
+    add(`CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#${rr},#${pdsN})`);
+  };
+  const tree = { folders: 0, parts: 0 };
+  if (!grouped) {
+    const root = mkNode(name, desc);
+    bind(root, add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${place},${solids.map((s) => "#" + s.id).join(",")}),#${geoCtx})`));
+    tree.parts = 1;
+  } else {
+    const root = { node: mkNode(name, desc), place };
+    root.rep = add(`SHAPE_REPRESENTATION('',(#${root.place}),#${geoCtx})`);
+    bind(root.node, root.rep);
+    let occ = 0;
+    for (const gname of names) {
+      const members = solids.filter((s) => s.group === gname);
+      const folder = { node: mkNode(gname, `${name} ${gname}`), place: mkPlace() };
+      folder.rep = add(`SHAPE_REPRESENTATION('',(#${folder.place}),#${geoCtx})`);
+      bind(folder.node, folder.rep);
+      contain(root, folder, ++occ, gname);
+      tree.folders++;
+      for (const m of members) {
+        const leaf = { node: mkNode(m.label, m.label), place: mkPlace() };
+        leaf.rep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${leaf.place},#${m.id}),#${geoCtx})`);
+        bind(leaf.node, leaf.rep);
+        contain(folder, leaf, ++occ, m.label);
+        tree.parts++;
+      }
+    }
+  }
+  checks.tree = tree;
 
   const stamp = new Date().toISOString().slice(0, 19);
   const text = [
@@ -5749,7 +5816,8 @@ export function mirrorSymmetry(throat, map, { t = 0, every = 2 } = {}) {
 export function buildShellSTEP(throat, map, {
   t = 0, wall = 3, ext = 3, cutterExt = 1, extend = true, stations = 32,
   extendThroat = null, extendMouth = null, trimThroat = null, trimMouth = null,
-  only = null, xSide = 0, ySide = 0, params = null, name = "ginkgo_horn_shell",
+  only = null, xSide = 0, ySide = 0, params = null, folders = true,
+  name = "ginkgo_horn_shell",
 } = {}) {
   if (!map) return null;
   // THE TWO ENDS ARE SEPARABLE, and they are not the same problem. `extend`
@@ -5794,6 +5862,7 @@ export function buildShellSTEP(throat, map, {
     const sections = eT || eM ? extendSections(blank, e, { throat: eT, mouth: eM }) : blank;
     solidsSpec.push({
       label: `shell blank ${cellRec.label}`,
+      group: "shell blanks",
       sections,
       capZ: eT ? -e : 0,
       ...(eM ? {} : { capMouthPts: capOf(blank) }),
@@ -5849,6 +5918,7 @@ export function buildShellSTEP(throat, map, {
     cutterExtUsed = Math.max(cutterExtUsed, cutE);
     solidsSpec.push({
       label: `duct cutter ${cellRec.label}`,
+      group: "duct cutters",
       sections: extendSections(duct, cutE, { throat: false, mouth: true }),
       capZ: 0,
     });
@@ -5859,13 +5929,13 @@ export function buildShellSTEP(throat, map, {
     if (tT) {
       const tr = throatTrimSections(throat, map, { t, wall, ext: ext * 3, per: 8 });
       if (!tr) return null;
-      solidsSpec.push({ label: "throat trim", sections: tr, capZ: tr[0].pts[0][2] });
+      solidsSpec.push({ label: "throat trim", group: "trim solids", sections: tr, capZ: tr[0].pts[0][2] });
       trims.push("throat trim");
     }
     if (tM) {
       const mo = mouthTrimSections(throat, map, { t, wall, ext: ext * 3, per: 8 });
       if (!mo) return null;
-      solidsSpec.push({ label: "mouth trim", sections: mo, capMouthPts: capOf(mo) });
+      solidsSpec.push({ label: "mouth trim", group: "trim solids", sections: mo, capMouthPts: capOf(mo) });
       trims.push("mouth trim");
     }
   }
@@ -5877,10 +5947,11 @@ export function buildShellSTEP(throat, map, {
       : `union the ${n} 'shell blank' solids (extended past ${ends}), then ${cutBack}subtract the ${n} 'duct cutter' solids`)
     : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
   const out = stepEmit({
-    name, solidsSpec,
+    name, solidsSpec, folders,
     params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExtMouth=${+cutterExtUsed.toFixed(3)} cutterExtThroat=0 extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide}`,
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
-    fileDesc: `ginkgo multicell horn shell kit: ${recipe}`,
+    fileDesc: `ginkgo multicell horn shell kit: ${recipe}${
+      folders ? "; the solids are filed into folders by role, each named for its cell, all at the identity transform" : ""}`,
   });
   if (out) {
     out.mode = eT || eM ? "extended" : "cells";
@@ -5892,6 +5963,9 @@ export function buildShellSTEP(throat, map, {
     // requested minimum and half a station step, so it is not `cutterExt`
     out.cutterExtMouth = cutterExtUsed;
     out.region = region;
+    // how the file is organised for the reader: how many folders the product
+    // tree carries and how many named parts sit inside them
+    out.tree = out.checks.tree;
   }
   return out;
 }

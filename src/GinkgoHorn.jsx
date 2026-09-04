@@ -540,6 +540,15 @@ export default function GinkgoHorn() {
   const [mouthEnd, setMouthEnd] = useState("trim");
   const endCfg = (v) => ({ extend: v !== "plain", trim: v === "trim" });
   const [shellStations, setShellStations] = useState(32);
+  // ONE FILE, SORTED INTO FOLDERS. The kit carries two kinds of solid used in
+  // opposite senses — the blanks are the material, the cutters are what comes
+  // out of it — and a flat list of 36 bodies makes the reader tell them apart
+  // by name. A STEP assembly says it structurally and every importer shows it
+  // as a tree. The occurrences all carry the identity transform, so this is a
+  // naming device and nothing moves; the flat form is kept as the fallback,
+  // because whether an importer handles an assembly well is only observable
+  // in CAD.
+  const [shellFolders, setShellFolders] = useState(true);
   // WHICH SIDE OF EACH MIRROR TO EXPORT. 0 keeps both. The horn is symmetric
   // about x = 0 and y = 0, so a half or a quarter carries the whole design
   // and quarters the boolean work. The passages are exact mirror images
@@ -1089,7 +1098,7 @@ export default function GinkgoHorn() {
       // separation field is not recoverable from the solids at all
       `separate=${o.separate ? `${o.separate.mode || "?"}/${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]${map && map.separate ? `/max${n(map.separate.ampMax)}mm` : ""}` : "off"}`,
       `wall=${shellWall}`, `shellStations=${shellStations}`,
-      `throatEnd=plain`, `mouthEnd=${mouthEnd}`,
+      `throatEnd=plain`, `mouthEnd=${mouthEnd}`, `folders=${shellFolders}`,
       `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
     ];
     return g.join(" ");
@@ -2062,12 +2071,13 @@ export default function GinkgoHorn() {
               t: thickness, wall: shellWall, stations: shellStations,
               extendThroat: false, trimThroat: false,
               extendMouth: endCfg(mouthEnd).extend, trimMouth: endCfg(mouthEnd).trim,
+              folders: shellFolders,
             };
             const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell` });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
-            const co = G.shellCoincidence(throat, em, cfg);
+            const co = G.shellCoincidence(throat, em, { t: thickness, wall: shellWall, stations: shellStations });
             const sov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
             // The number `wall` has to be read against. At the throat the cells
             // TILE, so each blank pushes `wall` into its neighbour across the
@@ -2093,7 +2103,7 @@ export default function GinkgoHorn() {
               : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`;
             setStepNote({
               ok,
-              msg: `${recipe} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
+              msg: `${recipe} · ${r.tree.folders ? `${r.tree.folders} folders, ${r.tree.parts} named parts` : "one flat part"} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
                 co ? ` · near-copy surface ${fmt(co.arc, 1)} mm` : ""}${
                 sov ? ` · blanks share material over ${fmt(sov.fracTouching * 100, 0)}% of the path` : ""}${
                 r.cutterExtMouth ? ` · cutters flush at the throat, ${fmt(r.cutterExtMouth, 2)} mm past the aperture (half a station step)` : ""}${
@@ -2126,7 +2136,8 @@ export default function GinkgoHorn() {
             const r = lab && G.buildShellSTEP(throat, em, {
               t: thickness, wall: shellWall,
               extendThroat: false, extendMouth: endCfg(mouthEnd).extend,
-              stations: shellStations, only: lab, params: exportParams(), name: `${stem}_twocell`,
+              stations: shellStations, only: lab, folders: shellFolders,
+              params: exportParams(), name: `${stem}_twocell`,
             });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
@@ -2144,6 +2155,13 @@ export default function GinkgoHorn() {
               <button key={v} onClick={() => setMouthEnd(v)} style={btn(mouthEnd === v, C.series2)}>{l}</button>
             ))}
             <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>· throat is always plain</span>
+          </div>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, width: 40 }}>tree</span>
+            {[[true, "folders"], [false, "flat"]].map(([v, l]) => (
+              <button key={String(v)} onClick={() => setShellFolders(v)} style={btn(shellFolders === v, C.series2)}>{l}</button>
+            ))}
+            <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>· blanks and cutters in separate folders, identity transforms</span>
           </div>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono }}>region</span>
@@ -2191,6 +2209,11 @@ export default function GinkgoHorn() {
           no unions</strong>, and what comes back is {throat.N} cell shells of exactly {fmt(shellWall, 1)} mm wall.
           {" "}Adjacent blanks share material wherever their ducts run closer than {fmt(2 * shellWall, 0)} mm — most of the throat half of
           the horn — which is what a multicell's shared walls are.
+          {" "}<strong style={{ color: C.inkDim }}>The file arrives sorted</strong>: the blanks, the cutters and any trim solids sit in
+          separate folders of a STEP assembly, each body named for its cell, so the two kinds of solid — the material and what comes out
+          of it — do not have to be told apart by reading names off a flat list of {2 * throat.N} bodies. Every occurrence carries the
+          identity transform, so this is a naming device and no solid moves: the geometry is the flat file's, point for point, which the
+          test suite checks rather than assumes. <em>Flat</em> is the fallback if an importer mishandles the tree.
           {" "}<strong style={{ color: C.inkDim }}>Only the mouth end is settable; the throat is always plain.</strong> At the mouth,{" "}
           <em>extend + trim</em> runs the blanks past the aperture (staggered per cell, so no two adjacent ones end on the same surface)
           and ships the trim solid that cuts them back, so the union never touches that face — where 27 of the measured degeneracies

@@ -43,6 +43,11 @@ Owner's edits. Every number is a CLAUDE.md finding.
   moved to [0.02, 0.22] grade 0.15. All four presets started at u = 0, the one
   case measured to drive the ducts through each other.
 - **Defaults**: bow region [0.02, 0.22], region grade 0.15, min gap 1.5 mm.
+- **The shell kit ships as a STEP assembly** — blanks, cutters and trims in
+  separate folders, each body named for its cell. Every occurrence carries the
+  identity transform and the geometry is the flat file's point for point (both
+  asserted). `tree: flat` in stage 9 is the fallback if an importer mishandles
+  it; the duct export is unchanged.
 
 **The one number worth acting on**: at the new bow default the fold margin is
 **1.77 mm**, down from 2.99 at the old [0, 0.20] grade 0 — the grade buys its

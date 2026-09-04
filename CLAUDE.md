@@ -311,7 +311,17 @@ CUTTER PER CELL (`buildShellSTEP`; see the shell findings below, and read the
 evaluated-vs-searched rings finding before proposing any other shell
 construction). With the throat plain and the mouth extended, which is what
 ships, the CAD work is: union the N blanks, subtract the mouth trim, subtract
-the N cutters. The canvas shows the AIR ONLY: a "horn" view was built twice
+the N cutters. **THE KIT SHIPS AS A STEP ASSEMBLY RATHER THAN A FLAT BODY
+LIST** (2026-09-04): the blanks, the cutters and any trims sit in separate
+folders of a product tree, each body named for its cell, so the two kinds of
+solid — the material and what comes out of it — do not have to be sorted by
+reading names off one list of 2N bodies. It is a NAMING device and nothing
+else: every `NEXT_ASSEMBLY_USAGE_OCCURRENCE` carries the identity transform,
+and the emitted geometry is the flat file's point for point, which the suite
+asserts rather than assumes. `folders: false` (UI: `tree: flat`) restores the
+single-PRODUCT form, and is kept because whether an importer handles an
+assembly well is only observable in CAD. `buildSTEP` names no folders, so the
+duct export keeps the flat form it has always had. The canvas shows the AIR ONLY: a "horn" view was built twice
 and dropped at the owner's call.
 **THE ONLY EXPORTS ARE THE THREE THAT CARRY A SOLID** — the STL, the duct
 STEP and the shell STEP kit (plus the two-cell test, which is the shell format
