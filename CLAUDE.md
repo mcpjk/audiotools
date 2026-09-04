@@ -637,8 +637,51 @@ exists.
   spread that is the ring's own slow variation rather than a missed peak. It
   is still optimistic in the SAMPLE count — see the under-resolution finding
   below.
+- **THE 512-SAMPLE DEFAULT IS 19% OPTIMISTIC ON THE GRADED BOW, THREE TIMES
+  ITS ERROR ON THE BOW IT WAS CALIBRATED FOR — and the fold margin is a
+  `samples` measurement, NOT a `stations` one.** The convergence table below
+  was taken on the [0, 0.20] grade 0 bow, and 512 was chosen there. The
+  2026-09-04 default is [0.02, 0.22] with grade 0.15, and the grade NARROWS
+  the inner cells' windows — a narrower window is a steeper turn, a sharper
+  curvature peak, and a peak needs more samples to resolve. Measured at
+  stations 64, against samples 4096:
+    samples             512      1024     2048     4096
+    NEW bow g0.15      1.7732   1.5522   1.4964   1.4912  mm
+    error             +18.9%    +4.1%    +0.4%     0.0%
+    OLD bow g0         2.9930   2.8269   2.8085   2.8027  mm
+    error              +6.8%    +0.9%    +0.2%     0.0%
+  So **the 1.77 mm the tool reports on the shipped default is really about
+  1.49 mm.** Still positive, still not folded — but 16% thinner than displayed,
+  on the default that already carries the thinnest fold margin ever shipped.
+  The bias is ONE-SIDED (the metric can only be optimistic), so this is a
+  floor moving down, never up. samples 1024 costs a measured 68 ms preview /
+  131 ms export against 512's 49/98, which is the cheapest fix available.
+  **AND THE STATION COUNT IS A RED HERRING HERE, which cost a wrong entry in
+  NEXT-SESSION.md before it was caught.** `bendFoldMin` reads 1.6122 at
+  stations 24 and 48 and 1.7732 at 32, 64 and 128, which looks exactly like
+  the snapping — 24 and 48 do not divide 512, 32 and 64 do. It is not.
+  **The discriminating test is one line: re-measure at samples 480**, where
+  24, 32 and 48 all divide and 64 does not. The pairing does not move —
+  24 and 48 still agree (1.6648), 32 and 64 still agree (1.8344). Divisibility
+  flipped for three of the four counts and the grouping was unchanged, so
+  snapping is falsified.
+  What it actually is: the margin can only be evaluated WHERE A RING EXISTS,
+  and each station charges itself with the worst curvature over the samples it
+  stands for (`half = round(M / 2·stations)`, which NARROWS as stations rise).
+  The bow's curvature peak sits between stations, and the two grid families
+  land either side of it — 24/48 report it at u = 0.16667, 32/64/128 at
+  u = 0.15625. Both are stations near a peak neither owns. The station count
+  therefore shifts WHICH near-miss is reported; only `samples` changes how
+  well the peak itself is resolved.
+  **The general lesson: a pattern that looks like a known bug is not evidence
+  of that bug.** Divisibility was a real mechanism in this file, it fitted the
+  numbers, and it was wrong here. One cheap counter-test beat the pattern
+  match.
+
 - **`samples` IS NOW 512, AND ONLY ONE NUMBER IN THIS FILE MOVED — THE FOLD
-  MARGIN. The re-baselining was far narrower than expected.** Raising the
+  MARGIN. The re-baselining was far narrower than expected.** (The 512 choice
+  is calibrated on the OLD bow; see the finding above for what it costs on the
+  graded default.) Raising the
   centreline sample count from 64 to 512 at stations 64, over all 18 cells:
     dL, Lmin, Lmax, mouth area, wallSpread, fc, kMax   unchanged to 4+ digits
     sectionObliqMax                                    -0.9%
