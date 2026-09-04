@@ -1851,20 +1851,50 @@ exists.
   the boundary-less form to the last bit, every statistic and the whole
   per-station profile — asserted, because every other clearance test in the
   suite is written against that form.
-- **`ductClearance` MEASURES THE GROSS OUTLINES; THE EXPORT CARRIES THE
-  INSET ONES, so the reported gap is NOT the printed wall.** It reads
-  `row.sched[q].pts`, while `ductSections` — what the STL and STEP write —
-  insets each shared side by (t/2)(1-s). Two neighbours therefore have
-  0.4(1-s) mm MORE room in the exported solid than the metric says, which
-  near the throat is the whole story. Measured on the 2026-09-02 default
-  horn at 48 stations: the gross outlines interpenetrate 0.242 mm at
-  u = 0.021, and the inset outlines DO NOT interpenetrate at all — the
-  independent point-in-solid test on the exported mesh finds nothing. What
-  they leave instead is a 0.123 mm WALL SLIVER there, and the tool reports
-  +0.568 mm. So the number on screen is wrong in two directions that partly
-  cancel: gross understates the wall by the inset, and the throat rule hides
-  the dip. Neither the sign nor the magnitude of "min gap" can be quoted as
-  a printable wall thickness today.
+- **THE CLEARANCE NOW MEASURES THE INSET OUTLINES — THE AIR — AND THE NUMBER
+  IS THE WALL BETWEEN TWO DUCTS. This replaced a metric that read the wrong
+  pair of curves, and the owner's own statement of intent is what settled
+  which pair was right.** Every cell has two outlines at every station: the
+  GROSS share of the cross-section, which neighbours share exactly because
+  they tile; and the INSET outline, gross pulled in by t/2 on each shared
+  side and tapering to nothing at the mouth. `ductSections` builds the inset
+  one and the STL and STEP write it, so the material between two ducts IS the
+  inset gap. `ductClearance` read `row.sched[q].pts` — the gross ring — and
+  so ran t(1-s) PESSIMISTIC, worst exactly where the ducts are closest.
+  Measured at the defaults, 48 stations: gross reports -0.023 mm of
+  interpenetration where the exported air measures **+0.345 mm of real wall**.
+  `outline: "inset"` is what the UI and `solveSeparation` now ask for; the
+  model default stays `"gross"` so every figure recorded above still
+  reproduces. Asserted against an INDEPENDENT rebuild from `ductSections`
+  rather than the metric's own bookkeeping — 1.8682 mm both ways — and with
+  t = 0 the two conventions are identical to the last bit, so the comparison
+  is not a mode against itself.
+  **AND ONE MINIMUM CANNOT ANSWER "WILL A 3 mm WALL FIT", because both ends
+  are pinned by construction.** The cells tile the driver exit at the throat,
+  so the wall there is EXACTLY the divider t — measured 0.400 mm at the
+  shipped t = 0.4, at every geometry — and they tile the aperture at the
+  mouth, so it goes to 0 (measured -5.1e-14). Any wall above t is therefore
+  unreachable at both ends of every horn this tool can build, and a
+  worst-case minimum over the whole path can only ever report that tiling.
+  So `reach` reports the RUN: the longest contiguous stretch over which every
+  neighbouring pair clears the floor, in mm of path, with the number of
+  separate qualifying runs so a fragmented profile cannot hide inside one
+  span, and with the two tiling ends printed beside it. Measured on the
+  shipped horn: a 1.5 mm wall fits over 61-308 mm of a 315 mm path (78%),
+  3 mm over 85-301 mm (69%), 8 mm over 131-288 mm (50%). It reads the RAW
+  gap, not the defect-scoped one, because "is there 3 mm of material here" is
+  a structural question and the throat and joint classifications are exactly
+  the two regions where the honest answer is "no, by construction".
+  **ASKING FOR THE WALL AT THE THROAT IS ASKING FOR A BIGGER t, AND IT IS NOT
+  AFFORDABLE.** Measured at 6x3, sweeping the divider:
+    t (mm)              0.4     1       2       3
+    open throat area    895     754     520     288  mm2
+    % of the exit open  90%     76%     53%     29%
+  A 3 mm divider throws away 71% of the driver exit. The wall near the throat
+  is the divider, and the divider is bounded by the throat area the horn
+  needs — not by the separation solve.
+  **WHAT IS NOT RESOLVED**: `reach` is measured at the export station count,
+  and the near-throat dive still needs 48+ stations to be seen at all.
 - **THE SEPARATION SOLVER IS A CONTACT-CHAIN ITERATION, because pairwise
   pushes diffuse and one shared knob is non-monotone.** Three measured
   facts drove the design. (1) Uniform radial spread improves the worst gap
