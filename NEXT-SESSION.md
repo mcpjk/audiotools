@@ -127,13 +127,42 @@ in both modes:
 | repel | 315.10 (stale) | 315.10 – 335.00 | 19.901 | 19.901 |
 | nudge | 315.10 (stale) | 315.10 – 316.01 | 0.910 | 0.910 |
 
-It is not repel-specific: whichever mode displaces more overshoots more. Fix
-is to take the target from the separated paths — cheap, but it is geometry in
-the model, so it needs its own test and a re-measure of the head-to-head
-table in CLAUDE.md. **Do this before the item below**, which it partly
-subsumes: most of the "separation costs ΔL" trade is this bug.
+It is not repel-specific: whichever mode displaces more overshoots more.
 
-### 2. What a FAILED separation solve should return
+**THE OBVIOUS FIX IS WRONG, AND THAT IS THE MEASUREMENT THAT MATTERS HERE.**
+Taking the target from the separated paths does close ΔL — simulated through
+the existing `lengthen.targetLen` override, no code change needed — but it
+pays for it out of the fold margin and the clearance, because every other
+cell then has to bow up to the runaway one:
+
+| after | ΔL | target | ampMax | fold | gap |
+|---|---|---|---|---|---|
+| nudge, today | 0.910 | 315.1 | 20.5 | 2.77 | −6.04 |
+| nudge, target fixed | **0.000** | 316.0 | 21.2 | 2.48 | −6.10 |
+| repel, today | 19.901 | 315.1 | 20.9 | 0.11 | −4.31 |
+| repel, target fixed | **0.000** | 335.0 | **34.6** | **−1.10** | **−7.04** |
+
+So the cost scales with the overshoot: free when it is small (nudge, 0.9 mm)
+and ruinous when it is large (repel, 19.9 mm → a 65% bigger bow, a FOLDED
+duct, and 2.7 mm more interpenetration). **The stale target has been acting
+as an accidental clamp**, and removing it without replacing it trades a
+reporting defect for a broken solid.
+
+What the item actually needs, in order:
+1. **Stop the separation solver lengthening a duct past the target in the
+   first place** — then there is nothing to chase. That means path length
+   enters the solve, which is item 2 below; the two collapse into one task.
+2. Failing that, **report it**: the ΔL the tool prints after a separation
+   solve currently arrives with no explanation of why the lengthening did
+   not close it. "The separation lengthened cell X 19.9 mm past the
+   equalisation target; closing that needs a 34.6 mm bow, which folds" is
+   the sentence the stage should say.
+3. Recomputing the target is only right once (1) bounds the overshoot.
+
+### 2. What a FAILED separation solve should return — and path length in the solve
+
+**Merged with item 1's real conclusion**: the separation solve has to know
+about path length, not only the gap.
 
 All three modes return the best GAP they visited, with no account of dL. On a
 horn with no room that state can carry tens of millimetres of extra path

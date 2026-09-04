@@ -1694,6 +1694,37 @@ exists.
   Higher floors saturate honestly: floor 1.0 reaches +0.73 at the 40 mm
   amplitude cap with dL 10.6 — the throat region genuinely runs out of
   room, and the report says so instead of pretending.
+- **THE LENGTHENING TARGET NEVER SEES THE SEPARATION FIELD, AND THAT STALE
+  TARGET IS AN ACCIDENTAL CLAMP — fixing it naively FOLDS the duct.**
+  `mapThroatToMouth` applies the separation displacement to each centreline
+  first and then runs the equalising bow on the separated path, which is
+  right and is what the comment says. But the bow's TARGET — the length
+  every cell is padded up to — is computed in its own loop over the BARE
+  trajectories and never sees the field. Sliding a duct sideways always
+  makes its path LONGER, and the bow can only ADD length, so any cell the
+  separation pushes past the old target is never caught up to. The leftover
+  spread is exactly the overshoot: measured at the defaults with the
+  throat-fifth bow, `Lmax - target` equals the reported dL to the last digit
+  in BOTH modes — 19.901 mm after repel (315.10 -> 335.00) and 0.910 after
+  nudge (315.10 -> 316.01). It is not repel-specific; whichever mode
+  displaces more overshoots more.
+  **THE OBVIOUS FIX MAKES THE HORN WORSE, and that is why this is recorded
+  rather than patched.** Simulated through the existing `lengthen.targetLen`
+  override — no code change needed to measure it — taking the target from the
+  separated paths closes dL to 0.000 in both modes and pays out of the fold
+  margin and the clearance, because every other cell must bow up to the
+  runaway one:
+                        dL      target   ampMax   fold     gap
+    nudge  today       0.910    315.1    20.5     2.77    -6.04
+    nudge  target fix  0.000    316.0    21.2     2.48    -6.10
+    repel  today      19.901    315.1    20.9     0.11    -4.31
+    repel  target fix  0.000    335.0    34.6    -1.10    -7.04  <- FOLDED
+  The cost scales with the overshoot: free at 0.9 mm, ruinous at 19.9 mm —
+  a 65% bigger bow, a folded duct and 2.7 mm more interpenetration. So the
+  stale target has been holding the bow down, and the real fix is upstream:
+  the separation solve must not lengthen a duct past the target in the first
+  place, which means path length has to enter the solve. Recomputing the
+  target is only correct once the overshoot is bounded.
 - **MUTUAL REPULSION IS BUILT (`solveSeparation` mode `"repel"`), AND WHAT IT
   BOUGHT IS THE DIAGONALS — not a better search.** The owner's proposal. Every
   pair under the floor contributes ONE linear constraint at that pair's own
