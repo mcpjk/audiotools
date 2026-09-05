@@ -2213,6 +2213,20 @@ export function ductClearance(rows, {
   // radius. That is the same approximation the recorded ring-refinement
   // figures already carry, and it is not removed by either method here.
   compare = "station",
+  // ── WHAT THE VIEWPORT NEEDS, AND WHY IT IS OPT-IN ────────────────────────
+  // `perVertex` keeps the gap AT EACH SAMPLED RING POINT instead of reducing
+  // it away, and `contacts` records the worst contact per pair as a pair of
+  // 3-D points. Both are free in compute — the values are already found and
+  // then thrown at the last step — but they allocate, and the separation
+  // solver calls this once per round, so neither is on by default.
+  // THE SAMPLING ALIGNS WITH THE VIEWPORT BY CONSTRUCTION, not by agreement:
+  // both gap functions walk `k += 2` over the ring, and `DuctPreview` draws
+  // `ductSections`' rings decimated `k % 2 === 0`, and `ductSections` returns
+  // the same inset curve this measures under `outline: "inset"` — verified
+  // 0.00e+0 mm vertex for vertex. So sampled index j IS drawn vertex j, and
+  // `vertexStride` is reported so a caller can assert that rather than
+  // assume it.
+  perVertex = false, contacts = false,
   // WHICH PAIRS COUNT AS NEIGHBOURS. The default is the orthogonal grid
   // adjacency this metric has always used, and every recorded number is on
   // it. `[[1,0],[0,1],[1,1],[1,-1]]` adds the diagonals, which the shell
@@ -2286,16 +2300,21 @@ export function ductClearance(rows, {
   };
   // signed distance from every sampled point of `from` to the ring `toRing`,
   // reduced to the worst (most negative, else smallest) value
-  const signedGap = (from, toRing, fr) => {
+  // `out`, when given, receives the gap at every sampled point in order, so
+  // the caller can paint the wall rather than only score it; `rec` receives
+  // the winning point and the ring it was measured against, so the caller can
+  // draw the contact and its direction. Both are written, never read here.
+  const signedGap = (from, toRing, fr, out, rec) => {
     let worst = Infinity;
-    for (let k = 0; k < from.length; k += 2) {
+    for (let k = 0, j = 0; k < from.length; k += 2, j++) {
       const P = from[k];
       let d = Infinity;
       for (let e = 0; e < toRing.length; e++)
         d = Math.min(d, pSeg(P, toRing[e], toRing[(e + 1) % toRing.length]));
       const near = Math.hypot(P[0] - fr.ctr[0], P[1] - fr.ctr[1], P[2] - fr.ctr[2]) <= fr.maxR;
       const sd = near && inside2(fr.to2(P), fr.poly) ? -d : d;
-      if (sd < worst) worst = sd;
+      if (out) out[j] = sd;
+      if (sd < worst) { worst = sd; if (rec) { rec.p = P; rec.ring = toRing; } }
     }
     return worst;
   };
@@ -2334,10 +2353,10 @@ export function ductClearance(rows, {
   // turns far enough can put a point between the same two planes twice, and
   // the crossing beside the paired station is the one that belongs to this
   // stretch of the path rather than to a fold further along.
-  const solidGap = (from, toRings, toFrames, seed) => {
+  const solidGap = (from, toRings, toFrames, seed, out, rec) => {
     let worst = Infinity;
     const h = new Array(stations + 1);
-    for (let k = 0; k < from.length; k += 2) {
+    for (let k = 0, j = 0; k < from.length; k += 2, j++) {
       const P = from[k];
       for (let q = 0; q <= stations; q++) {
         const f = toFrames[q];
@@ -2351,7 +2370,7 @@ export function ductClearance(rows, {
       }
       // no crossing at all: the point is not opposite this duct's body, so
       // it has no wall to measure and must not be scored as clear either
-      if (q0 < 0) continue;
+      if (q0 < 0) { if (out) out[j] = Infinity; continue; }
       const ra = toRings[q0], rb = toRings[q0 + 1];
       const hd = h[q0] - h[q0 + 1];
       const f = Math.abs(hd) > 1e-12 ? h[q0] / hd : 0;
@@ -2366,21 +2385,51 @@ export function ductClearance(rows, {
         d = Math.min(d, pSeg(P, ring[e], ring[(e + 1) % ring.length]));
       const inR = Math.hypot(P[0] - fr.ctr[0], P[1] - fr.ctr[1], P[2] - fr.ctr[2]) <= fr.maxR;
       const sd = inR && inside2(fr.to2(P), fr.poly) ? -d : d;
-      if (sd < worst) worst = sd;
+      if (out) out[j] = sd;
+      if (sd < worst) { worst = sd; if (rec) { rec.p = P; rec.ring = ring; } }
     }
     return worst;
   };
+  // ── PER-VERTEX AND PER-CONTACT BOOKKEEPING ──────────────────────────────
+  // The wall is painted from `vertexGap`: for each cell, each station and each
+  // SAMPLED ring point, the smallest gap to ANY neighbour. It says how close,
+  // never to whom — a point between two neighbours reports the worse one — so
+  // it shows the EXTENT of a too-close region and the contact record supplies
+  // the direction. The two are complementary and neither replaces the other.
+  // BOTH ARE DEFECT-SCOPED, which is why they are folded in a SECOND pass
+  // after the throat and joint runs are known. The cells tile at the throat
+  // and tile again at the mouth, so the raw gap is the divider thickness at
+  // one end and zero at the other on EVERY horn this tool can build. Painting
+  // that would light the throat region red on every horn and mark all 18
+  // ducts as involved — measured: 18 of 18, so nothing would ghost and the
+  // display would carry no information at all. Scoped, it paints what
+  // `minMid` scores, which is the number the rest of the tool reports.
+  const nSamp = Math.ceil(rows[0].sched[0].pts.length / 2);
+  const need = perVertex || contacts;
+  const pvA = perVertex ? pairs.map(() => new Float64Array((stations + 1) * nSamp).fill(Infinity)) : null;
+  const pvB = perVertex ? pairs.map(() => new Float64Array((stations + 1) * nSamp).fill(Infinity)) : null;
+  const recAt = contacts ? pairs.map(() => new Array(stations + 1).fill(null)) : null;
+  const recA = need ? {} : null, recB = need ? {} : null;
   const gaps = pairs.map(() => new Array(stations + 1).fill(Infinity));
   for (let q = 0; q <= stations; q++) {
     for (let pi = 0; pi < pairs.length; pi++) {
       const [A, B] = pairs[pi];
       const pa = ringOf.get(A.id)[q], pb = ringOf.get(B.id)[q];
+      const oa = pvA ? pvA[pi].subarray(q * nSamp, (q + 1) * nSamp) : null;
+      const ob = pvB ? pvB[pi].subarray(q * nSamp, (q + 1) * nSamp) : null;
+      if (recA) { recA.p = null; recA.ring = null; recB.p = null; recB.ring = null; }
       // both directions: either duct can be the one poking into the other
-      gaps[pi][q] = compare === "solid"
-        ? Math.min(solidGap(pa, ringOf.get(B.id), frameOf.get(B.id), q),
-                   solidGap(pb, ringOf.get(A.id), frameOf.get(A.id), q))
-        : Math.min(signedGap(pa, pb, frameOf.get(B.id)[q]),
-                   signedGap(pb, pa, frameOf.get(A.id)[q]));
+      const ga = compare === "solid"
+        ? solidGap(pa, ringOf.get(B.id), frameOf.get(B.id), q, oa, recA)
+        : signedGap(pa, pb, frameOf.get(B.id)[q], oa, recA);
+      const gb = compare === "solid"
+        ? solidGap(pb, ringOf.get(A.id), frameOf.get(A.id), q, ob, recB)
+        : signedGap(pb, pa, frameOf.get(A.id)[q], ob, recB);
+      gaps[pi][q] = Math.min(ga, gb);
+      if (recAt) {
+        const r = ga <= gb ? recA : recB;
+        if (r.p) recAt[pi][q] = { gap: gaps[pi][q], p: r.p, ring: r.ring, from: ga <= gb ? A.id : B.id };
+      }
     }
   }
   // each pair's joint run: walk back from the mouth while in contact. With
@@ -2465,6 +2514,9 @@ export function ductClearance(rows, {
   let jointDepthMax = 0, jointDepthMin = Infinity;
   let thinCount = 0, thinWorst = Infinity, thinAt = null;
   let throatWorst = 0, throatKnifeMin = Infinity, throatKnifeMax = -Infinity, throatRuns = 0;
+  const vertexGap = perVertex ? new Map(rows.map((r) =>
+    [r.id, new Float64Array((stations + 1) * nSamp).fill(Infinity)])) : null;
+  const bestC = contacts ? pairs.map(() => ({ gap: Infinity, at: null, p: null, ring: null })) : null;
   for (let pi = 0; pi < pairs.length; pi++) {
     const [A, B] = pairs[pi];
     // a pair MEETS when its mouth rings overlap — which the tiling makes true
@@ -2496,6 +2548,18 @@ export function ductClearance(rows, {
     for (let q = 1; q < stations; q++) {
       if (q <= throatEnd[pi]) continue;    // throat knife edge: not a defect
       if (q >= jointStart[pi]) continue;   // joint region: engagement, not defect
+      // the same classification decides what the wall is painted with and
+      // which contact a marker points at — one rule, so the picture and the
+      // number can never disagree
+      if (vertexGap) {
+        const va = vertexGap.get(A.id), vb = vertexGap.get(B.id), off = q * nSamp;
+        for (let j = 0; j < nSamp; j++) {
+          if (pvA[pi][off + j] < va[off + j]) va[off + j] = pvA[pi][off + j];
+          if (pvB[pi][off + j] < vb[off + j]) vb[off + j] = pvB[pi][off + j];
+        }
+      }
+      if (recAt && recAt[pi][q] && recAt[pi][q].gap < bestC[pi].gap)
+        bestC[pi] = { ...recAt[pi][q], at: q };
       const d = gaps[pi][q];
       perCell.set(A.id, Math.min(perCell.get(A.id), d));
       perCell.set(B.id, Math.min(perCell.get(B.id), d));
@@ -2581,8 +2645,36 @@ export function ductClearance(rows, {
       stations,
     };
   }
+  // ── THE CONTACT, AS TWO POINTS ──────────────────────────────────────────
+  // The offending wall point and the nearest point on the neighbour. The
+  // SEGMENT BETWEEN THEM IS THE DIRECTION, and that is the part a designer
+  // acts on: measured on the shipped horn, the two remaining intersections
+  // run along the ROW, while the ones the radial bow used to leave ran across
+  // it — the same magnitude asking for two different fixes. Reported per
+  // pair, not per station, because the census says intersections are sparse
+  // (4 of 2961 pair-station cells at the shipped defaults) while under-floor
+  // spots are not (124), so one marker per pair is what stays legible.
+  const contactList = contacts ? bestC.map((b, pi) => {
+    if (!b.p || !b.ring) return null;
+    let d = Infinity, q = null;
+    for (let e = 0; e < b.ring.length; e++) {
+      const U = b.ring[e], V = b.ring[(e + 1) % b.ring.length];
+      const ux = V[0] - U[0], uy = V[1] - U[1], uz = V[2] - U[2];
+      const L2 = ux * ux + uy * uy + uz * uz || 1e-18;
+      let k = ((b.p[0] - U[0]) * ux + (b.p[1] - U[1]) * uy + (b.p[2] - U[2]) * uz) / L2;
+      k = k < 0 ? 0 : k > 1 ? 1 : k;
+      const Q = [U[0] + ux * k, U[1] + uy * k, U[2] + uz * k];
+      const dd = Math.hypot(b.p[0] - Q[0], b.p[1] - Q[1], b.p[2] - Q[2]);
+      if (dd < d) { d = dd; q = Q; }
+    }
+    return { a: pairs[pi][0].id, b: pairs[pi][1].id, from: b.from,
+             gap: b.gap, at: b.at, p: b.p.slice(), q };
+  }).filter(Boolean) : null;
   return {
     reach,
+    // per cell, per station, per SAMPLED ring point — the wall's own colour
+    vertexGap, vertexCount: nSamp, vertexStride: 2,
+    contacts: contactList,
     perStation, perStationDefect, min: worst, minAt: worstAt,
     minMid: worstMid, minMidAt: worstMidAt,
     overlap: worstMid < 0 ? -worstMid : 0,

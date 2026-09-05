@@ -4278,7 +4278,109 @@ head("Bow direction across the row, and the station-free clearance");
       deepest, solidGap, 0.02, "mm");
   }
 
-  // ── 6. THE SOLVER CANNOT APPLY A FIELD THE HONEST METRIC REJECTS ─────────
+  // ── 6. WHAT THE VIEWPORT DRAWS ───────────────────────────────────────────
+  // `perVertex` paints the wall and `contacts` places the markers. Both are
+  // opt-in and both must be free: the numbers the rest of the tool reports
+  // cannot move because a display was switched on.
+  {
+    const plain = clear(cro, "solid");
+    const rich = M.ductClearance(cro.rows, {
+      jointAware: false, throatFloor: FLOOR, thinBand: FLOOR, pairSteps: STEPS,
+      outline: "inset", t, floor: FLOOR, compare: "solid",
+      perVertex: true, contacts: true,
+    });
+    checkTrue("asking for the viewport data changes no statistic",
+      rich.minMid === plain.minMid && rich.minMidAt === plain.minMidAt
+      && rich.overlap === plain.overlap && rich.thin.count === plain.thin.count
+      && rich.max === plain.max,
+      `minMid ${rich.minMid.toFixed(4)} mm at ${rich.minMidAt}, thin ${rich.thin.count}`);
+
+    // THE SAMPLING ALIGNS WITH THE VIEWPORT, and it is asserted rather than
+    // assumed: the metric walks the ring `k += 2` and DuctPreview draws
+    // `ductSections`' rings decimated `k % 2 === 0`, so sampled index j is
+    // drawn vertex j only if both are the same curve at the same indices.
+    {
+      const row = cro.rows.find((r) => r.i === 3 && r.j === 1);
+      const cell = th.cells.find((x) => x.id === row.id);
+      const drawn = M.ductSections(cell, row, { t })[7].pts;
+      const st = row.sched[7], taper = 1 - st.s;
+      const rim = row.rimSide || [false, false, false, false];
+      const dd = rim.map((r) => (r ? 0 : (t / 2) * taper));
+      const measured = dd.some((v) => v > 0) ? M.insetSection3(st.pts, dd) : st.pts;
+      let worst = 0;
+      for (let k = 0; k < drawn.length; k++)
+        worst = Math.max(worst, Math.hypot(drawn[k][0] - measured[k][0],
+          drawn[k][1] - measured[k][1], drawn[k][2] - measured[k][2]));
+      checkTrue("the viewport's ring IS the ring the metric measures",
+        worst === 0 && rich.vertexCount === Math.ceil(drawn.length / 2) && rich.vertexStride === 2,
+        `${drawn.length} points, worst difference ${worst.toExponential(1)} mm, ` +
+        `${rich.vertexCount} sampled at stride ${rich.vertexStride}`);
+    }
+
+    // The deepest point on ANY wall is the metric's own worst gap. Exact,
+    // because the pair gap is the smaller of the two directions and each
+    // direction's minimum is what the per-vertex array holds.
+    {
+      let gmin = Infinity;
+      for (const r of cro.rows) { const vg = rich.vertexGap.get(r.id);
+        for (let i = 0; i < vg.length; i++) if (vg[i] < gmin) gmin = vg[i]; }
+      check("the deepest painted point is the worst gap", gmin, rich.minMid, 0, "mm");
+    }
+
+    // THE PAINT IS DEFECT-SCOPED, and that is what makes it carry
+    // information. The cells tile at the throat and tile again at the mouth,
+    // so the RAW gap is the divider at one end and zero at the other on every
+    // horn — painting that marks all 18 ducts and nothing stands out.
+    const involved = (thr) => cro.rows.filter((r) => {
+      const vg = rich.vertexGap.get(r.id);
+      for (let i = 0; i < vg.length; i++) if (vg[i] < thr) return true;
+      return false;
+    });
+    checkTrue("...so the ghost rule isolates the ducts actually in trouble",
+      involved(0).length === 4,
+      `${involved(0).length} of ${cro.rows.length} solid at the intersection threshold, ` +
+      `${involved(FLOOR).length} under the ${FLOOR} mm floor`);
+    checkTrue("...and they are the middle-row pair the solid read found",
+      involved(0).map((r) => `${r.i},${r.j}`).sort().join(" ") === "1,1 2,1 3,1 4,1",
+      involved(0).map((r) => `${r.i},${r.j}`).sort().join(" "));
+
+    // A MARKER'S LENGTH IS THE GAP. The segment runs from the offending wall
+    // point to the nearest point on the neighbour, so it is not a decoration
+    // scaled for legibility — it is the measurement, drawn.
+    {
+      let worst = 0;
+      for (const k of rich.contacts)
+        worst = Math.max(worst, Math.abs(Math.hypot(
+          k.q[0] - k.p[0], k.q[1] - k.p[1], k.q[2] - k.p[2]) - Math.abs(k.gap)));
+      check("every marker's length is its own gap", worst, 0, 1e-9, "mm");
+      const one = rich.contacts.find((k) => k.gap === rich.minMid);
+      checkTrue("the worst marker sits on the worst pair, at its own station",
+        one && one.at === rich.minMidAt, one ? `station ${one.at}` : "not found");
+    }
+
+    // AND THE DIRECTION IS THE POINT OF IT. Measured on this horn the two
+    // intersections run ALONG THE ROW; under the radial bow they ran ACROSS
+    // it. Same magnitude, two different fixes, and only the marker says which.
+    {
+      const dirOf = (cl) => {
+        const w = cl.contacts.slice().sort((a, b) => a.gap - b.gap)[0];
+        const v = [w.q[0] - w.p[0], w.q[1] - w.p[1], w.q[2] - w.p[2]];
+        const n = Math.hypot(...v);
+        return { along: Math.abs(v[0] / n), across: Math.abs(v[1] / n) };
+      };
+      const cd = dirOf(rich);
+      const rd = dirOf(M.ductClearance(rad.rows, {
+        jointAware: false, throatFloor: FLOOR, pairSteps: STEPS,
+        outline: "inset", t, floor: FLOOR, compare: "solid", contacts: true,
+      }));
+      checkTrue("crossRow's worst contact runs ALONG the row",
+        cd.along > cd.across, `along ${cd.along.toFixed(2)} against across ${cd.across.toFixed(2)}`);
+      checkTrue("...and radial's runs ACROSS it, which is the different fix",
+        rd.across > rd.along, `across ${rd.across.toFixed(2)} against along ${rd.along.toFixed(2)}`);
+    }
+  }
+
+  // ── 7. THE SOLVER CANNOT APPLY A FIELD THE HONEST METRIC REJECTS ─────────
   // The inner loop measures at equal fractions of travel, because a solid
   // read costs about 3x and runs once per round. So the returned state is
   // re-read as a solid against the input read the same way, and a field that

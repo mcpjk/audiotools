@@ -80,6 +80,21 @@ const rampAt = (u) => {
   return `#${m.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 };
 
+// ── THE CLEARANCE RAMP ─────────────────────────────────────────────────────
+// A quiet horn with a coloured bruise, rather than a horn painted end to end.
+// Everything at or above the floor takes the duct's own base colour, so the
+// eye is drawn only to what is actually close: gold from the floor down to
+// touching, vermilion from touching down to a floor's depth of overlap.
+// Endpoints come from `C` for the reason in CLAUDE.md — nothing here holds
+// its own RGB.
+const mixRGB = (a, b, k) => a.map((v, i) => v + (b[i] - v) * Math.max(0, Math.min(1, k)));
+const clearanceRGB = (gap, floor, base) => {
+  const warn = hex2rgb(C.series1), bad = hex2rgb(C.series5);
+  if (!isFinite(gap) || gap >= floor) return base;
+  if (gap >= 0) return mixRGB(base, warn, floor > 1e-9 ? 1 - gap / floor : 1);
+  return mixRGB(warn, bad, floor > 1e-9 ? -gap / floor : 1);
+};
+
 // ── UI primitives, matching the other tools ────────────────────────────────
 const sInput = {
   background: C.panelAlt, border: `1px solid ${C.border}`, borderRadius: 4,
@@ -167,42 +182,94 @@ const SPIN_CSS = "@keyframes hgSpin{to{transform:rotate(360deg)}}";
 // lambert shading, which canvas 2D fills at interactive rates. Colours mix
 // each duct's palette colour toward C.page, so the shading follows the theme
 // with nothing hard-coded.
-function DuctPreview({ ducts, dim }) {
+// `ducts` carry `{ id, color, rings }`; when `paint` is on, each also carries
+// `gaps` — one clearance value per station per DRAWN vertex, straight from
+// `ductClearance`'s `vertexGap`, aligned by construction rather than resampled
+// (the metric samples the ring `k += 2` and this draws it `k % 2 === 0`, on
+// the same inset curve; asserted in the suite). `contacts` are drawn last and
+// on top, because a contact hidden behind an outer duct is the one thing this
+// view exists to show.
+function DuctPreview({ ducts, dim, paint, floor, contacts, ghost }) {
   const canvasRef = useRef(null);
-  const view = useRef({ yaw: -2.45, pitch: 0.42, zoom: 1 });
+  // pan is in PIXELS and is applied after the projection, so "frame this
+  // point" is a closed form rather than a search: the projection is linear,
+  // so the pan that brings a point to the centre is just minus its projected
+  // offset at the chosen zoom.
+  const view = useRef({ yaw: -2.45, pitch: 0.42, zoom: 1, panX: 0, panY: 0 });
   const raf = useRef(false);
 
   // one flat structure per geometry change: points, quads, per-duct shade
   // tables (17 quantised lambert levels, so no colour strings are built
-  // inside the draw loop)
+  // inside the draw loop). When painting by clearance the colour is no longer
+  // one per duct, so the table gains a second axis: the gap is quantised into
+  // GBANDS buckets and the table is buckets x shades. Quantising is what
+  // keeps `rgb(...)` out of a loop that runs tens of thousands of times a
+  // frame — the same reason the shade axis was pre-built in the first place.
+  const GBANDS = 24;
   const geom = useMemo(() => {
     if (!ducts || !ducts.length) return null;
-    const pts = [], quads = [], quadDuct = [], shades = [];
+    const pts = [], quads = [], quadDuct = [], quadBand = [], shades = [], solidDuct = [];
     const pg = hex2rgb(C.page);
-    ducts.forEach((d, di) => {
-      const rgb = hex2rgb(d.color);
+    const tableFor = (rgb) => {
       const tab = [];
       for (let s = 0; s <= 16; s++) {
         const b = 0.3 + 0.7 * (s / 16);
         tab.push(`rgb(${Math.round(pg[0] + (rgb[0] - pg[0]) * b)},${Math.round(pg[1] + (rgb[1] - pg[1]) * b)},${Math.round(pg[2] + (rgb[2] - pg[2]) * b)})`);
       }
-      shades.push(tab);
+      return tab;
+    };
+    // gap -> band index. Band 0 is the deepest overlap, the top band is
+    // "at or above the floor", and the ramp between is linear in the gap.
+    const bandOf = (g) => {
+      if (!isFinite(g) || g >= floor) return GBANDS - 1;
+      const u = (g + floor) / (2 * floor);           // -floor..floor -> 0..1
+      return Math.max(0, Math.min(GBANDS - 2, Math.round(u * (GBANDS - 1))));
+    };
+    ducts.forEach((d, di) => {
+      const rgb = hex2rgb(d.color);
+      if (paint) {
+        const bands = [];
+        for (let b = 0; b < GBANDS; b++) {
+          const g = b === GBANDS - 1 ? Infinity : (b / (GBANDS - 1)) * 2 * floor - floor;
+          bands.push(tableFor(clearanceRGB(g, floor, rgb).map(Math.round)));
+        }
+        shades.push(bands);
+      } else shades.push(tableFor(rgb));
       const base = pts.length;
       d.rings.forEach((ring) => ring.forEach((p) => pts.push(p)));
       const n = d.rings[0].length, S = d.rings.length;
+      // a duct is SOLID when it carries a point below the ghost threshold,
+      // and translucent otherwise — so the horn recedes and the ducts in
+      // trouble stay opaque. Uniform translucency was rejected: eighteen
+      // ducts at one alpha is haze, and with two-sided shading you would see
+      // the far wall of every one of them.
+      let inTrouble = !paint || !d.gaps || ghost == null;
+      if (paint && d.gaps && ghost != null)
+        for (let i = 0; i < d.gaps.length && !inTrouble; i++) if (d.gaps[i] < ghost) inTrouble = true;
+      solidDuct.push(inTrouble);
       for (let q = 0; q < S - 1; q++)
         for (let k = 0; k < n; k++) {
           quads.push([base + q * n + k, base + q * n + ((k + 1) % n),
             base + (q + 1) * n + ((k + 1) % n), base + (q + 1) * n + k]);
           quadDuct.push(di);
+          if (paint) {
+            // the quad spans two stations and two vertices, so it takes the
+            // WORST of its four corners — a display that can only be
+            // pessimistic, never optimistic
+            const g = d.gaps
+              ? Math.min(d.gaps[q * n + k], d.gaps[q * n + ((k + 1) % n)],
+                         d.gaps[(q + 1) * n + k], d.gaps[(q + 1) * n + ((k + 1) % n)])
+              : Infinity;
+            quadBand.push(bandOf(g));
+          }
         }
     });
     let cx = 0, cy = 0, cz = 0;
     for (const p of pts) { cx += p[0] / pts.length; cy += p[1] / pts.length; cz += p[2] / pts.length; }
     let rad = 1;
     for (const p of pts) rad = Math.max(rad, Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz));
-    return { pts, quads, quadDuct, shades, ctr: [cx, cy, cz], rad };
-  }, [ducts]);
+    return { pts, quads, quadDuct, quadBand, shades, solidDuct, ctr: [cx, cy, cz], rad, paint };
+  }, [ducts, paint, floor, ghost]);
 
   const draw = () => {
     const cv = canvasRef.current;
@@ -213,9 +280,14 @@ function DuctPreview({ ducts, dim }) {
     const g = cv.getContext("2d");
     g.fillStyle = C.page;
     g.fillRect(0, 0, w, h);
-    const { yaw, pitch, zoom } = view.current;
+    const { yaw, pitch, zoom, panX, panY } = view.current;
     const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
     const sc = (Math.min(w, h) / (2.3 * geom.rad)) * zoom;
+    const project = (p) => {
+      const x = p[0] - geom.ctr[0], y = p[1] - geom.ctr[1], z = p[2] - geom.ctr[2];
+      const x1 = x * cyw + z * syw, z1 = -x * syw + z * cyw;
+      return [w / 2 + x1 * sc + panX, h / 2 - (y * cp - z1 * sp) * sc + panY, y * sp + z1 * cp];
+    };
     const N = geom.pts.length;
     const px = new Float64Array(N), py = new Float64Array(N), pz = new Float64Array(N);
     for (let i = 0; i < N; i++) {
@@ -223,12 +295,14 @@ function DuctPreview({ ducts, dim }) {
       const x = p[0] - geom.ctr[0], y = p[1] - geom.ctr[1], z = p[2] - geom.ctr[2];
       const x1 = x * cyw + z * syw, z1 = -x * syw + z * cyw;
       const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
-      px[i] = w / 2 + x1 * sc;
-      py[i] = h / 2 - y2 * sc;
+      px[i] = w / 2 + x1 * sc + panX;
+      py[i] = h / 2 - y2 * sc + panY;
       pz[i] = z2;
     }
     // painter's algorithm: far quads first. Orthographic, so mean depth is a
-    // sound sort key for quads this small relative to the ducts.
+    // sound sort key for quads this small relative to the ducts — and it is
+    // also exactly the ordering alpha blending needs to be correct, which is
+    // what makes the ghosting nearly free.
     const Q = geom.quads.length;
     const depth = new Float64Array(Q), order = new Array(Q);
     for (let q = 0; q < Q; q++) {
@@ -237,6 +311,7 @@ function DuctPreview({ ducts, dim }) {
       order[q] = q;
     }
     order.sort((a, b) => depth[a] - depth[b]);
+    let alpha = 1;
     for (let oi = 0; oi < Q; oi++) {
       const q = order[oi];
       const [a, b, c2, d] = geom.quads[q];
@@ -248,11 +323,44 @@ function DuctPreview({ ducts, dim }) {
       const nl = Math.hypot(nx, ny, nz) || 1e-9;
       const lamb = Math.abs((0.33 * nx + 0.24 * ny + 0.91 * nz) / nl);
       const sIdx = Math.max(0, Math.min(16, Math.round(lamb * 16)));
-      g.fillStyle = geom.shades[geom.quadDuct[q]][sIdx];
+      const di = geom.quadDuct[q];
+      const want = geom.solidDuct[di] ? 1 : 0.07;
+      if (want !== alpha) { g.globalAlpha = want; alpha = want; }
+      const tab = geom.shades[di];
+      g.fillStyle = geom.paint ? tab[geom.quadBand[q]][sIdx] : tab[sIdx];
       g.beginPath();
       g.moveTo(px[a], py[a]); g.lineTo(px[b], py[b]);
       g.lineTo(px[c2], py[c2]); g.lineTo(px[d], py[d]);
       g.closePath(); g.fill();
+    }
+    g.globalAlpha = 1;
+    // ── THE CONTACTS, DRAWN LAST AND WITHOUT A DEPTH TEST ──────────────────
+    // A marker behind an outer duct is precisely the one this view exists to
+    // show, so they are painted over everything. The segment is the real
+    // measurement — from the offending wall point to the nearest point on the
+    // neighbour — so its DIRECTION is the fix and its length is the gap.
+    // Short ones would vanish at this scale, so the line is drawn along the
+    // true direction at a legible minimum length and the dot marks the actual
+    // wall point; the number beside it is what the length means.
+    if (contacts && contacts.length) {
+      g.lineWidth = 1.6;
+      g.font = `10px ${C.mono}`;
+      g.textBaseline = "middle";
+      for (const k of contacts) {
+        const A = project(k.p), B = project(k.q);
+        const dx = B[0] - A[0], dy = B[1] - A[1];
+        const len = Math.hypot(dx, dy) || 1e-9;
+        const draw2 = Math.max(len, 22);
+        const ex = A[0] + (dx / len) * draw2, ey = A[1] + (dy / len) * draw2;
+        const col = k.gap < 0 ? C.series5 : C.series1;
+        g.strokeStyle = col; g.fillStyle = col;
+        g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(ex, ey); g.stroke();
+        g.beginPath(); g.arc(A[0], A[1], 2.6, 0, 6.2832); g.fill();
+        g.beginPath(); g.arc(ex, ey, 1.6, 0, 6.2832); g.fill();
+        const lx = ex + (dx / len) * 6, ly = ey + (dy / len) * 6;
+        g.textAlign = dx >= 0 ? "left" : "right";
+        g.fillText(`${k.gap < 0 ? "\u2212" : ""}${Math.abs(k.gap).toFixed(2)}`, lx, ly);
+      }
     }
   };
 
@@ -272,7 +380,7 @@ function DuctPreview({ ducts, dim }) {
     raf.current = true;
     requestAnimationFrame(() => { raf.current = false; drawRef.current(); });
   };
-  useEffect(() => { requestDraw(); }, [geom]);
+  useEffect(() => { requestDraw(); }, [geom, contacts]);
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -290,7 +398,7 @@ function DuctPreview({ ducts, dim }) {
     // wheel zoom needs a non-passive listener or preventDefault is ignored
     const wheel = (e) => {
       e.preventDefault();
-      view.current.zoom = Math.max(0.3, Math.min(6, view.current.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      view.current.zoom = Math.max(0.3, Math.min(14, view.current.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
       requestDraw();
     };
     cv.addEventListener("mousedown", down);
@@ -305,13 +413,45 @@ function DuctPreview({ ducts, dim }) {
     };
   }, []);
 
-  const setView = (yaw, pitch) => { view.current.yaw = yaw; view.current.pitch = pitch; requestDraw(); };
+  const setView = (yaw, pitch, zoom) => {
+    view.current.yaw = yaw; view.current.pitch = pitch;
+    if (zoom != null) view.current.zoom = zoom;
+    view.current.panX = 0; view.current.panY = 0;
+    requestDraw();
+  };
+  // FRAME THE WORST CONTACT. The defects sit in the first tenth of the path,
+  // at the small end of the horn — measured, on the shipped horn, every
+  // contact inside station 10 of 64 — so at the default framing they are a
+  // few pixels across and the whole horn is in the way. Zooming alone does
+  // not do it either: the projection is centred on the horn's own centroid,
+  // so magnifying walks the region of interest off the canvas. This sets the
+  // pan as well, in closed form, and looks at the contact from outside along
+  // its own radius.
+  const zoomWorst = () => {
+    const cv = canvasRef.current;
+    if (!contacts || !contacts.length || !geom || !cv) return;
+    const k = contacts.slice().sort((a, b) => a.gap - b.gap)[0];
+    const w = Math.max(300, cv.clientWidth || 600), h = 420;
+    const d = [k.p[0] - geom.ctr[0], k.p[1] - geom.ctr[1], k.p[2] - geom.ctr[2]];
+    const yaw = Math.atan2(d[0], d[2]) + Math.PI, pitch = 0.3;
+    // show roughly a 70 mm neighbourhood, which is several duct widths
+    const zoom = Math.max(1, Math.min(14, (2.3 * geom.rad) / 70));
+    const sc = (Math.min(w, h) / (2.3 * geom.rad)) * zoom;
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const x1 = d[0] * cyw + d[2] * syw, z1 = -d[0] * syw + d[2] * cyw;
+    const y2 = d[1] * cp - z1 * sp;
+    view.current = { yaw, pitch, zoom, panX: -x1 * sc, panY: y2 * sc };
+    requestDraw();
+  };
   return (
     <div style={{ opacity: dim ? 0.35 : 1 }}>
-      <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 6, flexWrap: "wrap", alignItems: "center" }}>
         {[["three-quarter", -2.45, 0.42], ["front", Math.PI, 0], ["side", Math.PI / 2, 0], ["top", Math.PI, 1.55]].map(([l, yw, pt]) => (
-          <button key={l} onClick={() => setView(yw, pt)} style={btn(false, C.series2)}>{l}</button>
+          <button key={l} onClick={() => setView(yw, pt, 1)} style={btn(false, C.series2)}>{l}</button>
         ))}
+        {contacts && contacts.length > 0 && (
+          <button onClick={zoomWorst} style={btn(false, C.series5)}>frame the worst contact</button>
+        )}
       </div>
       <canvas ref={canvasRef}
         style={{ width: "100%", height: 420, display: "block", borderRadius: 4, background: C.page, border: `1px solid ${C.border}`, cursor: "grab" }} />
@@ -360,6 +500,15 @@ export default function GinkgoHorn() {
   // for two panes at all — below the breakpoint the panes stack into one
   // scrolling column.
   const [view, setView] = useState("ducts");
+  // WHAT THE 3-D VIEWPORT PAINTS THE WALLS WITH. The first cross mode is a
+  // LAYOUT-phase readout — it answers a question you ask once, while choosing
+  // the grid — so pinning the one surface that shows the horn in space to it
+  // for the whole session wastes it. "clearance" paints each wall point by
+  // its own gap to the nearest neighbour and marks the contacts.
+  const [colorMode, setColorMode] = useState("f1");
+  // ghost the ducts that are not in trouble, so the ones that are stop being
+  // hidden behind them
+  const [ghostClear, setGhostClear] = useState(true);
   const [narrow, setNarrow] = useState(() =>
     typeof window !== "undefined" && window.matchMedia("(max-width: 1020px)").matches);
   useEffect(() => {
@@ -844,16 +993,25 @@ export default function GinkgoHorn() {
         // by station against -0.43 mm of real interpenetration by solid,
         // the latter confirmed to 7 um by an independent ray cast into the
         // exported triangles. Costs about 3x and is already deferred.
+        // the ROWS are kept as well as the statistics, because the 3-D view
+        // paints from `vertexGap` and that is indexed by THIS map's stations.
+        // Resampling it onto the 24-station preview was the alternative and
+        // it is not viable: every defect on the shipped horn sits inside
+        // station 10 of 64, which is four preview rings, so the picture would
+        // be coarse exactly where it has to be exact.
+        rows,
         value: G.ductClearance(rows, {
           jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
           pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
           outline: "inset", t: thickness, floor: sepFloor, compare: "solid",
+          perVertex: true, contacts: true,
         }),
       });
     }, 30);
     return () => clearTimeout(id);
   }, [map, sepFloor, stations, throat, mapOpts, depth, profileT, thickness]);
   const clearance = clr && clr.of === map && clr.at === stations ? clr.value : null;
+  const clearRows = clr && clr.of === map && clr.at === stations ? clr.rows : null;
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -1161,23 +1319,37 @@ export default function GinkgoHorn() {
   const [solids3d, setSolids3d] = useState(null);
   useEffect(() => {
     if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setSolids3d(null); return; }
+    // PAINTING BY CLEARANCE BUILDS FROM THE MEASURED ROWS, not the preview
+    // ones, so a wall's colour is the number the exports carry rather than a
+    // resampled version of it. Those rows arrive with the clearance, hence the
+    // wait; the f₁ colouring keeps the fast preview map it has always used.
+    const painting = colorMode === "clearance";
+    const src = painting ? clearRows : map.rows;
+    if (painting && !src) return;                     // still measuring
     const id = setTimeout(() => {
       const ducts = [];
       for (const cc of throat.cells) {
-        const r = map.rows.find((x) => x.id === cc.id);
+        const r = src.find((x) => x.id === cc.id);
         if (!r) continue;
         const secs = G.ductSections(cc, r, { t: thickness });
         if (!secs) continue;
-        ducts.push({
-          id: cc.id, color: cellFill(cc),
-          rings: secs.map((s) => s.pts.filter((_, k) => k % 2 === 0)),
-        });
+        const rings = secs.map((s) => s.pts.filter((_, k) => k % 2 === 0));
+        const d = { id: cc.id, color: cellFill(cc), rings };
+        // one gap per drawn vertex, in the same order — `vertexGap` samples
+        // the ring at stride 2 and this draws it at stride 2, on the same
+        // inset curve, so the two align without a resample. Asserted in the
+        // suite rather than assumed here.
+        if (painting && clearance && clearance.vertexGap) {
+          const vg = clearance.vertexGap.get(cc.id);
+          if (vg && vg.length === rings.length * rings[0].length) d.gaps = vg;
+        }
+        ducts.push(d);
       }
-      setSolids3d({ of: map, ducts });
+      setSolids3d({ of: map, mode: colorMode, rows: src, ducts });
     }, 80);
     return () => clearTimeout(id);
-  }, [map]);
-  const solidsStale = !solids3d || solids3d.of !== map;
+  }, [map, colorMode, clearRows]);
+  const solidsStale = !solids3d || solids3d.of !== map || solids3d.mode !== colorMode;
 
   const throatSVG = () => {
     const pad = R * 0.18;
@@ -2400,13 +2572,65 @@ export default function GinkgoHorn() {
           <div>
             <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", padding: "0 4px 4px" }}>
               <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
-                the air · drag to orbit · scroll to zoom · what the STL and STEP export
+                {colorMode === "clearance"
+                  ? `the air · walls painted by their own gap to the nearest neighbour · markers point the way out`
+                  : "the air · drag to orbit · scroll to zoom · what the STL and STEP export"}
               </span>
-              {solidsStale && <Solving label="building solids" />}
+              {solidsStale && <Solving label={colorMode === "clearance" ? "measuring the walls" : "building solids"} />}
             </div>
             {solids3d
-              ? <DuctPreview ducts={solids3d.ducts} dim={solidsStale} />
+              ? <DuctPreview
+                  ducts={solids3d.ducts} dim={solidsStale}
+                  paint={colorMode === "clearance"}
+                  floor={sepFloor}
+                  // the ghost threshold ADAPTS: where anything actually
+                  // intersects, only the intersecting ducts stay solid;
+                  // where nothing does, the ducts under the floor do. At a
+                  // fixed floor the shipped horn marks 14 of 18 ducts and
+                  // almost nothing recedes, which is a display carrying no
+                  // information.
+                  ghost={colorMode === "clearance" && ghostClear && clearance
+                    ? (clearance.minMid < 0 ? 0 : sepFloor) : null}
+                  // MARKERS FOLLOW THE SAME ADAPTIVE THRESHOLD AS THE
+                  // GHOSTING, or the picture contradicts itself and the
+                  // labels pile up: 23 of 47 pairs sit under the floor on the
+                  // shipped horn and their markers all converge on the
+                  // throat, where they overlap into an unreadable knot. Where
+                  // anything actually intersects, only those are marked — two
+                  // markers instead of fourteen.
+                  contacts={colorMode === "clearance" && clearance && clearance.contacts
+                    ? clearance.contacts.filter((k) => k.gap < (clearance.minMid < 0 ? 0 : sepFloor))
+                    : null} />
               : <div style={{ fontSize: 11, color: C.inkMuted, padding: 20 }}>No duct solids — the mapping needs the H-grid.</div>}
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 7, paddingLeft: 2 }}>
+              <span style={{ fontSize: 10, color: C.inkMuted }}>colour by</span>
+              {[["f1", "first cross mode"], ["clearance", "duct clearance"]].map(([k, l]) => (
+                <button key={k} onClick={() => setColorMode(k)} style={btn(colorMode === k, C.series2)}>{l}</button>
+              ))}
+              {colorMode === "clearance" && (
+                <>
+                  <button onClick={() => setGhostClear(!ghostClear)} style={btn(ghostClear, C.series3)}>
+                    {ghostClear ? "ghosting the clear ducts" : "all ducts solid"}
+                  </button>
+                  <span style={{ display: "inline-flex", gap: 10, alignItems: "center", fontFamily: C.mono, fontSize: 9.5, marginLeft: 2 }}>
+                    <span style={{ color: C.series5 }}>■ through the neighbour</span>
+                    <span style={{ color: C.series1 }}>■ under {fmt(sepFloor, 1)} mm</span>
+                    <span style={{ color: C.inkMuted }}>■ clear</span>
+                  </span>
+                </>
+              )}
+            </div>
+            {colorMode === "clearance" && (
+              <div style={{ fontSize: 10, color: C.inkMuted, lineHeight: 1.5, marginTop: 6, paddingLeft: 2 }}>
+                Measured on the geometry the exports build, at {stations} stations, comparing the SOLIDS rather than
+                equal fractions of travel. Each wall point carries its distance to the nearest neighbouring duct, so the
+                colour is the EXTENT of a too-close region and says how close, never to whom. Every marker runs from the
+                offending wall point to the nearest point on the neighbour: its length is the gap and its DIRECTION is
+                the way out, which is the part that decides the fix — a contact along the row asks for something
+                different from one across it. The throat and the mouth are excluded, because the cells tile at both and
+                the wall there is the divider by construction rather than a defect.
+              </div>
+            )}
           </div>
         )}
         {view === "section" && (

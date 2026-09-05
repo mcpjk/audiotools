@@ -342,6 +342,72 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **THE 3-D VIEWPORT PAINTS THE WALLS BY CLEARANCE AND MARKS THE CONTACTS,
+  AND THE THING THAT MAKES IT WORTH HAVING IS THE DIRECTION.** Three parts,
+  all in `DuctPreview`, all fed by `ductClearance`'s opt-in `perVertex` and
+  `contacts`. Colour mode is selectable (`colorMode`), because the first cross
+  mode is a LAYOUT-phase readout and pinning the one surface that shows the
+  horn in space to it for the whole session wastes it.
+  **(1) THE PAINT IS PER WALL VERTEX, NOT PER DUCT, and that is the whole
+  difference.** A duct tinted by one worst number says it is in trouble
+  without saying which side. Per vertex it is a bruise on one face that
+  switches off cleanly where the problem stops — measured on the failing
+  middle-row cell at station 7, gap in mm every fourth vertex round the ring:
+    7.9  5.9  3.8  1.6  -0.3  -0.4  -0.4  -0.4  -0.3  1.6  3.8  5.9  7.9 ...
+  One contiguous band, 23 of 64 vertices under the floor, 19 intersecting,
+  with a clear centre; the same cell at station 20 has nothing under the
+  floor at all.
+  **THE ALIGNMENT IS BY CONSTRUCTION AND IS ASSERTED**: the metric walks the
+  ring `k += 2` and the viewport draws `ductSections`' rings decimated
+  `k % 2 === 0`, on the same inset curve — measured 0.00e+0 mm vertex for
+  vertex — so sampled index j IS drawn vertex j, with no resample.
+  **(2) THE PAINT IS DEFECT-SCOPED, or it carries no information.** The cells
+  tile at the throat and tile again at the mouth, so the RAW gap is the
+  divider at one end and zero at the other on every horn this tool can build.
+  Painting that marks **18 of 18 ducts** and nothing recedes. Scoped exactly
+  as `minMid` is scoped it marks **14 of 18** under the floor and **4 of 18**
+  where anything actually intersects — and those four are precisely the
+  middle-row cells the solid read finds. So the GHOST THRESHOLD ADAPTS: zero
+  where the horn intersects anywhere, the floor where it does not. Markers use
+  the same threshold or the picture contradicts itself, and 23 pairs' worth of
+  markers converge on the throat into an unreadable knot.
+  **(3) THE MARKER IS THE MEASUREMENT, DRAWN.** It runs from the offending
+  wall point to the nearest point on the neighbour, so its length IS the gap
+  (asserted, 1.3e-15 mm) and its direction is the shortest way out. That
+  direction is what decides the fix and nothing else in the tool reports it:
+  measured, the shipped horn's two intersections run ALONG THE ROW (0.73
+  against 0.00) while the radial bow's ran ACROSS it (0.84 against 0.08) —
+  same magnitude, two different mitigations.
+  **THE CENSUS IS WHY THE TWO DISPLAYS ARE DIFFERENT SHAPES.** Measured at the
+  shipped defaults over 2961 pair-station cells, 47 pairs x 63 interior
+  stations:
+    bow           cells intersecting        cells under the 1.5 mm floor
+    none          0, on 0 pairs             104, on 23 pairs
+    crossRow      4, on 2 pairs             124, on 23 pairs
+    radial        32, on 6 pairs             98, on 23 pairs
+  Intersections are pinpoint, so individual markers work; under-floor is half
+  the pairs at once, so it needs paint. Note also that EVERY defect on this
+  horn sits inside station 10 of 64 — the first fifteen percent of the path,
+  at the small end — which is why "frame the worst contact" exists and why it
+  had to add a PAN: the projection is centred on the horn's own centroid, so
+  zooming alone walks the region of interest off the canvas. The pan is closed
+  form, since the projection is linear.
+  **WHAT IT COSTS: NOTHING IN COMPUTE.** The values were already found and
+  thrown away at the last step — measured 3.3 s with both against 3.5 s
+  without, i.e. inside the noise. Both are opt-in anyway, because the
+  separation solver calls `ductClearance` once per round and does not want the
+  allocation.
+  **AND THE PAINT COMES FROM THE MEASURED ROWS, not the preview map.** The
+  clearance builds its own map at the EXPORT station count, so `vertexGap` is
+  indexed by those stations; the effect keeps the rows and the viewport builds
+  from them. Resampling onto the 24-station preview was the alternative and is
+  not viable — every defect is inside station 10 of 64, which is four preview
+  rings, so the picture would be coarse exactly where it must be exact.
+  **WHAT IT STILL CANNOT SHOW**, and the map is the display for it if it ever
+  matters: that four corner pairs fail TOGETHER at the same stations, which is
+  the signature that identified the bow direction as the cause. A 3-D view
+  shows where each defect is and is poor at showing that they rhyme.
+
 - **THE CLEARANCE AROUND A CELL IS NOT ISOTROPIC, AND THE RADIAL BOW SPENDS
   THE SCARCE HALF OF IT. `dir: "crossRow"` is the fix, it is the new default,
   and it is FREE on every acoustic quantity the tool reports.** A throat cell
