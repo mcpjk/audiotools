@@ -4885,10 +4885,20 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
 // being the mitre's own nonlinearity — so the crossing is a threshold on t
 // and nothing else, bisected at t = 0.4957 mm on this geometry. The shipped
 // default 0.4 clears it by 19% of a sample step; the owner's 0.5 crosses it.
-// EVERY reversal is at station 0: the taper makes the inset largest at the
-// throat and the sections are smallest there, so the throat ring is where the
-// offset is largest against its own sampling. The straight run does not enter
-// it (identical at divergeLen 0 and 5, because station 0 is before the fan).
+// THE REVERSALS START AT STATION 0 AND SPREAD DOWN THE PATH WITH t, which is
+// why `stationMax` is reported and not just where the worst shrink is. The
+// inset tapers as t/2 x (1 - s) while the sections GROW with s, so the ratio
+// of offset to sampling falls monotonically along the path and the reversals
+// occupy a contiguous run from the throat. Measured at 64 stations, count by
+// station:
+//   t 0.5   8 reversals, station 0 only
+//   t 0.6  32, stations 0-1     (24, 8)
+//   t 0.8 164, stations 0-4     (52, 52, 36, 20, 4)
+//   t 1.0 360, stations 0-7     (72, 72, 68, 52, 52, 32, 8, 4)
+// So the throat ring is the first to go and the only one to go until about
+// t = 0.55; past that the clamping reaches into the horn. The straight run
+// does not enter it (identical at divergeLen 0 and 5, because station 0 is
+// before the fan).
 //
 // WHAT MOVES THE THRESHOLD IS THE CELL SIZE, and more cells is worse.
 // Measured at t = 0.5, changing one thing at a time from the geometry above:
@@ -4906,8 +4916,9 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
 // 16 samples per side. So REFINING the ring makes the overrun worse, not
 // better, and the fix is never more points.
 export function insetOverrun(throat, map, { t = 0 } = {}) {
-  if (!map || !t) return { shrinkMax: 0, reversed: 0, cells: [], at: null, backMax: 0 };
-  let shrinkMax = 0, reversed = 0, backMax = 0, at = null;
+  if (!map || !t) return { shrinkMax: 0, reversed: 0, cells: [], at: null, backMax: 0, stationMax: null, stations: 0 };
+  let shrinkMax = 0, reversed = 0, backMax = 0, at = null, stationMax = null;
+  const hitStations = new Set();
   const cells = [];
   for (const cellRec of throat.cells) {
     const row = map.rows.find((r) => r.id === cellRec.id);
@@ -4932,12 +4943,17 @@ export function insetOverrun(throat, map, { t = 0 } = {}) {
         const along = (o[0] * s[0] + o[1] * s[1] + o[2] * s[2]) / L;
         const shrink = 1 - along / L;
         if (shrink > shrinkMax) { shrinkMax = shrink; at = { label: cellRec.label, station: q, index: k }; }
-        if (shrink > 1) { reversed++; bad++; backMax = Math.max(backMax, -along); }
+        if (shrink > 1) {
+          reversed++; bad++;
+          backMax = Math.max(backMax, -along);
+          hitStations.add(q);
+          if (stationMax === null || q > stationMax) stationMax = q;
+        }
       }
     }
     if (bad) cells.push(cellRec.label);
   }
-  return { shrinkMax, reversed, cells, at, backMax };
+  return { shrinkMax, reversed, cells, at, backMax, stationMax, stations: hitStations.size };
 }
 
 // ── THE APERTURE AS A SURFACE THE SHELL CAN BE SNAPPED TO ──────────────────

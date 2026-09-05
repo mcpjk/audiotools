@@ -435,8 +435,21 @@ exists.
   about a quantity the defect does not touch.
   **IT IS NOT ONE BAD CELL — IT IS THE WHOLE THROAT SITTING ON THE BOUNDARY.**
   The reversals come in the mirrored set 2,1 / 2,3 / 5,1 / 5,3, 8 segments,
-  every one at station 0 (the taper makes the inset largest at the throat and
-  the sections are smallest there). `insetOverrun` reports the margin as
+  every one at station 0 at THAT t — but that is a property of t = 0.5 and not
+  of the mechanism, and claiming it in general was an over-claim caught on the
+  measurement. The inset tapers as t/2 x (1 - s) while the sections GROW with
+  s, so the offset-to-sampling ratio falls monotonically along the path and
+  the reversals occupy a CONTIGUOUS RUN from the throat that lengthens with t.
+  Measured at 64 stations, count by station:
+    t 0.5     8 reversals, station 0 only
+    t 0.6    32, stations 0-1     (24, 8)
+    t 0.8   164, stations 0-4     (52, 52, 36, 20, 4)
+    t 1.0   360, stations 0-7     (72, 72, 68, 52, 52, 32, 8, 4)
+  So the throat ring is the first to go and the only one to go until about
+  t = 0.55; past that the clamping reaches into the horn. `stationMax` is
+  reported for exactly this reason — the first version of the check read where
+  the WORST shrink was, which is always station 0, and so passed while
+  claiming more than it tested. `insetOverrun` reports the margin as
   `shrink` — how much of a sample step the offset closes, so 1 is exactly the
   boundary and above 1 is a reversal. Measured on that geometry:
     t (mm)      0.4     0.45    0.5     0.55    0.6     0.8     1.0
