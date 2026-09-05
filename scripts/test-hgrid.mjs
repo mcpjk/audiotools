@@ -3005,6 +3005,201 @@ head("Duct separation (field and solver)");
     `defect ${nb.gapBefore.toFixed(2)} -> ${nb.gapAfter.toFixed(2)} mm, ${cb.joint.engaged}/${cb.joint.pairs} joints`);
 }
 
+head("Inset overrun (the mitre swallowing its own samples)");
+{
+  // WHAT THIS SECTION IS FOR. The owner reported a shell blank in an exported
+  // kit that was broken "in some way": in the file, blank 2,1's throat ring
+  // reached 2574 mm from an axis a 500 mm horn never leaves.
+  // The cause is two steps and the second one amplifies the first without
+  // bound.
+  //   1. The divider inset mitres each corner. The mitre sits d/sin(th/2)
+  //      from the vertex, so it reaches d/tan(th/2) BACK along each side.
+  //      When that reach exceeds the spacing of the 16 samples on that side,
+  //      the neighbouring sample's own offset lands in FRONT of the corner's
+  //      and the ring runs backwards through it — measured 2 um of reversal.
+  //   2. The shell blank then offsets that ring OUTWARD by the wall. A
+  //      reversed segment is a spike whose tip angle is nearly 180 deg, and
+  //      mitring a spike tip reaches wall/sin(half tip angle), which is
+  //      unbounded as the tip closes. 2 um in became 1.6 m out.
+  // Nothing in the file could see it: the solid still meshes closed, the
+  // faces still pair, the residual is still 2e-13, and the wall is still
+  // exactly `wall` from the passage everywhere the ring is not reversed.
+
+  // ── 1. THE CLOSED FORM, ON A WEDGE BUILT TO OVERRUN ──────────────────────
+  // A triangle sampled n per side has a known mitre reach at each corner, so
+  // whether it overruns is arithmetic rather than a measurement. Corner
+  // interior angle th, side length S, n samples per side: the reach is
+  // d/tan(th/2) and the spacing is S/n, so the overrun ratio is
+  // n*d/(S*tan(th/2)). The wedge below is 60-60-60 at S = 6, n = 8, d = 1:
+  // reach 1/tan(30) = 1.7321 against a spacing of 0.75, i.e. 2.31 sample
+  // steps swallowed at every corner.
+  const wedge = (S, n) => {
+    const c3 = [[0, 0], [S, 0], [S / 2, S * Math.sqrt(3) / 2]];
+    const out = [];
+    for (let s = 0; s < 3; s++) {
+      const A = c3[s], B = c3[(s + 1) % 3];
+      for (let i = 0; i < n; i++) out.push([A[0] + (B[0] - A[0]) * (i / n), A[1] + (B[1] - A[1]) * (i / n)]);
+    }
+    return out;
+  };
+  const revCount = (src, off) => {
+    const N = src.length;
+    let rev = 0;
+    for (let k = 0; k < N; k++) {
+      const j = (k + 1) % N;
+      const sx = src[j][0] - src[k][0], sy = src[j][1] - src[k][1];
+      const L = Math.hypot(sx, sy);
+      if (L < 1e-12) continue;
+      if (((off[j][0] - off[k][0]) * sx + (off[j][1] - off[k][1]) * sy) / L < 0) rev++;
+    }
+    return rev;
+  };
+  {
+    const S = 6, n4 = 8, d = 1;
+    const src = wedge(S, n4);
+    const reach = d / Math.tan(Math.PI / 6), step = S / n4;
+    check("wedge: mitre reach / sample spacing, closed form", reach / step, 2.3094, 1e-4, "steps");
+    const raw = M.insetPolygon(src, [d, d, d], { repair: false });
+    checkTrue("...so the UNREPAIRED offset runs backwards through them",
+      revCount(src, raw) > 0, `${revCount(src, raw)} of ${src.length} segments reversed`);
+    const fixed = M.insetPolygon(src, [d, d, d]);
+    check("...and the repaired offset reverses nowhere", revCount(src, fixed), 0, 0, "segments");
+    // The repair must not move the mitre itself: the inset triangle of a
+    // 60-60-60 triangle inset by d is the similar triangle with side
+    // S - 2*d*sqrt(3), so its area is a closed form and not the tool's own
+    // output. S = 6, d = 1 -> side 2.5359, area 2.7846 mm2.
+    const side = S - 2 * d * Math.sqrt(3);
+    check("...while the inset triangle keeps its closed-form area",
+      area2(fixed), side * side * Math.sqrt(3) / 4, 1e-9, "mm2");
+  }
+  {
+    // AND THE SECOND STEP, the one that turned microns into metres. A
+    // STRAIGHT-sided wedge cannot show it and it is worth saying why: its
+    // reversal is EXACTLY antiparallel, so the outward offset's denominator
+    // is exactly zero, the collinear branch fires and the point is merely
+    // displaced. The blow-up needs a reversal NEAR 180 deg and not at it,
+    // which is what a curved side gives — the real geometry below measures
+    // 179.78 deg and 1605 mm. What the wedge can assert is the bound on the
+    // repaired shape: inset by 1 then offset out by 3, every point stays
+    // inside the mitre of its sharpest corner, 3/sin(30) = 6 mm past a
+    // circumradius of 6/sqrt(3).
+    const src = wedge(6, 8);
+    const far = (poly) => Math.max(...poly.map((p) => Math.hypot(p[0] - 3, p[1] - Math.sqrt(3))));
+    const fixOut = M.insetPolygon(M.insetPolygon(src, [1, 1, 1]), [-3, -3, -3]);
+    checkTrue("the repaired shape re-offsets inside its own corner mitre",
+      far(fixOut) <= 3 / Math.sin(Math.PI / 6) + 6 / Math.sqrt(3) + 1e-9,
+      `${far(fixOut).toFixed(3)} mm, bound ${(3 / Math.sin(Math.PI / 6) + 6 / Math.sqrt(3)).toFixed(3)} mm`);
+    checkTrue("...and reverses nowhere itself",
+      revCount(M.insetPolygon(src, [1, 1, 1]), fixOut) === 0, "0 segments reversed");
+  }
+
+  // ── 2. THE REPAIR IS A NO-OP WHERE NOTHING OVERRUNS ──────────────────────
+  // The square exercised above cannot overrun (its mitre reach is d, well
+  // inside the run spacing), and neither can the shipped horn at t = 0.4.
+  // Both are asserted BIT-identical between the repaired and unrepaired
+  // paths, because "the fix changed nothing it should not have" is the only
+  // reason every figure recorded in CLAUDE.md still reproduces.
+  const t = 0.4, ST = 64;
+  const th = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c }).throat;
+  const dflt = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, stations: ST, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", keepGeometry: true, computeClearance: false,
+    lengthen: { lobes: 1, dir: "crossRow", uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 }, ...o,
+  });
+  const map = M.mapThroatToMouth(th, dflt());
+  {
+    let worst = 0;
+    for (const cell of th.cells) {
+      const row = map.rows.find((r) => r.id === cell.id);
+      const rim = cell.rimSide || [false, false, false, false];
+      for (const st of row.sched) {
+        const d = rim.map((isRim) => (isRim ? 0 : (t / 2) * (1 - st.s)));
+        if (!d.some((v) => v > 0)) continue;
+        const a = M.insetSection3(st.pts, d), b = M.insetSection3(st.pts, d, { repair: false });
+        for (let k = 0; k < a.length; k++)
+          worst = Math.max(worst, Math.hypot(a[k][0] - b[k][0], a[k][1] - b[k][1], a[k][2] - b[k][2]));
+      }
+    }
+    check("shipped horn, t = 0.4: repaired and raw insets are identical", worst, 0, 0, "mm");
+  }
+  const o40 = M.insetOverrun(th, map, { t });
+  checkTrue("...because nothing overruns there", o40.reversed === 0,
+    `worst shrink ${o40.shrinkMax.toFixed(3)} of a sample step, 0 reversed`);
+
+  // ── 3. THE METRIC IS THE MECHANISM, NOT A PROXY ──────────────────────────
+  // shrink = 1 - (offset segment . unit source direction) / |source segment|,
+  // so shrink = 1 is EXACTLY the offset closing a sample spacing to nothing
+  // and shrink > 1 is exactly a reversal. The two therefore have to appear
+  // together at every divider thickness, which is what makes the number a
+  // threshold rather than a correlate.
+  {
+    const rows = [];
+    for (const tt of [0.4, 0.45, 0.5, 0.6, 0.8]) {
+      const thh = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t: tt, c }).throat;
+      const mm = M.mapThroatToMouth(thh, dflt({ t: tt }));
+      rows.push([tt, M.insetOverrun(thh, mm, { t: tt })]);
+    }
+    checkTrue("shrink > 1 and a reversal appear together at every t",
+      rows.every(([, o]) => (o.shrinkMax > 1) === (o.reversed > 0)),
+      rows.map(([tt, o]) => `t${tt}:${o.shrinkMax.toFixed(2)}/${o.reversed}`).join(" "));
+    checkTrue("...and it is very nearly proportional to the divider",
+      rows.every(([tt, o]) => Math.abs(o.shrinkMax / tt - 2.02) < 0.05),
+      rows.map(([tt, o]) => (o.shrinkMax / tt).toFixed(3)).join(" "));
+    checkTrue("every reversal is at station 0, where the inset is largest",
+      rows.every(([, o]) => o.reversed === 0 || o.at.station === 0),
+      rows.filter(([, o]) => o.reversed).map(([tt, o]) => `t${tt} at station ${o.at.station}`).join(" ") || "none");
+  }
+
+  // ── 4. THE REPORTED GEOMETRY, END TO END ─────────────────────────────────
+  // The kit the owner sent back: 6x3, m 3, R 17.75, t 0.5, arcs 500x245,
+  // depth 321, T 0.7, divergeLen 1, crossRow 1-lobe bow over [0.02, 0.22] at
+  // grade 0.20, wall 3, 32 shell stations. Cell 2,1 is the blank in the file.
+  {
+    const t5 = 0.5, wall = 3;
+    const th5 = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t: t5, c }).throat;
+    const m5 = M.mapThroatToMouth(th5, dflt({ t: t5, depth: 321, divergeLen: 1 }));
+    const o5 = M.insetOverrun(th5, m5, { t: t5 });
+    checkTrue("the reported kit's divider DOES overrun, on four cells",
+      o5.reversed === 8 && o5.cells.join(" ") === "2,1 2,3 5,1 5,3",
+      `${o5.reversed} segments on ${o5.cells.join(" ")}, shrink ${o5.shrinkMax.toFixed(3)}`);
+    // the mirrored set is the giveaway that it is the GEOMETRY at its
+    // boundary and not one bad cell
+    checkTrue("...as a mirrored set, so it is the boundary and not one cell",
+      o5.cells.length === 4, o5.cells.join(" "));
+    // The blank the file carries, rebuilt: unrepaired it leaves the horn.
+    const far = (secs) => Math.max(...secs.flatMap((s) => s.pts.map((p) => Math.hypot(p[0], p[1]))));
+    const cell = th5.cells.find((x) => x.label === "2,1");
+    const row = m5.rows.find((r) => r.id === cell.id);
+    const duct = M.ductSections(cell, row, { t: t5 });
+    const blank = M.shellSections(cell, row, { t: t5, wall, surf: m5.mouthSurf, stations: 32, snapMouth: false });
+    checkTrue("blank 2,1 now stays within a wall of its own duct",
+      far(blank) - far(duct) < 2 * wall,
+      `blank ${far(blank).toFixed(2)} mm against duct ${far(duct).toFixed(2)} mm`);
+    // and the unrepaired path is what the file has: reproduce it so the
+    // assertion above is not measuring a defect that was never there
+    let rawFar = 0;
+    for (let q = 0; q < duct.length; q++) {
+      const st = row.sched[q];
+      const rim = cell.rimSide;
+      const d = rim.map((isRim) => (isRim ? 0 : (t5 / 2) * (1 - st.s)));
+      const inRaw = d.some((v) => v > 0) ? M.insetSection3(st.pts, d, { repair: false }) : st.pts;
+      const outRaw = M.insetSection3(inRaw, [-wall, -wall, -wall, -wall], { repair: false });
+      for (const p of outRaw) rawFar = Math.max(rawFar, Math.hypot(p[0], p[1]));
+    }
+    checkTrue("...where the unrepaired construction put it a metre out",
+      rawFar > 1000, `${rawFar.toFixed(0)} mm from the axis`);
+    // MIRRORS: the repair is built from the source lines alone, so it is
+    // mirror-covariant, and this is the horn where it actually fires.
+    const mir = M.mirrorSymmetry(th5, m5, { t: t5 });
+    checkTrue("the repair keeps both mirrors on the horn where it fires",
+      mir.x.worst < 1e-6 && mir.y.worst < 1e-6 && mir.x.paired === th5.cells.length,
+      `x ${mir.x.worst.toExponential(2)} mm, y ${mir.y.worst.toExponential(2)} mm, ${mir.x.paired} pairs`);
+  }
+}
+
 head("Horn shell export (blanks + cutters)");
 {
   // ── the offset closed forms first ─────────────────────────────────────────

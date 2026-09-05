@@ -13,6 +13,55 @@ happens otherwise: a construction chosen for construction reasons satisfied
 every number the tool reported while the passage the wave crosses contracted
 27% below its own throat.
 
+## Shipped 2026-09-05 — the mitre that swallowed its own samples
+
+Owner's report: "shell blank 2,1 in this file is broken in some way", with a
+render of thin needles fanning out of the throat. Reproduced from the file's
+own settings stamp, and it is a real defect with an unbounded amplification.
+
+- **The divider inset can run BACKWARDS through its own ring samples.** The
+  mitre at a corner of interior angle th reaches `d/tan(th/2)` back along each
+  side; once that passes the spacing of the 16 samples on that side, the
+  neighbour's offset lands in front of the corner's and the outline reverses.
+  On the reported kit that was **2 um of reversal on 4 of 18 cells**, all at
+  station 0.
+- **The shell blank then amplifies it without bound.** A reversed segment is a
+  spike with a tip angle of nearly 180 deg, and offsetting a spike outward by
+  `wall` mitres its tip at `wall/sin(half tip angle)`. 2 um in, **1.6 m out**:
+  blank 2,1's throat ring in the shipped file reaches **2574 mm** from the
+  axis of a 500 mm horn. Nothing in the tool could see it — the solid still
+  meshes closed, the faces still pair, the residual is still 2e-13.
+- **`insetPolygon` now drops the redundant line instead.** Both endpoints of a
+  reversed segment lie on that segment's own offset line, and the reversal
+  means the line carries no boundary between them, so the boundary is its two
+  neighbours' intersection and both points go there. That keeps the mitre
+  exactly: an equilateral triangle whose every corner swallows 2.31 samples
+  comes back with the closed-form inset area to 1e-9.
+- **It is a no-op where nothing overruns**, asserted bit-identical at the
+  shipped t = 0.4 — so every figure in CLAUDE.md still reproduces.
+- **`insetOverrun` reports the margin**, in the warning strip and in the shell
+  export note, as `shrink` = how much of a sample step the offset closes.
+  1 is the failure boundary. It is **very nearly proportional to t** (2.02 per
+  mm on the shipped 6x3), so the crossing is a threshold on the divider and
+  nothing else: **t = 0.496 mm here**, and the reported kit used 0.5.
+- **The settings stamp now carries `regionGrade`.** It was the one shipped
+  slider missing from it, and reproducing this report meant assuming its
+  default.
+
+**The number worth acting on**: the shipped default t = 0.4 sits at **0.81 of
+a sample step**, i.e. 19% of margin, and the bound TIGHTENS as the partition
+gets finer — 6x3 -> 6x4 takes shrink 1.01 -> 1.16 at t = 0.5, and 6x3 -> 8x3
+takes it to 1.31. So the divider is bounded by the throat CELL, not by
+anything acoustic, and a finer grid spends that bound. **Refining the ring
+makes it worse, not better**: the mitre's reach is fixed by the corner and the
+divider while the spacing it is measured against is the side's arc over 16.
+
+**What is NOT resolved**: the repair keeps the solids sound but a swallowed
+corner is a CLAMPED corner, not the corner that was asked for. Above about
+t = 0.5 on this geometry the throat outline is being represented with fewer
+distinct vertices than it has samples. If large dividers ever matter, the
+fix is more room (a bigger exit or a coarser grid), never more ring points.
+
 ## Shipped 2026-09-04 — a trimming pass, and one measurement that mattered
 
 Owner's edits. Every number is a CLAUDE.md finding.
