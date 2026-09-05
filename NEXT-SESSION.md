@@ -98,9 +98,37 @@ Nothing here is a task.
 
 **One thing repulsion deliberately did not do, still open**: the field is one
 vector per cell times one window, so it can SLIDE a duct but not re-route it.
-A per-STATION field is the next step and is a bigger build — the amplitude
-becomes a profile, the windowing stops being a window, and the mirror and
-end-pinning guarantees have to be re-established per station.
+A per-STATION field is the next step and is a bigger build — see queue item 0.
+
+## Shipped 2026-09-04 (second pass) — duct separation
+
+Two of the three findings from the separation exploration. The third is
+queue item 0.
+
+- **`dir: "crossRow"` is the new default bow direction.** The clearance around
+  a cell is not isotropic — the row gap opens about 5x slower than the column
+  gap — and the radial field spends the scarce half. Bowing square to the
+  cell's own row instead takes the worst gap from **−2.61 mm to +0.28 mm**
+  with ΔL, bow amplitude, fold margin, obliquity, wall spread and passage
+  contraction **identical to 1e-9**, because direction cannot change the
+  length a bow adds. `radial` is kept and is still the better field on a
+  vertically curved mouth.
+- **`compare: "solid"` is the honest clearance, and the UI now uses it.** A
+  station is a fraction of each duct's OWN arc length, so ring q of one duct
+  and ring q of its neighbour are at the same phase of travel and not at the
+  same place. Measured on the shipped bow, the middle-row pair (3,1)-(4,1)
+  reads **+0.49 mm of wall by station and −0.43 mm of real interpenetration
+  by solid**, the latter confirmed to 7 µm by an independent ray cast into the
+  exported triangles. The model default stays `"station"` so every recorded
+  figure reproduces.
+- **The separation solve re-reads its answer.** Its inner loop still scores by
+  station (a solid read costs ~3x and runs once per round), but the returned
+  state is re-measured as a solid against the input measured the same way, and
+  a field that does not improve the honest number is **not applied**.
+
+**The number to know**: with `crossRow` on, the shipped horn's worst gap is
+**−0.43 mm**, not the +0.28 the station read shows, and it is in the MIDDLE
+ROW rather than at the corners. That is what queue item 0 has to fix.
 
 ## Explored and REJECTED, so it is not re-proposed
 
@@ -120,6 +148,68 @@ end-pinning guarantees have to be re-established per station.
 ## The queue
 
 In priority order. Each rests on a measurement, named.
+
+### 0. THE PER-STATION SEPARATION FIELD
+
+**The measurement it rests on**: the field is one vector per cell times one
+sin² window, so a duct can be slid bodily but not re-routed. The contact sits
+near u = 0.05 and the window's peak near u = 0.16, so at the contact the
+window delivers about **a tenth** of the amplitude. Winning 3 mm of clearance
+where the ducts touch therefore costs nearly **30 mm** of excursion at
+mid-path — and that excursion is what creates the next contact and eats the
+fold margin. Measured: the chain reached a positive gap only by displacing the
+four corner cells **27 mm** at a cost of **14.3 mm of ΔL**; repulsion
+oscillated between −2.8 and −9.7 mm and never beat doing nothing, even with
+the length budget lifted. **This is not a tuning failure, it is the
+parameterisation**, which is why no amount of ridge or relaxation work has
+moved it.
+
+**The shape of the build** — a bead chain per centreline, one bead per
+station, three constraints projected in turn until they settle:
+
+1. **Contact.** Where a bead's duct is within the floor of a neighbour, push
+   both apart along the line of nearest approach, AT THE CONTACT rather than
+   at a window peak. This is the owner's "solids push each other out of the
+   way", and the floor is the field radius. **Ramp it**: half the divider
+   thickness at the throat, where the cells genuinely share a wall, rising to
+   the target wall once the expansion has opened room. **On PATH LENGTH from
+   the throat**, because the profile that opens the room is itself written on
+   path length; in the first fifth, where the ramp lives, the ducts are still
+   nearly axial so the candidates barely differ.
+2. **Length.** Beads keep their spacing and the chain keeps its total, pinned
+   at the throat centroid and the mouth cell centre. This is the owner's rope,
+   and it replaces the present two-pass arrangement where separation moves the
+   path and a second solve re-bows it. It also removes the stale-target
+   finding at source rather than by budget.
+3. **Curvature.** Resist direction change between consecutive segments. This
+   is the restoring force the owner asked about, **and it is the acoustic
+   term, not a smoothness preference**: bend radius against duct half-width IS
+   the fold condition, and bend angle times passage width IS the wall-spread
+   phase error judged against λ/8. Without it a contact-only solve puts a
+   sharp kink exactly at the contact, which is the cheapest way to satisfy the
+   constraint and the worst thing for the wave. It is also what keeps the
+   chain smooth enough to LOFT — see the evaluated-vs-searched rings finding,
+   which is the reason this term is load-bearing for the export.
+
+**Score it on `compare: "solid"`**, which is why that landed first. A solver
+scored on the station read will report success while leaving the middle-row
+defect it cannot see.
+
+**Two limits to design around, both measured.** The field's resolution is the
+station count, and the trouble sits at stations 1–3 of 64, so it must solve at
+export resolution and not on the preview. And feasibility is not guaranteed —
+far from the ΔL optimum there is genuinely no room, and it must say so rather
+than thrash, which the existing best-state and budget discipline already does.
+
+**Prior art worth reading before writing it** (stated from memory, not checked
+against the papers): Position-Based Dynamics and XPBD are literally the three
+constraints above; Discrete Elastic Rods adds the bending energy; Repulsive
+Curves (Yu, Schumacher, Crane) is the closest published match — a tangent-point
+energy over all point pairs, parameterisation-independent, with length and
+endpoint constraints — its weakness here being variable tube radius, which
+this horn has (4.6 to 30 mm along the path). Gonzalez and Maddocks' global
+radius of curvature is the metric worth stealing: it reads local bending and
+mutual approach in one parameter-free number.
 
 ### DEPTH 300 IS SETTLED — do not re-propose the move
 

@@ -919,10 +919,100 @@ export function mapThroatToMouth(throat, opts) {
     // needs a direction that works on a cell sitting ON the axis, where no
     // outward ray exists.
     const AXES = { x: v3(1, 0, 0), "-x": v3(-1, 0, 0), y: v3(0, 1, 0), "-y": v3(0, -1, 0) };
+    // ── THE ROW AXIS, MEASURED FROM THE CELLS THEMSELVES ───────────────────
+    // The row's axis, taken END TO END across the whole row rather than from
+    // a cell's immediate neighbours. Derived from the layout rather than
+    // assumed from the world axes, so it follows a rotated or irregular grid;
+    // taken as a LINE, since only the perpendicular is wanted, so mirrored
+    // cells get exactly mirrored answers.
+    // END TO END IS THE POINT, and the local difference is measurably worse.
+    // The cells tile a DISC, so a row's centroids do not lie on a straight
+    // line: the neighbour-to-neighbour direction at a rim cell is tilted by
+    // the disc, and a perpendicular taken from it keeps part of the row
+    // component the field exists to remove — measured -1.46 mm of worst gap
+    // against -0.00 mm for the column line and +0.28 mm for the end-to-end
+    // axis, on the same horn. End to end, the two outermost centroids of a
+    // row are mirror images of one another on any layout with a vertical
+    // mirror, so the axis lands exactly on the row's own direction.
+    const rowAxis = new Map();
+    {
+      const byRow = new Map();
+      for (const cc of throat.cells) {
+        if (!byRow.has(cc.j)) byRow.set(cc.j, []);
+        byRow.get(cc.j).push(cc);
+      }
+      for (const [j, list] of byRow) {
+        list.sort((a, b) => a.i - b.i);
+        const a = list[0].centroid, b = list[list.length - 1].centroid;
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        const n = Math.hypot(dx, dy);
+        rowAxis.set(j, n > 1e-9 ? v3(dx / n, dy / n, 0) : null);
+      }
+    }
     const dirFor = (pts, cellRec) => {
       if (AXES[dir]) return AXES[dir];
       const out = outward(pts);
       if (!out || dir === "radial") return out;
+      // ── "crossRow": SPEND THE CLEARANCE THE HORN ACTUALLY HAS ──────────────
+      // THE CLEARANCE AROUND A CELL IS NOT ISOTROPIC, and the radial field
+      // spends the scarce half of it. A throat cell is tall and narrow — at
+      // the tool's defaults about 6 mm across the row against 11 mm across
+      // the column — and the expansion profile opens a gap in proportion to
+      // the section's extent along the line joining two neighbours, so the
+      // row gap opens far more slowly than the column gap. Measured on the
+      // unbowed default horn, tightest pair of each kind, signed gap in mm:
+      //   station        0      4      8     12     16
+      //   row pairs    0.40   0.54   1.21   2.25   3.60
+      //   column pairs 0.40   0.91   5.91   9.45  13.31
+      // The ratio at station 8 is about 5x. The aspect argument above
+      // predicts about 2x on its own, so the centreline fan contributes as
+      // well and the two have NOT been decomposed — the ratio is measured,
+      // the direction of the effect is understood.
+      // WHAT GOES WRONG WITHOUT IT: the outward ray of an OUTER-ROW cell
+      // points diagonally, so part of its bow is spent along the row —
+      // straight at a corner cell, which is the longest cell in the horn and
+      // therefore carries no bow of its own. Nobody moves out of the way.
+      // Measured at the shipped defaults that is the whole of the -2.61 mm
+      // worst gap, on the four pairs (0,0)-(1,0), (4,0)-(5,0), (0,2)-(1,2)
+      // and (4,2)-(5,2), and it is why those four and no others are the
+      // deficient ones.
+      // This field bows SQUARE TO THE CELL'S OWN ROW instead, oriented
+      // outward, so the whole displacement goes into the column gap and none
+      // of it along the row. A cell whose outward ray is itself square to
+      // that direction — the centre row, which straddles the axis — has no
+      // outward sense to pick and falls back to the radial field, which is
+      // where the region grade does its work.
+      // WHICH LINE THE PERPENDICULAR IS TAKEN FROM MATTERS, and the three
+      // candidates measured 1.7 mm apart on the same horn — see the row-axis
+      // note above for why end to end is the one that lands on the row.
+      // WHY IT IS ALLOWED TO BE CHOSEN ON A PACKING ARGUMENT AT ALL, given
+      // the standing priority at the top of CLAUDE.md: the bow exists to add
+      // PATH LENGTH, and the length it adds depends on the amplitude and the
+      // window span, never on the direction. Measured across the change at
+      // the shipped defaults, ONLY the clearance moves:
+      //   dL 0.000 both, bow ampMax 21.75 both, bendFoldMin 1.10 both,
+      //   sectionObliqMax 24.39 both, wallSpreadMax 14.44 both,
+      //   fluxContractMax 0.00% both, worst gap -2.61 -> +0.28 mm.
+      // Both options were measured against the acoustic quantities and came
+      // back equal, so the wave cannot tell them apart and only the
+      // neighbours can. That is the test a construction has to pass before a
+      // geometric argument is permitted to settle it.
+      // IT IS NOT UNCONDITIONALLY BETTER. On a vertically CURVED mouth the
+      // length deficit spreads over the outer ring instead of sitting in one
+      // row, and the column gaps are not as generous — the recorded finding
+      // that direction cost is geometry-dependent and must be READ still
+      // stands. This is a third member of that family, not a replacement for
+      // the choice.
+      if (dir === "crossRow") {
+        const rl = rowAxis.get(cellRec.j);
+        if (!rl) return out;
+        const cl = v3(-rl[1], rl[0], 0);      // square to the row, in plane
+        const sg = dot3(cl, out);
+        // square to the outward ray: no outward sense of its own, and any
+        // choice would break one of the two mirrors
+        if (Math.abs(sg) < 1e-9) return out;
+        return sg >= 0 ? cl : m3(cl, -1);
+      }
       // "short": the throat section's short axis as a LINE, then oriented
       // outward so the field stays mirror-covariant. iDir is the cell's own
       // u direction and sideLen 0/2 are its extent along it, so the short
@@ -2086,6 +2176,43 @@ export function mapThroatToMouth(throat, opts) {
 export function ductClearance(rows, {
   jointAware = false, thinBand = 0, throatFloor = 0,
   outline = "gross", t = 0, floor = 0,
+  // ── WHICH TWO CURVES ARE COMPARED, AND IT IS TWO DIFFERENT QUESTIONS ─────
+  // "station" pairs ring q of one duct with ring q of the other. A station is
+  // a fraction of each duct's OWN arc length, so those two rings are at the
+  // same phase of travel and NOT at the same place: measured on the shipped
+  // horn, same-index rings of a neighbouring pair sit up to 40 mm apart
+  // axially. That is a WAVEFRONT question — at equal phase, how close are
+  // these two air columns — and it is the right one when every path is the
+  // same length and the ducts run roughly parallel.
+  // "solid" asks the question CAD asks: is there material everywhere between
+  // these two bodies, and how thin is the thinnest place. Nearest approach
+  // between two surfaces has nothing to do with phase, and the two answers
+  // separate as soon as the ducts stop running parallel — which is exactly
+  // the bow region, and which the REGION GRADE makes worse by design, since
+  // it gives adjacent cells windows of different width and so puts them at
+  // different points of their own turn at equal fractions of travel.
+  // Measured on the shipped default horn, middle-row pair (3,1)-(4,1), whose
+  // two windows differ in span by a fifth:
+  //   same-station rings            +0.49 mm of wall, reported at station 1
+  //   solid                         -0.43 mm, between stations 7 and 9
+  //   ray cast into the exported triangles
+  //                                 34 wall points inside the neighbour,
+  //                                 deepest 0.423 mm
+  // The third knows nothing about stations — it asks whether a point of one
+  // duct's wall lies inside the other's closed mesh — and it agrees with the
+  // second to 7 um, which is a mutual check rather than a tautology, since
+  // the two share no code. So the tool was reporting a horn as clear while a
+  // CAD subtraction would find the passages overlapping.
+  // THE DEFAULT STAYS "station" so every figure recorded in CLAUDE.md still
+  // reproduces; the UI and the separation solver ask for "solid", exactly as
+  // they already ask for the inset outline.
+  // WHAT BOTH MEASURE is the FACETTED duct — rings joined by straight runs,
+  // the same solid the STL writes. The STEP's B-spline lofts through those
+  // rings and departs from the facets by the loft's own sagitta, order
+  // 0.1 mm at the default station step on a duct bending at tens of mm of
+  // radius. That is the same approximation the recorded ring-refinement
+  // figures already carry, and it is not removed by either method here.
+  compare = "station",
   // WHICH PAIRS COUNT AS NEIGHBOURS. The default is the orthogonal grid
   // adjacency this metric has always used, and every recorded number is on
   // it. `[[1,0],[0,1],[1,1],[1,-1]]` adds the diagonals, which the shell
@@ -2146,7 +2273,7 @@ export function ductClearance(rows, {
     // the bounding sphere is outside the ring, always.
     let maxR = 0;
     for (const P of ring) maxR = Math.max(maxR, Math.hypot(P[0] - cx, P[1] - cy, P[2] - cz));
-    return { poly: ring.map(to2), to2, ctr, maxR };
+    return { poly: ring.map(to2), to2, ctr, maxR, N };
   };
   const inside2 = (p, poly) => {
     let win = false;
@@ -2187,15 +2314,73 @@ export function ductClearance(rows, {
     const d = rim.map((isRim) => (isRim ? 0 : (t / 2) * taper));
     return d.some((v) => v > 0) ? insetSection3(st.pts, d) : st.pts;
   };
+  // every ring and every ring frame, once. "solid" needs the whole of one
+  // duct available while walking the other, so the station loop can no
+  // longer build rings as it goes.
+  const ringOf = new Map(), frameOf = new Map();
+  for (const r of rows) {
+    const rr = [], ff = [];
+    for (let q = 0; q <= stations; q++) { const g = ringAt(r, q); rr.push(g); ff.push(frame(g)); }
+    ringOf.set(r.id, rr); frameOf.set(r.id, ff);
+  }
+  // ── THE SOLID READ ──────────────────────────────────────────────────────
+  // For each sampled point of `from`, find where it sits along the OTHER
+  // duct — the station interval whose two section planes it lies between —
+  // interpolate that duct's ring there, and measure against it. No point
+  // correspondence between the two ducts is assumed, and no station index is
+  // shared, so a pair whose nearest approach is between stations of one duct
+  // and a quarter of the path along the other is still read correctly.
+  // The bracket is the crossing NEAREST the paired station. A duct that
+  // turns far enough can put a point between the same two planes twice, and
+  // the crossing beside the paired station is the one that belongs to this
+  // stretch of the path rather than to a fold further along.
+  const solidGap = (from, toRings, toFrames, seed) => {
+    let worst = Infinity;
+    const h = new Array(stations + 1);
+    for (let k = 0; k < from.length; k += 2) {
+      const P = from[k];
+      for (let q = 0; q <= stations; q++) {
+        const f = toFrames[q];
+        h[q] = (P[0] - f.ctr[0]) * f.N[0] + (P[1] - f.ctr[1]) * f.N[1] + (P[2] - f.ctr[2]) * f.N[2];
+      }
+      let q0 = -1, near = Infinity;
+      for (let q = 0; q < stations; q++) {
+        if (!((h[q] >= 0 && h[q + 1] < 0) || (h[q] <= 0 && h[q + 1] > 0))) continue;
+        const d = Math.abs(q - seed);
+        if (d < near) { near = d; q0 = q; }
+      }
+      // no crossing at all: the point is not opposite this duct's body, so
+      // it has no wall to measure and must not be scored as clear either
+      if (q0 < 0) continue;
+      const ra = toRings[q0], rb = toRings[q0 + 1];
+      const hd = h[q0] - h[q0 + 1];
+      const f = Math.abs(hd) > 1e-12 ? h[q0] / hd : 0;
+      const ring = new Array(ra.length);
+      for (let e = 0; e < ra.length; e++)
+        ring[e] = [ra[e][0] + (rb[e][0] - ra[e][0]) * f,
+                   ra[e][1] + (rb[e][1] - ra[e][1]) * f,
+                   ra[e][2] + (rb[e][2] - ra[e][2]) * f];
+      const fr = frame(ring);
+      let d = Infinity;
+      for (let e = 0; e < ring.length; e++)
+        d = Math.min(d, pSeg(P, ring[e], ring[(e + 1) % ring.length]));
+      const inR = Math.hypot(P[0] - fr.ctr[0], P[1] - fr.ctr[1], P[2] - fr.ctr[2]) <= fr.maxR;
+      const sd = inR && inside2(fr.to2(P), fr.poly) ? -d : d;
+      if (sd < worst) worst = sd;
+    }
+    return worst;
+  };
   const gaps = pairs.map(() => new Array(stations + 1).fill(Infinity));
   for (let q = 0; q <= stations; q++) {
-    const ring = new Map(rows.map((r) => [r.id, ringAt(r, q)]));
-    const fr = new Map(rows.map((r) => [r.id, frame(ring.get(r.id))]));
     for (let pi = 0; pi < pairs.length; pi++) {
       const [A, B] = pairs[pi];
-      const pa = ring.get(A.id), pb = ring.get(B.id);
+      const pa = ringOf.get(A.id)[q], pb = ringOf.get(B.id)[q];
       // both directions: either duct can be the one poking into the other
-      gaps[pi][q] = Math.min(signedGap(pa, pb, fr.get(B.id)), signedGap(pb, pa, fr.get(A.id)));
+      gaps[pi][q] = compare === "solid"
+        ? Math.min(solidGap(pa, ringOf.get(B.id), frameOf.get(B.id), q),
+                   solidGap(pb, ringOf.get(A.id), frameOf.get(A.id), q))
+        : Math.min(signedGap(pa, pb, frameOf.get(B.id)[q]),
+                   signedGap(pb, pa, frameOf.get(A.id)[q]));
     }
   }
   // each pair's joint run: walk back from the mouth while in contact. With
@@ -2443,7 +2628,59 @@ export function ductClearance(rows, {
   };
 }
 
+// ── THE HONEST RE-READ ──────────────────────────────────────────────────────
+// The solve's inner loop measures with `compare` — "station" by default,
+// because a solid read costs about 3x and the loop runs it once per round.
+// That is a WAVEFRONT metric, and a field it likes can still drive one duct
+// into a neighbour it never looked at: measured on the shipped defaults, the
+// station read calls the crossRow bow +0.28 mm clear while the solid read
+// finds -0.43 mm of real interpenetration in the middle row.
+// So when the caller asks for "solid", the state the solve wants to return is
+// RE-MEASURED that way against the input measured the same way, and a field
+// that does not improve the honest number is not applied. This is the rule
+// the chain mode already learned — a solver that cannot improve on its input
+// returns its input — restated on the metric that decides the export.
+// It costs two extra maps and two extra solid clearances, once per solve, and
+// it is skipped entirely at the default so every recorded figure reproduces.
 export function solveSeparation(throat, opts, cfg = {}) {
+  const r = solveSeparationCore(throat, opts, cfg);
+  if (cfg.compare !== "solid" || !r) return r;
+  const build = (separate) => mapThroatToMouth(throat, {
+    ...opts, separate, keepGeometry: true, computeClearance: false,
+  });
+  const floor = cfg.floor ?? 0.5;
+  const solidOf = (m) => {
+    if (!m || !m.rows.length || !m.rows[0].sched[0].pts) return null;
+    return ductClearance(m.rows, {
+      jointAware: !!m.bulge, throatFloor: floor, floor, compare: "solid",
+      pairSteps: cfg.diagonals === false
+        ? [[1, 0], [0, 1]] : [[1, 0], [0, 1], [1, 1], [1, -1]],
+      outline: cfg.outline ?? "gross", t: opts.t || 0,
+    }).minMid;
+  };
+  const before = solidOf(build(null));
+  if (before == null) return r;
+  // a solve that returns no field IS the identity, so the honest reading is
+  // the input's — still reported, because the number on screen has to be the
+  // one the export carries whether or not anything was applied
+  if (!r.amps) return { ...r, gapSolidBefore: before, gapSolidAfter: before, solidRefused: false };
+  const after = solidOf(build({ amps: r.amps, uStart: r.uStart, uEnd: r.uEnd, lobes: r.lobes }));
+  if (after == null) return r;
+  const kept = after >= before - 1e-9;
+  return {
+    ...r,
+    gapSolidBefore: before, gapSolidAfter: kept ? after : before,
+    solidRefused: !kept,
+    ok: kept && after >= floor - (cfg.tol ?? 0.05),
+    amps: kept ? r.amps : null,
+    reason: kept ? r.reason
+      : `the field improved the same-station gap to ${r.gapAfter.toFixed(2)} mm but took the`
+        + ` solid gap from ${before.toFixed(2)} to ${after.toFixed(2)} mm, so it was not applied`
+        + " — the two ducts' nearest approach is not at equal fractions of travel here",
+  };
+}
+
+function solveSeparationCore(throat, opts, cfg = {}) {
   // "inset" measures the AIR the export carries; "gross" is the pre-2026-09-04
   // convention every recorded figure in CLAUDE.md was taken on. The default
   // stays gross so those figures still reproduce; the UI asks for inset.
@@ -2492,6 +2729,9 @@ export function solveSeparation(throat, opts, cfg = {}) {
     // the largest value that still finishes inside the UI's 20 rounds with
     // margin.
     ridge = 0.05, diagonals = true,
+    // which curves the inner loop compares — see `ductClearance`. The wrapper
+    // above re-reads the answer as "solid" whenever the caller asks for it.
+    compare = "station",
     // ── THE PATH-LENGTH BUDGET ──────────────────────────────────────────────
     // A separation displacement always makes a duct's path LONGER, and the
     // equalising bow can only ADD length, so a duct the field pushes past the
@@ -2535,7 +2775,7 @@ export function solveSeparation(throat, opts, cfg = {}) {
   // so that is what a separation solve is solving for.
   const measure = (m) => ductClearance(m.rows, {
     jointAware, throatFloor: floor, pairSteps: STEPS,
-    outline, t: opts.t || 0, floor,
+    outline, t: opts.t || 0, floor, compare,
   });
   const clBase = measure(base);
   const gapOf = (cl) => cl.minMid;   // defect-scoped signed worst gap

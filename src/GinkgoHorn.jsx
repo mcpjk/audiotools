@@ -438,7 +438,17 @@ export default function GinkgoHorn() {
   // can, and the depth solves always run on the bare geometry. The deficit
   // map decides which cells bow — nothing assumes rows, centres or rims.
   const [lengthenOn, setLengthenOn] = useState(false);
-  const [lengthDir, setLengthDir] = useState("radial");
+  // "crossRow" by default: the bow is square to the cell's own row, so its
+  // whole displacement goes into the column gap rather than partly along the
+  // row, where the cells are narrow and the gap opens slowest. Measured at
+  // the shipped defaults it is the difference between an exportable horn and
+  // an unexportable one — worst gap -2.61 mm radial against +0.28 mm here —
+  // with dL, bow amplitude, fold margin, obliquity, wall spread and passage
+  // contraction all IDENTICAL, because direction cannot change the length a
+  // bow adds. "radial out" is kept and is the better field on a vertically
+  // curved mouth, where the deficit spreads over the outer ring instead of
+  // sitting in one row. Read the clearance; do not assume either.
+  const [lengthDir, setLengthDir] = useState("crossRow");
   // WHERE the bow sits, as a fraction of each cell's own path. The straight
   // runs are excised from this on top, per cell, inside the model — a run
   // asked to be straight is not a place to put a bow.
@@ -823,10 +833,21 @@ export default function GinkgoHorn() {
         // ducts run closest. Measured at the defaults: gross reports
         // -0.053 mm of interpenetration where the exported air measures
         // +0.321 mm of real wall.
+        // AND IT COMPARES THE SOLIDS, NOT THE STATIONS. A station is a
+        // fraction of each duct's OWN arc length, so ring q of one duct and
+        // ring q of its neighbour are at the same phase of travel and not at
+        // the same place — measured up to 40 mm apart axially on this horn.
+        // That is the right comparison for a wavefront and the wrong one for
+        // "is there material here", and the two separate exactly where the
+        // ducts stop running parallel, which is the bow region. Measured on
+        // the shipped bow, middle-row pair (3,1)-(4,1): +0.49 mm of wall
+        // by station against -0.43 mm of real interpenetration by solid,
+        // the latter confirmed to 7 um by an independent ray cast into the
+        // exported triangles. Costs about 3x and is already deferred.
         value: G.ductClearance(rows, {
           jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
           pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
-          outline: "inset", t: thickness, floor: sepFloor,
+          outline: "inset", t: thickness, floor: sepFloor, compare: "solid",
         }),
       });
     }, 30);
@@ -1736,7 +1757,7 @@ export default function GinkgoHorn() {
               style={{ ...btn(lengthLobes === n, C.series1), opacity: lengthenOn ? 1 : 0.4 }}>{n}</button>
           ))}
           <span style={{ fontSize: 10, color: C.inkMuted, marginLeft: 6 }}>bow direction</span>
-          {[["radial", "radial out"], ["short", "short axis"]].map(([v, l]) => (
+          {[["crossRow", "across the row"], ["radial", "radial out"], ["short", "short axis"]].map(([v, l]) => (
             <button key={v} onClick={() => setLengthDir(v)} disabled={!lengthenOn}
               style={{ ...btn(lengthDir === v, C.series2), opacity: lengthenOn ? 1 : 0.4 }}>{l}</button>
           ))}
@@ -1894,7 +1915,7 @@ export default function GinkgoHorn() {
             setSepBusy(true);
             setTimeout(() => {
               const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "uniform", outline: "inset" });
+                { floor: sepFloor, mode: "uniform", outline: "inset", compare: "solid" });
               setSepSolve(r);
               setSepBusy(false);
             }, 30);
@@ -1904,7 +1925,7 @@ export default function GinkgoHorn() {
             setSepBusy(true);
             setTimeout(() => {
               const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "nudge", maxIter: 20, outline: "inset" });
+                { floor: sepFloor, mode: "nudge", maxIter: 20, outline: "inset", compare: "solid" });
               setSepSolve(r);
               setSepBusy(false);
             }, 30);
@@ -1914,7 +1935,7 @@ export default function GinkgoHorn() {
             setSepBusy(true);
             setTimeout(() => {
               const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "repel", maxIter: 20, outline: "inset" });
+                { floor: sepFloor, mode: "repel", maxIter: 20, outline: "inset", compare: "solid" });
               setSepSolve(r);
               setSepBusy(false);
             }, 30);
@@ -1981,6 +2002,16 @@ export default function GinkgoHorn() {
                       The field lengthens one duct {fmt(sepSolve.dLOver, 2)} mm past the equalisation target, and that is where the
                       {" "}ΔL above comes from. Re-targeting the bow to chase it is not the fix: measured on this tool's defaults it
                       {" "}takes the bow 20.9 → 34.6 mm and folds the duct.
+                    </div>
+                  )}
+                  {sepSolve.gapSolidBefore != null && (
+                    <div style={{ color: sepSolve.solidRefused ? C.series5 : C.inkMuted, marginTop: 3 }}>
+                      Re-read against the SOLIDS rather than at equal fractions of travel:
+                      {" "}{fmt(sepSolve.gapSolidBefore, 2)} → {fmt(sepSolve.gapSolidAfter, 2)} mm.
+                      {" "}The solve's own loop compares ring q of one duct with ring q of its neighbour, which is the same
+                      phase of travel and not the same place, so it can like a field that moves a duct into a neighbour it
+                      never looked at. This line is the number the export carries, and the field is only applied when it
+                      improves it.
                     </div>
                   )}
                   {!sepSolve.ok && <div style={{ color: C.series5 }}>{sepSolve.reason}</div>}
