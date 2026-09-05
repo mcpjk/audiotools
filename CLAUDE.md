@@ -418,7 +418,9 @@ exists.
   with a render of thin needles fanning out of the throat. Reproduced from the
   file's own settings stamp (6x3, m 3, R 17.75, **t 0.5**, arcs 500x245, depth
   321, T 0.7, divergeLen 1, crossRow 1-lobe bow over [0.02, 0.22], wall 3, 32
-  shell stations, the -x -y quarter). (MEASURED UNDER THE SUPERSEDED CLAMPED BOW WINDOW; see the divergence-run finding — the geometry moves under the translation rule, though nothing here turns on the bow.)
+  shell stations, the -x -y quarter). MEASURED UNDER THE SUPERSEDED CLAMPED
+  BOW WINDOW — see the divergence-run finding; the geometry moves under the
+  translation rule, though nothing here turns on the bow.
   **THE MECHANISM IS TWO STEPS AND ONLY THE SECOND ONE IS VISIBLE.**
   (1) `insetPolygon` mitres each corner, and a mitre at interior angle th sits
   d/sin(th/2) from the vertex — so it reaches **d/tan(th/2) BACK along each
@@ -501,6 +503,50 @@ exists.
   than it has samples, and the solids are sound but the corner is not the one
   that was asked for. The UI warns, naming the cells and the crossing
   thickness, and the shell export note prints the shrink beside the wall.
+
+- **THE DEPTH SOLVE NOW HONOURS THE TWO STRAIGHT RUNS, and zeroing them was
+  answering about a horn nobody was building.** `solveDepthForMinDL` always
+  read `divergeLen` / `arriveLen` straight out of `opts`; what changed
+  (2026-09-05) is that the UI stopped forcing them to zero — and resetting the
+  sliders — before calling it. The old behaviour had a stated rationale, that
+  a solve should be a repeatable reference point rather than a function of
+  wherever the last experiment left the runs. That is a real property, and it
+  was being bought with the wrong currency: a run adds path length at ONE end,
+  which is what depth does at both, so the runs MOVE the optimum.
+    divergeLen  arriveLen   true optimum   dL there   dL at the zeroed depth
+         0          0         319.5 mm      11.929           11.929
+        10          0         324.2 mm      11.882           12.020
+        20          0         328.6 mm      11.834           12.115
+        40          0         337.9 mm      11.737           13.907
+         0         20         318.2 mm      12.694           12.827
+         0         40         316.9 mm      13.585           13.828
+        20         20         327.4 mm      12.593           12.873
+        40         40         335.8 mm      13.373           14.776
+  **THE DIRECTIONS ARE THE PHYSICS AND THEY ARE OPPOSITE.** The divergence run
+  adds length at the THROAT, so the mouth has to move away to bring the
+  curvature centre back onto the throat and the optimum goes DEEPER — 18.4 mm
+  deeper at a 40 mm run. The arrival run adds it at the MOUTH, so the optimum
+  comes SHALLOWER, 2.6 mm at 40. Both are asserted as directions rather than
+  as values, so the mechanism is what is pinned.
+  **WHAT IGNORING THEM COSTS is small at a short run and not at a long one**:
+  0.13 mm of dL at 10 mm of divergence, and **2.17 mm at 40 mm — one whole
+  lambda/8 budget** (2.18 mm at the 20 kHz partition target), which is the
+  number the separation solve is judged against. So on any horn with a real
+  divergence run the zeroed solve was giving away the entire path-spread
+  budget before the bow had spent a millimetre of it.
+  **REPEATABILITY IS KEPT BY REPORTING, NOT BY RESETTING.** The readout stamps
+  the runs the answer was solved for and warns when they have moved since, so
+  a solve still describes a definite horn — just the one on screen rather than
+  a hypothetical one with no runs. Lengthening and the separation field are
+  still held OFF for the solve: the bows are a correction applied on top of
+  whatever depth it lands on, and a field solved for one depth is meaningless
+  at another.
+  **AT divergeLen = arriveLen = 0 THE ANSWER IS UNCHANGED**, asserted exactly,
+  which is what keeps every depth figure recorded in this file reproducible —
+  319.5 mm for this mouth is still 319.5 mm.
+  This is the same mechanism as the divergence-run finding below, read from
+  the other side: there, a run makes the bow's job harder because it grows dL
+  at a depth below the optimum; here, the optimum itself is what moves.
 
 - **THE DIVERGENCE RUN TRANSLATES THE BOW WINDOW; IT USED TO TRUNCATE IT, AND
   THAT PINNED THE BOW EXACTLY WHERE THERE IS NO ROOM.** Owner's report,

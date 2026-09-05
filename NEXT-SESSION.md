@@ -287,8 +287,15 @@ at depth 300), demanding a bigger bow on a horn with less room. **The depth
 answers it** — at depth 340 the translated window makes a 40 mm run completely
 free (gap +1.522, fold 3.77) — and the reason is that a divergence run
 SUBSTITUTES for depth on ΔL: below the dL optimum it pushes you off, above it
-pulls you back. Worth a look at whether the depth solve should know about the
-runs at all; today `solveDepthForMinDL` resets them to zero.
+pulls you back.
+
+**The depth solve now knows about the runs** (same pass): it stopped zeroing
+them and resetting the sliders. The divergence run pushes the optimum DEEPER
+(319.5 → 337.9 mm at 40 mm) and the arrival run pulls it SHALLOWER (→ 316.9).
+Ignoring them cost 0.13 mm of ΔL at a 10 mm run and **2.17 mm at 40 mm — one
+whole λ/8 budget**. Repeatability is kept by stamping the readout with the runs
+it solved for and warning when they move, rather than by forcing them to zero.
+At zero runs the answer is unchanged, asserted exactly.
 
 ## Explored and REJECTED, so it is not re-proposed
 

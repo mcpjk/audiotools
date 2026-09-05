@@ -4955,5 +4955,62 @@ head("The divergence run TRANSLATES the bow window");
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+head("The depth solve and the two straight runs");
+// A straight run adds path length at ONE end, and depth adds it at both — so
+// the runs MOVE the depth at which the path lengths are closest together.
+// `solveDepthForMinDL` reads them straight out of `opts` and always has; what
+// changed on 2026-09-05 is that the UI stopped forcing them to zero before
+// calling it, so the answer describes the horn on screen. Asserted here at
+// the MODEL level, on the direction each run moves the optimum, so nobody can
+// re-zero them without this going red.
+{
+  const t = 0.4;
+  const th = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c }).throat;
+  const O = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", stations: 24, samples: 128,
+    keepGeometry: false, computeClearance: false, lengthen: null, ...o,
+  });
+  const solve = (dv, ar) => M.solveDepthForMinDL(th, O({ divergeLen: dv, arriveLen: ar }), {});
+  const bare = solve(0, 0), div = solve(40, 0), arr = solve(0, 40);
+
+  // ── THE DIRECTIONS, WHICH ARE THE PHYSICS ────────────────────────────────
+  // The divergence run adds length at the THROAT, so the mouth has to move
+  // away to bring the curvature centre back onto it: the optimum goes DEEPER.
+  // The arrival run adds it at the MOUTH, so the optimum comes SHALLOWER.
+  checkTrue("a divergence run pushes the dL optimum DEEPER",
+    div.ok && bare.ok && div.depth > bare.depth + 5,
+    `${bare.depth.toFixed(1)} -> ${div.depth.toFixed(1)} mm at 40 mm of divergence`);
+  checkTrue("...and an arrival run pulls it SHALLOWER",
+    arr.ok && arr.depth < bare.depth - 1,
+    `${bare.depth.toFixed(1)} -> ${arr.depth.toFixed(1)} mm at 40 mm of arrival`);
+
+  // ── AND THE SOLVE REALLY IS SOLVING THE HORN IT WAS HANDED ───────────────
+  // The answer must beat the zero-run answer ON THE RUN-CARRYING HORN, or the
+  // solve is decorative. Measured independently through the forward model
+  // rather than trusting the solver's own dL.
+  const dLat = (depth, dv, ar) =>
+    M.mapThroatToMouth(th, O({ depth, divergeLen: dv, arriveLen: ar })).dL;
+  for (const [dv, ar, s2] of [[40, 0, div], [0, 40, arr]]) {
+    const mine = dLat(s2.depth, dv, ar), theirs = dLat(bare.depth, dv, ar);
+    checkTrue(`solving WITH the runs beats the zeroed depth on that horn (dv ${dv}, arr ${ar})`,
+      mine <= theirs + 1e-9,
+      `dL ${theirs.toFixed(3)} at the zeroed depth against ${mine.toFixed(3)} at its own`);
+  }
+  // and the gap is worth having at a long run: one whole lambda/8 budget of
+  // path spread, which is the number the separation solve is judged against
+  checkTrue("...and at a 40 mm divergence run that is worth about a lambda/8",
+    dLat(bare.depth, 40, 0) - dLat(div.depth, 40, 0) > 1.0,
+    `${(dLat(bare.depth, 40, 0) - dLat(div.depth, 40, 0)).toFixed(3)} mm of dL, against a 2.18 mm budget`);
+
+  // no run at all must leave the answer exactly where it was, or this change
+  // would have moved every depth figure recorded in CLAUDE.md
+  check("with no runs the solve is unchanged", solve(0, 0).depth, bare.depth, 0, "mm");
+}
+
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
