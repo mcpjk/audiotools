@@ -24,7 +24,9 @@ own settings stamp, and it is a real defect with an unbounded amplification.
   side; once that passes the spacing of the 16 samples on that side, the
   neighbour's offset lands in front of the corner's and the outline reverses.
   On the reported kit that was **2 um of reversal on 4 of 18 cells**, all at
-  station 0.
+  station 0 — though that is a property of t = 0.5 and not of the mechanism:
+  the run lengthens with t, reaching station 4 at t = 0.8 and station 7 at
+  t = 1.0.
 - **The shell blank then amplifies it without bound.** A reversed segment is a
   spike with a tip angle of nearly 180 deg, and offsetting a spike outward by
   `wall` mitres its tip at `wall/sin(half tip angle)`. 2 um in, **1.6 m out**:

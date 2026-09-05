@@ -3148,9 +3148,24 @@ head("Inset overrun (the mitre swallowing its own samples)");
     checkTrue("...and it is very nearly proportional to the divider",
       rows.every(([tt, o]) => Math.abs(o.shrinkMax / tt - 2.02) < 0.05),
       rows.map(([tt, o]) => (o.shrinkMax / tt).toFixed(3)).join(" "));
-    checkTrue("every reversal is at station 0, where the inset is largest",
-      rows.every(([, o]) => o.reversed === 0 || o.at.station === 0),
-      rows.filter(([, o]) => o.reversed).map(([tt, o]) => `t${tt} at station ${o.at.station}`).join(" ") || "none");
+    // THE REVERSALS SPREAD DOWN THE PATH WITH t, and an earlier version of
+    // this check read `o.at.station === 0` — where the WORST shrink is, not
+    // where every reversal is — and so passed while claiming more than it
+    // tested. The inset tapers as t/2 x (1 - s) while the sections grow with
+    // s, so the offset-to-sampling ratio falls monotonically along the path
+    // and the reversals occupy a contiguous run from the throat. Measured at
+    // 64 stations: t 0.5 station 0 only, t 0.6 to station 1, t 0.8 to
+    // station 4, t 1.0 to station 7.
+    checkTrue("the reversals start at station 0 and never skip a station",
+      rows.every(([, o]) => o.reversed === 0 || (o.stations === o.stationMax + 1)),
+      rows.filter(([, o]) => o.reversed).map(([tt, o]) => `t${tt}: 0-${o.stationMax}`).join(" ") || "none");
+    checkTrue("...and the run reaches further down the path as t rises",
+      rows.filter(([, o]) => o.reversed).every(([tt, o], i, a) =>
+        i === 0 || o.stationMax >= a[i - 1][1].stationMax),
+      rows.filter(([, o]) => o.reversed).map(([tt, o]) => `t${tt}:${o.stationMax}`).join(" "));
+    checkTrue("at the reported kit's t = 0.5 it is the throat ring alone",
+      rows.find(([tt]) => tt === 0.5)[1].stationMax === 0,
+      `stationMax ${rows.find(([tt]) => tt === 0.5)[1].stationMax}, ${rows.find(([tt]) => tt === 0.5)[1].reversed} reversed`);
   }
 
   // ── 4. THE REPORTED GEOMETRY, END TO END ─────────────────────────────────
