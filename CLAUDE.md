@@ -408,6 +408,83 @@ exists.
   the signature that identified the bow direction as the cause. A 3-D view
   shows where each defect is and is poor at showing that they rhyme.
 
+- **THE DIVIDER INSET CAN RUN BACKWARDS THROUGH ITS OWN RING SAMPLES, AND THE
+  SHELL BLANK AMPLIFIES THAT WITHOUT BOUND — 2 um in, 1.6 METRES out.** Owner's
+  report, 2026-09-05: "shell blank 2,1 in this file is broken in some way",
+  with a render of thin needles fanning out of the throat. Reproduced from the
+  file's own settings stamp (6x3, m 3, R 17.75, **t 0.5**, arcs 500x245, depth
+  321, T 0.7, divergeLen 1, crossRow 1-lobe bow over [0.02, 0.22], wall 3, 32
+  shell stations, the -x -y quarter).
+  **THE MECHANISM IS TWO STEPS AND ONLY THE SECOND ONE IS VISIBLE.**
+  (1) `insetPolygon` mitres each corner, and a mitre at interior angle th sits
+  d/sin(th/2) from the vertex — so it reaches **d/tan(th/2) BACK along each
+  side**. The throat corner of cell 2,1 measures th = 72.08 deg against a
+  sample spacing of 0.3411 mm, so at d = t/2 = 0.25 the mitre reaches 0.3436
+  and lands 2.3 um PAST its own neighbour. The ring reverses.
+  (2) `shellSections` then offsets that ring OUTWARD by `wall`. A reversed
+  segment is a spike whose tip angle is nearly 180 deg, and mitring a spike
+  tip reaches **wall/sin(half tip angle)** — unbounded as the tip closes.
+  Measured: tip 179.78 deg, 3/sin(0.22 deg) = **798 mm**, and the shipped
+  file's blank 2,1 throat ring reaches **2574 mm** from the axis of a horn
+  500 mm wide. Read straight out of the STEP's control points.
+  **NOTHING IN THE TOOL COULD SEE IT.** The solid still meshes closed, every
+  edge still pairs once each way, the surface still runs through its samples
+  to 2e-13, the wall is still exactly 3.000 mm everywhere the ring is not
+  reversed, and `shellCoincidence`, `shellOverlap` and `throatCellWidth` all
+  read normally. It is the same lesson as the section plane: every metric was
+  about a quantity the defect does not touch.
+  **IT IS NOT ONE BAD CELL — IT IS THE WHOLE THROAT SITTING ON THE BOUNDARY.**
+  The reversals come in the mirrored set 2,1 / 2,3 / 5,1 / 5,3, 8 segments,
+  every one at station 0 (the taper makes the inset largest at the throat and
+  the sections are smallest there). `insetOverrun` reports the margin as
+  `shrink` — how much of a sample step the offset closes, so 1 is exactly the
+  boundary and above 1 is a reversal. Measured on that geometry:
+    t (mm)      0.4     0.45    0.5     0.55    0.6     0.8     1.0
+    shrinkMax  0.811   0.910   1.008   1.107   1.204   1.597   1.986
+    reversed     0       0       8      16      32     164     352
+    cells        0       0       4       8      10      18      18  of 18
+  It is very nearly PROPORTIONAL to t (shrink/t = 2.057, 2.047, 2.027, 2.017,
+  1.996 at t = 0.1, 0.2, 0.4, 0.5, 0.8), so the crossing is a threshold on the
+  divider and nothing else: **bisected at t = 0.4957 mm**. The shipped default
+  0.4 clears it by 19% of a sample step; the owner's 0.5 crosses it.
+  **THE BOUND IS THE THROAT CELL, AND A FINER PARTITION SPENDS IT.** Measured
+  at t = 0.5, one change at a time: R 17.75 -> 20 takes shrink to 0.897 (0
+  reversed), m 3 -> 2 to 0.983 (0), 6x3 -> 6x4 to 1.162 (16), 6x3 -> 8x3 to
+  1.308 (96). The straight run does not enter it at all (identical at
+  divergeLen 0 and 5 — station 0 is before the fan).
+  **AND REFINING THE RING MAKES IT WORSE.** The mitre's reach is fixed by the
+  corner angle and the divider; the spacing it is measured against is the
+  side's arc over the 16 samples. More points is a smaller denominator. So the
+  fix is never resolution — it is a bigger cell or a thinner divider.
+  **THE REPAIR DROPS THE REDUNDANT LINE, IT DOES NOT AVERAGE.** out[k] is
+  L(k-1) n L(k) and out[k+1] is L(k) n L(k+1), so both ends of a reversed
+  segment lie on L(k), and the reversal means L(k) carries no boundary between
+  them: the boundary is L(k-1) n L(k+1) and both points go there. Collapsing
+  the pair to its MIDPOINT was tried first and is wrong — it drags every
+  corner inward, measured **14% of the area** off an equilateral triangle
+  whose corners swallow 2.31 samples each, where the line-drop rule returns
+  the closed-form inset area (side S - 2 d sqrt(3)) to **4e-16**. That test is
+  the reason the first rule did not ship.
+  **IT IS A NO-OP WHERE NOTHING OVERRUNS**, asserted bit-identical over every
+  duct and blank ring at the shipped t = 0.4 — which is what lets every figure
+  in this file still reproduce. Where it does fire, only the broken cell
+  moves: blank 2,1 goes 1604.86 -> 204.87 mm while 1,1, 2,2 and 3,1 come back
+  at exactly their shipped coordinates. Both mirrors hold at 2.2e-9 mm,
+  because the rule is mirror-covariant.
+  **ONE OTHER THING HAD TO MOVE WITH IT.** The open-area scale solve reads
+  `insetSection3`, and `open(k) = A k^2 - L k + C` is exact only while the
+  inset is a clean offset — a clamp is not a polynomial. The single guarded
+  Newton step after the closed form is now iterated (still guarded on
+  improving the residual, still not entered at all when the first residual is
+  at ulp level, so it costs nothing on a horn that is not overrunning). At
+  t = 0.8 one step left 1.1e-7 relative against the suite's 1e-9 bound; the
+  loop lands it at 1e-12, and fc moves 0.4 ppm.
+  **WHAT IS NOT RESOLVED**: a swallowed corner is a CLAMPED corner. Past
+  t ~ 0.5 here the throat outline is represented with fewer distinct vertices
+  than it has samples, and the solids are sound but the corner is not the one
+  that was asked for. The UI warns, naming the cells and the crossing
+  thickness, and the shell export note prints the shrink beside the wall.
+
 - **THE CLEARANCE AROUND A CELL IS NOT ISOTROPIC, AND THE RADIAL BOW SPENDS
   THE SCARCE HALF OF IT. `dir: "crossRow"` is the fix, it is the new default,
   and it is FREE on every acoustic quantity the tool reports.** A throat cell
@@ -1683,6 +1760,11 @@ exists.
   export's geometry, and depth and the arcs could not be recovered at all —
   which is why a per-body failure the owner reported could not be reproduced
   here. Read the header first on any file that comes back from CAD.
+  **THE BOW'S REGION GRADE WAS MISSING FROM IT UNTIL 2026-09-05**, and
+  reproducing the broken-blank report meant assuming the default. It is a
+  shipped slider that moves the geometry materially (0.15 -> 0.20 costs 41% of
+  the fold margin), so it is in the stamp now. The lesson is that the stamp
+  has to be extended with every new knob, in the same edit.
 - **IMPORT-TIME HEALING IS RULED OUT.** The owner re-imported the same kit with
   Simplify Geometry, Advanced Healing, Healing (HOOPS) and Accurate Edge
   Computation all OFF, and again with Shapr3D's standard "quality" defaults:
