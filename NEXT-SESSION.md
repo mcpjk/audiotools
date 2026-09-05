@@ -130,6 +130,28 @@ queue item 0.
 **−0.43 mm**, not the +0.28 the station read shows, and it is in the MIDDLE
 ROW rather than at the corners. That is what queue item 0 has to fix.
 
+## Shipped 2026-09-05 — seeing it, not just scoring it
+
+The 3-D viewport now shows WHERE the trouble is. Full finding in CLAUDE.md.
+
+- **Selectable colour mode.** The first cross mode is a layout-phase readout;
+  `duct clearance` paints each wall vertex by its own gap to the nearest
+  neighbour.
+- **Per-vertex paint, defect-scoped.** Raw gaps mark 18 of 18 ducts and carry
+  no information, because the cells tile at both ends. Scoped, 4 of 18 stay
+  solid on the shipped horn and they are the right four.
+- **Contact markers.** Length is the gap, direction is the way out. The
+  shipped horn's intersections run along the row; radial's ran across it.
+- **Ghosting and framing.** Ducts not in trouble drop to 0.07 alpha, and
+  `frame the worst contact` pans as well as zooms — every defect sits inside
+  station 10 of 64, at the small end of the horn.
+
+**Deliberately not built**: the gap profile strip and the pair-by-station map.
+The owner's call — a strip gives a location without an identity, and the 3-D
+view answers "where, and which way" directly. The map remains the only display
+that can show four pairs failing TOGETHER, which is worth remembering if a
+pattern across pairs ever needs reading.
+
 ## Explored and REJECTED, so it is not re-proposed
 
 - **Staggering the bow across a row** (owner's proposal): built, measured on
