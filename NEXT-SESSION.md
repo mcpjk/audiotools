@@ -152,6 +152,51 @@ view answers "where, and which way" directly. The map remains the only display
 that can show four pairs failing TOGETHER, which is worth remembering if a
 pattern across pairs ever needs reading.
 
+## Shipped 2026-09-05 (second pass) — the section's shape morph
+
+Owner's observation on a returned export, chased to a cause. Full finding in
+CLAUDE.md.
+
+- **The section's shape was morphing on a different clock from its size.**
+  The swept loft blended the throat outline into the mouth outline linearly in
+  ARC LENGTH while the Hypex profile expands the AREA convexly, so the section
+  squared up in the first tenth of the path with the passage barely open.
+  A throat cell is tall and narrow and a mouth cell is square, so squaring up
+  early grows the section ALONG THE ROW — which is what a row neighbour's
+  clearance is made of.
+- **`shapeMorph: "radius"` puts both on one clock** — the section is h of the
+  way from throat shape to mouth shape exactly when the passage is h of the
+  way from throat size to mouth size, on the law's own equivalent radius √A.
+  UI default; the model default stays `"length"`, asserted bit for bit, so
+  every recorded figure reproduces.
+- **The expansion law cannot see it**: profM, profRatio and profFc identical
+  to the LAST BIT on every cell, ΔL and mouth area unmoved, flux contraction
+  0.00%, both end rings bit-identical. Only the neighbours can tell them
+  apart, which is the bar `crossRow` had to clear.
+
+**The numbers**, tool defaults, 96 stations, inset outlines, solid compare:
+worst gap **0.326 → 1.524 mm** unbowed with the throat dip gone, and
+**−0.508 → +0.220 mm** with the shipped bow — a change of SIGN, not a margin.
+Fold margin 1.10 → 1.59 mm on the bowed default, which was the thinnest any
+shipped default carried. `k` goes from dipping to 0.483 (a ring 4.3× too large
+in area, then shrunk) to 0.965–1.000.
+
+**What it costs, and it is real**: the transverse-mode cutoff along the path.
+c/(2·L_long) falls **7–11 % over u = 0.05–0.30**; both ends are pinned so the
+horn's WORST f₁ does not move. `area` (the same rule on r²) buys ~0.1 mm more
+clearance for twice that loss and takes k to 1.83 — kept in the model as the
+measured alternative, not offered in the UI.
+
+**What it does NOT fix, and this is the next thing to look at**: the mid-path
+pinch has a second cause. `crossRow` falls back to the radial field for the
+MIDDLE ROW — a middle-row cell's outward ray is already along the row, so
+there is no cross-row sense to pick — and on a vertically flat mouth the whole
+length deficit lives in that row. So the cells needing the most bow are exactly
+the ones `crossRow` cannot help, and their bows run straight along the row:
+measured, the two central middle-row cells swing ±11 mm laterally through the
+[0.02, 0.22] window and the pinch is where that swing returns. The morph
+raises the floor under it; it does not remove it.
+
 ## Explored and REJECTED, so it is not re-proposed
 
 - **Staggering the bow across a row** (owner's proposal): built, measured on

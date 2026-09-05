@@ -660,6 +660,15 @@ export default function GinkgoHorn() {
   const sectionMode = "swept";
   // the wave travels through the OPEN passage, not the gross cell outline
   const [profileArea, setProfileArea] = useState("open");
+  // WHICH CLOCK THE SECTION'S SHAPE MORPH RUNS ON. "length" blends the throat
+  // outline into the mouth outline linearly in arc length — a straight line
+  // between two end shapes, which is a construction convenience — and it puts
+  // the shape on a different clock from the size the expansion law is setting.
+  // "radius" runs both on the law's own equivalent radius sqrt(area). Neither
+  // moves fc, dL or the passage area; only the neighbours can tell them apart.
+  // See the block in mapThroatToMouth for the measurements, and note the cost
+  // is real: holding the throat aspect longer lowers c/(2 Llong) mid-path.
+  const [shapeMorph, setShapeMorph] = useState("radius");
   const [fTarget, setFTarget] = useState(20000);
   // null = no expansion law, the emergent schedule. A number is the Hypex T:
   // 0 hyperbolic (cosh), 1 exponential.
@@ -868,7 +877,8 @@ export default function GinkgoHorn() {
   // a separation field was solved against ONE geometry — any input that moves
   // the ducts it was clearing invalidates it
   useEffect(() => { setSepSolve(null); },
-    [thetaH, thetaV, arcH, arcV, profileT, depth, nc, nr, exitDia, thickness, bulgeOn, bulgeAmp]);
+    [thetaH, thetaV, arcH, arcV, profileT, depth, nc, nr, exitDia, thickness, bulgeOn, bulgeAmp,
+      shapeMorph]);
   // EVERY depth solve runs from the same reference state for the two straight
   // runs — divergence 0, arrival 0 — and resets the sliders to it. A solve is
   // then a repeatable reference point rather than a function of wherever the
@@ -914,7 +924,7 @@ export default function GinkgoHorn() {
     // thickness — without this it silently falls back to the gross outline
     t: thickness, profileArea,
     tightThroat: tight, tightMouth: tight,
-    mouthMode, thetaH, thetaV, arcH, arcV, sectionMode,
+    mouthMode, thetaH, thetaV, arcH, arcV, sectionMode, shapeMorph,
     lengthen: lengthenOn
       ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo, regionGrade: bowGrade }
       : null,
@@ -925,7 +935,7 @@ export default function GinkgoHorn() {
       : null,
   }), [layout, shown, exitAngle, divergeLen, arriveLen,
     thetaH, thetaV, arcH, arcV,
-    fTarget, thickness, profileArea,
+    fTarget, thickness, profileArea, shapeMorph,
     lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes, bowGrade,
     bulgeOn, bulgeAmp, sepSolve]);
 
@@ -1276,6 +1286,7 @@ export default function GinkgoHorn() {
       `mouthMode=${o.mouthMode}`, `thetaH=${o.thetaH}`, `thetaV=${o.thetaV}`,
       `arcH=${o.arcH}`, `arcV=${o.arcV}`, `depth=${n(depth)}`, `profileT=${n(profileT)}`,
       `profileArea=${o.profileArea}`, `sectionMode=${o.sectionMode}`,
+      `shapeMorph=${map ? map.shapeMorphEff : o.shapeMorph}`,
       `divergeLen=${o.divergeLen}`, `arriveLen=${o.arriveLen}`, `tight=${o.tight}`,
       `mapStations=${stations}`,
       `lengthen=${o.lengthen ? `${o.lengthen.lobes}lobe/${o.lengthen.dir}/[${o.lengthen.uStart},${o.lengthen.uEnd}]` : "off"}`,
@@ -1842,6 +1853,10 @@ export default function GinkgoHorn() {
             style={btn(profileArea === "open", C.series6)}>
             on {profileArea} area
           </button>
+          <button onClick={() => setShapeMorph(shapeMorph === "radius" ? "length" : "radius")}
+            style={btn(shapeMorph === "radius", C.series2)}>
+            shape on {shapeMorph === "radius" ? "radius" : "length"}
+          </button>
         </div>
         {href && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontFamily: C.mono, fontSize: 11 }}>
@@ -1860,6 +1875,16 @@ export default function GinkgoHorn() {
           verdict, not a setting, and the target above drives the <em>path-needed</em> comparison in the verdict pane. The law is written on
           the <strong style={{ color: C.inkDim }}>open</strong> passage, which is what the wave travels through. T also sets the duct gaps:
           the convex profile dips below the near-linear fan of the centrelines, and raising T flattens the dip until the ducts touch.
+        </div>
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          <strong style={{ color: C.inkDim }}>Shape on radius</strong> puts the section's shape and its size on the same clock: the outline is
+          the same fraction of the way from throat shape to mouth shape as the passage is from throat size to mouth size, measured on the law's
+          own equivalent radius √A. On <strong style={{ color: C.inkDim }}>length</strong> the outline blends linearly in path length instead,
+          so a tall throat cell squares up in the first tenth of the path while the area has barely opened — and the profile then has to shrink
+          that ring back hard (k dips to 0.48 at the defaults, against 0.96 on radius). Squaring up early grows the section <em>along the row</em>,
+          which is exactly what a row-neighbour's clearance is made of. Neither rule moves f_c, ΔL or the passage area at all. The cost is real
+          and is <em>upstream</em> coherence: holding the throat aspect longer keeps the long transverse dimension larger, so c/(2·L_long) falls
+          about 7–11 % over the first third of the path. Both ends are pinned, so the worst f₁ does not move.
         </div>
       </Stage>
 

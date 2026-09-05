@@ -688,6 +688,14 @@ export function mapThroatToMouth(throat, opts) {
     // at `normalAt`. "bernstein" is the superseded quadratic blend, kept
     // because the tests measure the new construction against it.
     sectionAlign = "tangent",
+    // ── WHICH CLOCK THE SECTION'S SHAPE MORPH RUNS ON ───────────────────────
+    // "length" is the shipped rule and the comparison baseline: the outline
+    // blends from throat to mouth linearly in ARC LENGTH. "radius" ties it to
+    // the expansion's own progress instead — see the block in the swept
+    // branch below for the mechanism and what it costs. "area" is the same
+    // family one power up, kept because the recorded trade between the two
+    // has to stay reproducible.
+    shapeMorph = "length",
     // How long the two ramps are, in DUCT WIDTHS of the cell's own long
     // transverse dimension. 1.5 is measured — see the ramp sweep in the tests
     // and the finding in CLAUDE.md — and both ends can be overridden in mm.
@@ -1396,13 +1404,56 @@ export function mapThroatToMouth(throat, opts) {
     // throat polygon exactly and s = 1 the mouth quad exactly, so the driver
     // mating face and the mouth tiling both survive: neighbours still share
     // those two rings point for point. Only the interior is free.
+    // ── THE EXPANSION PLAN, DERIVED ONCE AND SHARED ─────────────────────────
+    // Two things need this cell's radius ratio and the flare constant m that
+    // reaches it: the profile scaling further down, and — in swept mode — the
+    // shape morph, if it is tied to the expansion rather than to arc length.
+    // They come from ONE function so the two cannot drift apart. That is the
+    // rule this file already records for `t` and for the open-area mode: a
+    // derived constant is asserted against an independently known value,
+    // never against a second copy of its own formula.
+    // THERE IS NO CIRCULARITY in the morph reading it. h(0) = 0 and h(1) = 1
+    // under every rule, so both END rings are morph-independent, and the
+    // ratio is a property of those two rings alone.
+    const rimSide = cellRec.rimSide || [false, false, false, false];
+    const useOpen = profileArea === "open";
+    // per-side inset at a station, exactly as ductSections applies it
+    const insetAt = (u) => {
+      if (!(t > 0)) return null;
+      const taper = 1 - u;
+      if (taper <= 1e-12) return null;
+      const d = rimSide.map((isRim) => (isRim ? 0 : (t / 2) * taper));
+      return d.some((v) => v > 0) ? d : null;
+    };
+    const openArea = (ring, d) => (d ? polyArea3(insetSection3(ring, d)) : nrm3(vecArea(ring)));
+    const scaleRing = (ring, k) => {
+      const n = ring.length, ctr = [0, 0, 0];
+      for (const q of ring) { ctr[0] += q[0] / n; ctr[1] += q[1] / n; ctr[2] += q[2] / n; }
+      return ring.map((q) => [
+        ctr[0] + (q[0] - ctr[0]) * k,
+        ctr[1] + (q[1] - ctr[1]) * k,
+        ctr[2] + (q[2] - ctr[2]) * k,
+      ]);
+    };
+    const expansionPlan = (ring0, ringL) => {
+      const d0 = useOpen ? insetAt(0) : null;
+      const A0 = useOpen ? openArea(ring0, d0) : nrm3(vecArea(ring0));
+      const AL = nrm3(vecArea(ringL)); // no dividers left at the mouth
+      const ratio = A0 > 1e-12 ? Math.sqrt(AL / A0) : 1;
+      return {
+        A0, AL, ratio,
+        m: profileT != null ? solveHypexM(ratio, L, profileT) : 0,
+        grossRatio: Math.sqrt(AL / Math.max(1e-12, nrm3(vecArea(ring0)))),
+      };
+    };
+
     const rings = [];
     // diagnostics for the imposed twist: the roll applied at each end, and the
     // residual angle left between the rolled axis and the mouth's own +x. The
     // residual is the number that says the roll actually LANDED — end-ring
     // exactness cannot show it, because the rings are rebuilt from their own
     // local coordinates and would come out exact whatever the frame did.
-    let sweptRoll = null;
+    let sweptRoll = null, sweptMorph = "length";
     if (sectionMode !== "swept") {
       for (let q = 0; q <= stations; q++) rings.push(traj.map((tr) => tr(q / stations)));
     } else {
@@ -1525,11 +1576,10 @@ export function mapThroatToMouth(throat, opts) {
       };
       const lo0 = throatWorld.map((P) => toLocal(P, pts[0], F0));
       const lo1 = mouthWorld.map((P) => toLocal(P, pts[M], F1));
-      for (let q = 0; q <= stations; q++) {
-        const u = q / stations, idx = Math.round(u * M);
+      // the outline at blend fraction h, in the section frame at station u
+      const ringAt = (h, u, idx) => {
         const F = frameAt(u, idx), C = pts[idx];
-        const h = u; // shape morphs linearly; the profile sets the area
-        rings.push(lo0.map((A, k) => {
+        return lo0.map((A, k) => {
           const B = lo1[k];
           const x = A[0] + (B[0] - A[0]) * h;
           const y = A[1] + (B[1] - A[1]) * h;
@@ -1538,7 +1588,66 @@ export function mapThroatToMouth(throat, opts) {
             C[0] + x * F.u[0] + y * F.v[0] + z * F.n[0],
             C[1] + x * F.u[1] + y * F.v[1] + z * F.n[1],
             C[2] + x * F.u[2] + y * F.v[2] + z * F.n[2]);
-        }));
+        });
+      };
+      // ── THE SHAPE MORPH IS AN ACOUSTIC SCHEDULE, NOT A STRAIGHT LINE ───────
+      // The section has to travel from the throat cell's outline to the mouth
+      // cell's, and h says how far along that journey it is. "length" makes h
+      // the fraction of ARC LENGTH, which is a construction convenience — a
+      // straight line between two end outlines — and it puts the shape on a
+      // different clock from the size. The Hypex profile expands the AREA
+      // convexly, so early in the path the section changes SHAPE while barely
+      // changing SIZE: measured at the shipped defaults, worst-cell aspect
+      // ratio falls 2.55 -> 1.53 over the first tenth of the path, where the
+      // passage has hardly opened at all. The profile then has to scale that
+      // ring back hard — k dips to 0.483, i.e. the loft builds a ring 4.3x
+      // too large in area and shrinks it about its centroid, and what it is
+      // shrinking is already a near-mouth shape.
+      //
+      // A throat cell is tall and narrow and a mouth cell is square, so
+      // squaring up early grows the section's extent ALONG THE ROW fastest,
+      // and that extent is exactly what sets a row-neighbour's clearance.
+      //
+      // "radius" puts the two on the SAME clock: the section is h of the way
+      // from throat shape to mouth shape exactly when the passage is h of the
+      // way from throat size to mouth size, where size is the law's own
+      // equivalent radius sqrt(area). "area" is the same rule on r^2.
+      //
+      // WHAT IT COSTS, and it is a real acoustic cost rather than a free
+      // lunch: holding the throat aspect longer keeps the section's LONG
+      // transverse dimension larger for a given area, so the transverse-mode
+      // cutoff c/(2 Llong) falls earlier along the path. Both ENDS are
+      // untouched — h(0) = 0 and h(1) = 1 — so the horn's worst f1 does not
+      // move; what moves is where a given frequency stops propagating plane.
+      // Measured at the shipped defaults, worst cell, kHz:
+      //   u          0.00  0.05  0.10  0.15  0.20  0.30  0.50  1.00
+      //   length    11.74 11.83 11.23 10.17  9.37  7.94  5.54  2.10
+      //   radius    11.74 10.88 10.04  9.01  8.32  7.12  5.08  2.10
+      //   area      11.74 10.50  9.41  8.21  7.47  6.29  4.53  2.10
+      // i.e. -7% to -11% over u = 0.05-0.30 for "radius" and roughly twice
+      // that for "area". `wallSpreadMax` also rises 14.44 -> 15.61 mm.
+      // Everything the expansion law itself reports is UNMOVED: dL, fc, profM,
+      // fluxContractMax and sectionObliqMax are identical to "length" — the
+      // wave's schedule cannot see this, only the neighbours can, which is the
+      // test a construction has to pass before packing gets a vote.
+      let hOf = (u) => u;
+      let morphUsed = "length";
+      if (shapeMorph !== "length" && profileT != null) {
+        // both end rings are h-independent, so this is not circular
+        const plan = expansionPlan(ringAt(0, 0, 0), ringAt(1, 1, M));
+        const p = shapeMorph === "area" ? 2 : 1;
+        const rL = hypexR(sArr[M], 1, plan.m, profileT) ** p;
+        // a cell with no expansion to speak of has no clock to run on; fall
+        // back to arc length and REPORT it rather than dividing by nothing
+        if (plan.m > 0 && rL > 1 + 1e-12) {
+          hOf = (u) => (hypexR(sArr[Math.round(u * M)], 1, plan.m, profileT) ** p - 1) / (rL - 1);
+          morphUsed = shapeMorph;
+        }
+      }
+      sweptMorph = morphUsed;
+      for (let q = 0; q <= stations; q++) {
+        const u = q / stations, idx = Math.round(u * M);
+        rings.push(ringAt(hOf(u), u, idx));
       }
     }
 
@@ -1583,33 +1692,14 @@ export function mapThroatToMouth(throat, opts) {
     let profM = null, profFc = null, profScaleMin = 1, profScaleMax = 1;
     let profRatio = null, profK = null, profKMaxAt = 0, profRatioGross = null;
     if (profileT != null) {
-      const rimSide = cellRec.rimSide || [false, false, false, false];
-      // per-side inset at a station, exactly as ductSections applies it
-      const insetAt = (u) => {
-        if (!(t > 0)) return null;
-        const taper = 1 - u;
-        if (taper <= 1e-12) return null;
-        const d = rimSide.map((isRim) => (isRim ? 0 : (t / 2) * taper));
-        return d.some((v) => v > 0) ? d : null;
-      };
-      const openArea = (ring, d) => (d ? polyArea3(insetSection3(ring, d)) : nrm3(vecArea(ring)));
-      const scaleRing = (ring, k) => {
-        const n = ring.length, ctr = [0, 0, 0];
-        for (const q of ring) { ctr[0] += q[0] / n; ctr[1] += q[1] / n; ctr[2] += q[2] / n; }
-        return ring.map((q) => [
-          ctr[0] + (q[0] - ctr[0]) * k,
-          ctr[1] + (q[1] - ctr[1]) * k,
-          ctr[2] + (q[2] - ctr[2]) * k,
-        ]);
-      };
-      const useOpen = profileArea === "open";
-      const d0 = useOpen ? insetAt(0) : null;
-      const A0 = useOpen ? openArea(rings[0], d0) : nrm3(vecArea(rings[0]));
-      const AL = nrm3(vecArea(rings[stations])); // no dividers left at the mouth
-      const ratio = A0 > 1e-12 ? Math.sqrt(AL / A0) : 1;
-      profRatio = ratio;
-      profRatioGross = Math.sqrt(AL / Math.max(1e-12, nrm3(vecArea(rings[0]))));
-      profM = solveHypexM(ratio, L, profileT);
+      // the SAME derivation the shape morph reads, from the same function on
+      // the same two rings, so the morph's m and the profile's m are one
+      // number by construction rather than by agreement
+      const plan = expansionPlan(rings[0], rings[stations]);
+      const A0 = plan.A0;
+      profRatio = plan.ratio;
+      profRatioGross = plan.grossRatio;
+      profM = plan.m;
       profFc = fcForHypexM(profM, c);
       // k is kept PER STATION, not just as a range. k > 1 is the one way this
       // construction can push two ducts together, so which stations it happens
@@ -1878,7 +1968,7 @@ export function mapThroatToMouth(throat, opts) {
       mouthAreaTiled: bulgeOn
         ? polyArea3(mouthUVTiled.map((q) => mouthAt(q[0], q[1])))
         : sched[stations].area,
-      sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll, bendWiden, wallSpread,
+      sched, kappaMax: Math.max(...kappa), bendCentroid, sweptRoll, sweptMorph, bendWiden, wallSpread,
       bendFold, bendFoldAt,
       snakeAmp, snakeShort, snakeOnAxis, snakeSpan, sepAmp,
       profRatioGross,
@@ -2059,6 +2149,12 @@ export function mapThroatToMouth(throat, opts) {
     biradial: bi ? { rH: bi.rH, rV: bi.rV, arcH: bi.arcH, arcV: bi.arcV, sagH: bi.sagH, sagV: bi.sagV } : null,
     bendCentroidMean: rows.reduce((a, r) => a + r.bendCentroid, 0) / rows.length,
     sectionMode,
+    // the morph rule actually USED, not the one asked for: a cell with no
+    // expansion has no clock to tie the shape to and falls back to arc
+    // length, and that has to be visible rather than silent — the same
+    // treatment `flattenEff` gets for the mouth override
+    shapeMorph, shapeMorphEff: rows.every((r) => r.sweptMorph === shapeMorph)
+      ? shapeMorph : "length",
     sweptRollMax: rows[0].sweptRoll
       ? Math.max(...rows.map((r) => Math.abs(r.sweptRoll.phi1Deg))) : null,
     sweptAimMax: rows[0].sweptRoll

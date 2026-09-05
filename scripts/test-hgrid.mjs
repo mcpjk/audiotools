@@ -4405,5 +4405,202 @@ head("Bow direction across the row, and the station-free clearance");
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+head("The section's shape morph, and which clock it runs on");
+// The swept loft blends the throat outline into the mouth outline; `h` says
+// how far along that journey the section is. `shapeMorph` chooses what drives
+// h. "length" — the shipped default and the baseline every recorded figure in
+// CLAUDE.md was measured on — makes it the fraction of ARC LENGTH. "radius"
+// makes it the expansion's own progress on the law's equivalent radius
+// sqrt(area), so shape and size run on ONE clock.
+//
+// The whole claim is that this is invisible to the expansion law and visible
+// only to the neighbours, so that is what is asserted: every quantity the law
+// reports must be IDENTICAL, both end rings must be identical, and the
+// clearance must move. The f1 COST is asserted too, in the direction it goes,
+// so it cannot be quietly forgotten.
+{
+  const t = 0.4, ST = 64;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c });
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, stations: ST, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", keepGeometry: true, computeClearance: false,
+  };
+  const BOW = { lobes: 1, dir: "crossRow", uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 };
+  const CLR = {
+    thinBand: 1.5, throatFloor: 1.5, pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
+    outline: "inset", t, floor: 1.5, compare: "solid",
+  };
+  const at = (o) => M.mapThroatToMouth(Lay.throat, { ...common, ...o });
+  const vdiff = (a, b) => {
+    let w = 0;
+    for (let r = 0; r < a.rows.length; r++)
+      for (let q = 0; q < a.rows[r].sched.length; q++) {
+        const P = a.rows[r].sched[q].pts, Q = b.rows[r].sched[q].pts;
+        for (let k = 0; k < P.length; k++)
+          for (let d = 0; d < 3; d++) w = Math.max(w, Math.abs(P[k][d] - Q[k][d]));
+      }
+    return w;
+  };
+  const endDiff = (a, b, q) => {
+    let w = 0;
+    for (let r = 0; r < a.rows.length; r++) {
+      const P = a.rows[r].sched[q < 0 ? a.rows[r].sched.length - 1 : q].pts;
+      const Q = b.rows[r].sched[q < 0 ? b.rows[r].sched.length - 1 : q].pts;
+      for (let k = 0; k < P.length; k++)
+        for (let d = 0; d < 3; d++) w = Math.max(w, Math.abs(P[k][d] - Q[k][d]));
+    }
+    return w;
+  };
+  // the section's LONG transverse dimension, by PCA of the ring — independent
+  // of the model's own section frame, which is what the morph does not touch
+  const longExtent = (ring) => {
+    const n = ring.length, ctr = [0, 0, 0];
+    for (const p of ring) for (let d = 0; d < 3; d++) ctr[d] += p[d] / n;
+    const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (const p of ring) {
+      const q = [p[0] - ctr[0], p[1] - ctr[1], p[2] - ctr[2]];
+      for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) A[a][b] += (q[a] * q[b]) / n;
+    }
+    const mul = (m, v) => [0, 1, 2].map((a) => m[a][0] * v[0] + m[a][1] * v[1] + m[a][2] * v[2]);
+    const nz = (v) => { const k = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / k, v[1] / k, v[2] / k]; };
+    let v1 = nz([1, 0.3, 0.1]);
+    for (let k = 0; k < 300; k++) v1 = nz(mul(A, v1));
+    const l1 = v1.reduce((a, x, i) => a + x * mul(A, v1)[i], 0);
+    const A2 = A.map((r, a) => r.map((x, b) => x - l1 * v1[a] * v1[b]));
+    let v2 = nz([0.2, 1, 0.4]);
+    for (let k = 0; k < 300; k++) {
+      const w = mul(A2, v2), m2 = Math.hypot(w[0], w[1], w[2]);
+      v2 = m2 > 1e-15 ? [w[0] / m2, w[1] / m2, w[2] / m2] : v2;
+    }
+    const E = (v) => {
+      let lo = Infinity, hi = -Infinity;
+      for (const p of ring) {
+        const s2 = (p[0] - ctr[0]) * v[0] + (p[1] - ctr[1]) * v[1] + (p[2] - ctr[2]) * v[2];
+        if (s2 < lo) lo = s2; if (s2 > hi) hi = s2;
+      }
+      return hi - lo;
+    };
+    return Math.max(E(v1), E(v2));
+  };
+  const f1At = (map, u) => {
+    const q = Math.round(u * map.stations);
+    let lo = Infinity;
+    for (const r of map.rows) lo = Math.min(lo, (c * 1000) / (2 * longExtent(r.sched[q].pts)));
+    return lo / 1000;
+  };
+
+  const len = at({ lengthen: null }), rad = at({ lengthen: null, shapeMorph: "radius" });
+
+  // ── 1. THE DEFAULT IS THE BASELINE, AND IT IS BIT FOR BIT ────────────────
+  // Every figure this file and CLAUDE.md record was measured on the arc-length
+  // rule, so it has to stay the model's default and stay exact. `bernstein`
+  // is the precedent: a superseded construction kept LIVE so the "before"
+  // numbers are measurements rather than memories.
+  check("the model default is the arc-length rule, bit for bit",
+    vdiff(len, at({ lengthen: null, shapeMorph: "length" })), 0, 0, "mm");
+  checkTrue("...and it is reported as the rule actually used",
+    len.shapeMorphEff === "length" && rad.shapeMorphEff === "radius",
+    `${len.shapeMorphEff} / ${rad.shapeMorphEff}`);
+
+  // ── 2. THE EXPANSION LAW CANNOT SEE THIS ─────────────────────────────────
+  // The profile solves k per station to land on the law's area whatever ring
+  // the loft handed it, so the morph moves the SHAPE and never the schedule.
+  // profM is asserted to the LAST BIT rather than to a tolerance, because the
+  // morph and the profile read it from ONE function on the same two rings —
+  // if that ever became two copies of the formula this is what would catch it.
+  checkTrue("the flare constant is one number, not two copies of a formula",
+    len.rows.every((r, i) => r.profM === rad.rows[i].profM
+      && r.profRatio === rad.rows[i].profRatio && r.profFc === rad.rows[i].profFc),
+    `profM identical on all ${len.rows.length} cells`);
+  check("...so the reported cutoff does not move", rad.profFcMin, len.profFcMin, 0, "Hz");
+  check("...nor the path spread", rad.dL, len.dL, 1e-12, "mm");
+  check("...nor the passage: flux contraction stays 0", rad.fluxContractMax, 0, 1e-9, "");
+  check("...nor the section plane", rad.sectionObliqMax, len.sectionObliqMax, 0.1, "deg");
+  check("...nor the mouth area", rad.mouthAreaTotal, len.mouthAreaTotal, 1e-6, "mm2");
+
+  // ── 3. BOTH ENDS ARE PINNED, EXACTLY, AND THAT IS NOT A CLAMP ────────────
+  // h(0) = 0 and h(1) = 1 fall out of the rule itself: at s = 0 the law's
+  // radius is 1 so the numerator is 0, and the denominator is the SAME
+  // expression evaluated at s = L. Nothing is clamped, so the exactness is
+  // evidence the morph really is reading the profile's own m and arc array.
+  check("the throat ring is untouched by the morph", endDiff(len, rad, 0), 0, 0, "mm");
+  check("the mouth ring is untouched by the morph", endDiff(len, rad, -1), 0, 0, "mm");
+  checkTrue("...and the interior really did move",
+    vdiff(len, rad) > 1, `worst vertex ${vdiff(len, rad).toFixed(2)} mm`);
+
+  // ── 4. WHAT THE MISMATCH LOOKS LIKE, IN THE PROFILE'S OWN SCALE ──────────
+  // k is what the profile must scale the loft's ring by to reach the law's
+  // area. On the arc-length rule the shape races ahead of the size, so the
+  // ring arrives far too large and k dips hard; on the radius rule the two
+  // run together and there is almost nothing left to correct.
+  // k <= 1 here is MEASURED, not proved: a pointwise blend of two outlines is
+  // not a Minkowski sum, and on the gross-area law kMax was measured 3e-4
+  // ABOVE 1. So the assertion is "within a whisker of 1", not "at most 1".
+  const kOf = (m) => {
+    let lo = Infinity, hi = 0;
+    for (const r of m.rows) { lo = Math.min(lo, ...r.profK); hi = Math.max(hi, ...r.profK); }
+    return { lo, hi };
+  };
+  const kl = kOf(len), kr = kOf(rad);
+  checkTrue("the arc-length rule builds a ring the profile must shrink hard",
+    kl.lo < 0.55, `k dips to ${kl.lo.toFixed(3)}, i.e. ${(1 / (kl.lo * kl.lo)).toFixed(1)}x too much area`);
+  checkTrue("...where tying the shape to the radius leaves almost nothing to correct",
+    kr.lo > 0.9 && kr.hi < 1 + 1e-3, `k ${kr.lo.toFixed(3)}..${kr.hi.toFixed(6)}`);
+
+  // ── 5. WHAT IT BUYS: THE ROW CLEARANCE AT THE SMALL END ──────────────────
+  // A throat cell is tall and narrow and a mouth cell is square, so squaring
+  // up early grows the section ALONG THE ROW — which is what a row
+  // neighbour's clearance is made of. On the tool's own defaults the
+  // arc-length rule leaves the ducts CONVERGING off the throat (a dip, which
+  // the monotone throat rule scores as a defect at any magnitude) and the
+  // radius rule removes it outright.
+  const clr = (m) => M.ductClearance(m.rows, CLR);
+  const cl = clr(len), cr = clr(rad);
+  checkTrue("the arc-length rule leaves the ducts closing off the throat",
+    cl.throat.dip !== null && cl.throat.dip > 0,
+    `gap falls ${cl.throat.dip.toFixed(3)} mm at station ${cl.throat.dipAt}`);
+  checkTrue("...and tying the shape to the radius removes the dip entirely",
+    cr.throat.dip === null, `worst gap ${cl.minMid.toFixed(3)} -> ${cr.minMid.toFixed(3)} mm`);
+  checkTrue("...on the bowed default it is a change of SIGN, not a margin",
+    clr(at({ lengthen: BOW })).minMid < 0
+    && clr(at({ lengthen: BOW, shapeMorph: "radius" })).minMid > 0,
+    `${clr(at({ lengthen: BOW })).minMid.toFixed(3)} -> ` +
+    `${clr(at({ lengthen: BOW, shapeMorph: "radius" })).minMid.toFixed(3)} mm at ${ST} stations`);
+
+  // ── 6. WHAT IT COSTS, ASSERTED SO IT CANNOT BE FORGOTTEN ─────────────────
+  // Holding the throat aspect longer keeps the section's LONG transverse
+  // dimension larger for a given area, so the first cross-mode cutoff
+  // c/(2 Llong) falls EARLIER along the path. This is the acoustic price, and
+  // it is the quantity the partition exists to defend, so it is asserted in
+  // the direction it actually goes rather than left as a comment.
+  checkTrue("the cost is upstream mode cutoff, and it is real",
+    f1At(rad, 0.1) < f1At(len, 0.1) && f1At(rad, 0.3) < f1At(len, 0.3),
+    `f1 at u=0.10 ${f1At(len, 0.1).toFixed(2)} -> ${f1At(rad, 0.1).toFixed(2)} kHz, ` +
+    `at u=0.30 ${f1At(len, 0.3).toFixed(2)} -> ${f1At(rad, 0.3).toFixed(2)} kHz`);
+  // BOTH ENDS are pinned, so the horn's WORST f1 cannot move — the cost is
+  // where a frequency stops being plane, never how low the horn goes.
+  check("...but the worst f1 in the horn does not move, because the ends are pinned",
+    f1At(rad, 1), f1At(len, 1), 1e-9, "kHz");
+  checkTrue("...and the fold margin improves rather than paying for it",
+    rad.bendFoldMin > len.bendFoldMin,
+    `${len.bendFoldMin.toFixed(2)} -> ${rad.bendFoldMin.toFixed(2)} mm`);
+
+  // ── 7. A CELL WITH NO CLOCK FALLS BACK, AND SAYS SO ──────────────────────
+  // The rule divides by the expansion the cell actually has. Flow mode has no
+  // per-cell blend at all and a horn with no law imposed has no radius
+  // schedule to read, so both fall back to arc length — REPORTED through
+  // shapeMorphEff rather than silently, the treatment flattenEff already gets.
+  checkTrue("flow mode has no blend to schedule, and reports the fallback",
+    at({ lengthen: null, sectionMode: "flow", shapeMorph: "radius" }).shapeMorphEff === "length",
+    "shapeMorphEff = length");
+  checkTrue("...as does a horn with no expansion law imposed",
+    at({ lengthen: null, profileT: null, shapeMorph: "radius" }).shapeMorphEff === "length",
+    "shapeMorphEff = length");
+}
+
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

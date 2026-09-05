@@ -305,7 +305,11 @@ other leg of the pick-two-of-three — and the signed clearance is separable
 (`ductClearance`, `computeClearance: false`) so the UI measures it off the
 render pass, and it now compares the SOLIDS rather than equal fractions of
 travel (`compare: "solid"` — a station is not a place; see the finding).
-Per-cell path lengthening (`lengthen`) bows short cells out to
+The SECTION'S SHAPE now morphs on the expansion's own
+clock rather than on arc length (`shapeMorph: "radius"`, the UI default; the
+model default stays `"length"`, the bit-identical baseline every figure here
+was measured on) — see the finding, which is what removed the near-throat duct
+convergence. Per-cell path lengthening (`lengthen`) bows short cells out to
 the longest cell's length in swept mode, square to the cell's own row by
 default (`dir: "crossRow"`, because the clearance around a cell is not
 isotropic and the radial field spends the scarce half), and the tool previews the exported
@@ -407,6 +411,108 @@ exists.
   matters: that four corner pairs fail TOGETHER at the same stations, which is
   the signature that identified the bow direction as the cause. A 3-D view
   shows where each defect is and is poor at showing that they rhyme.
+
+- **THE SECTION'S SHAPE WAS MORPHING ON A DIFFERENT CLOCK FROM ITS SIZE, AND
+  THAT MISMATCH WAS THE WHOLE OF THE NEAR-THROAT DUCT CONVERGENCE.**
+  `shapeMorph: "radius"` is the fix, it is the UI default, and the model
+  default stays `"length"` so every figure in this file reproduces. The swept
+  loft blends the throat outline into the mouth outline and `h` says how far
+  along that journey a section is; `h = u` made it the fraction of ARC LENGTH.
+  But the Hypex profile expands the AREA convexly, so early in the path the
+  section changed SHAPE while barely changing SIZE. Measured at the shipped
+  defaults, worst-cell section aspect ratio (long/short):
+    u          0.00  0.05  0.10  0.15  0.20  0.30  0.50  1.00
+    length     2.55  1.82  1.53  1.35  1.27  1.17  1.07  1.02
+    radius     2.55  2.25  2.02  1.80  1.67  1.49  1.26  1.02
+    area       2.55  2.49  2.42  2.31  2.23  2.04  1.66  1.02
+  Over half the shape change was spent in the first tenth of the path, where
+  the passage has hardly opened. **The profile's own scale is the cleanest
+  witness: k dips to 0.483**, i.e. the loft builds a ring 4.3x too large in
+  AREA and shrinks it about its centroid — and what it is shrinking is
+  already a near-mouth shape. On the radius rule k is **0.965..1.000**: shape
+  progress and size progress are on one clock and the profile has essentially
+  nothing left to correct.
+  **WHY ROW NEIGHBOURS AND NOT COLUMN ONES.** A throat cell is tall and
+  narrow and a mouth cell is square, so squaring up early grows the section's
+  extent ALONG THE ROW fastest — and that extent is exactly what a row
+  neighbour's clearance is made of. It is the same anisotropy the crossRow
+  finding below rests on, read from the other side: crossRow stops the BOW
+  spending the scarce half, this stops the SECTION spending it.
+  **WHAT IT BUYS, at the tool's own defaults (6x3, m 3, arcs 500x245, depth
+  300, T 0.7, inset outlines, solid compare, floor 1.5 mm), 96 stations:**
+    rule        no bow                    crossRow bow [0.02,0.22] g0.20
+    length      0.326 mm, throat dip 0.074    **-0.508 mm** (interpenetrating)
+    radius      1.524 mm, dip NONE            **+0.220 mm**
+    area        1.501 mm, dip NONE            +0.106 mm
+  On the bowed default it is a **change of sign**, not a margin. The throat
+  dip — the gap DECREASING off the throat, which the monotone throat rule
+  scores as a defect at any magnitude — disappears outright under both new
+  rules. The fold margin improves with it — **1.10 -> 1.59 mm on the bowed
+  default**, which matters because 1.10 is the thinnest margin any shipped
+  default has carried.
+  Measured on the owner's returned export (depth 320, bulge 4, the same bow),
+  96 stations: worst pair 0.353 -> 1.093 mm, the binding station moving from
+  **1 of 96** (off the throat) to **92 of 96** — the mouth taper, where every
+  pair must close to zero because the cells tile the aperture, which is a
+  structural floor rather than a defect. On the pair the owner named,
+  (3,2)-(4,2), an INDEPENDENT read (nearest approach of each station of one
+  duct to the whole solid of the other, sharing no code with `ductClearance`)
+  puts the mid-path pinch at **1.59 -> 2.91 mm**.
+  **WHAT IT COSTS, and it is a real acoustic cost rather than a free lunch:
+  the transverse-mode cutoff along the path.** Holding the throat aspect
+  longer keeps the section's LONG transverse dimension larger for a given
+  area, so c/(2 Llong) falls earlier. **BOTH ENDS ARE PINNED** — h(0) = 0 and
+  h(1) = 1 fall out of the rule rather than being clamped — so the horn's
+  WORST f1 does not move at all; what moves is where a given frequency stops
+  propagating plane. Worst cell, kHz:
+    u          0.00  0.05  0.10  0.15  0.20  0.30  0.50  1.00
+    length    11.74 11.83 11.23 10.17  9.37  7.94  5.54  2.10
+    radius    11.74 10.88 10.04  9.01  8.32  7.12  5.08  2.10
+    area      11.74 10.50  9.41  8.21  7.47  6.29  4.53  2.10
+  About -7% to -11% over u = 0.05-0.30 for `radius` and roughly twice that
+  for `area`. `wallSpreadMax` also rises 14.44 -> 15.61 mm (`area` 17.16),
+  though that metric is already 6.6x over its own lambda/8 = 2.18 mm budget
+  under the shipped rule, so weight it lightly. **THAT COST IS WHY `area` IS
+  NOT THE DEFAULT**: it buys about 0.1 mm more clearance than `radius` for
+  twice the f1 loss, and it is the one rule that takes k ABOVE 1 (to 1.83).
+  **WHAT THE EXPANSION LAW CANNOT SEE, and this is the test the construction
+  had to pass**: profM, profRatio, profFc are **identical to the last bit**
+  on every cell, and dL, mouthAreaTotal and fluxContractMax (0.00%) do not
+  move; `sectionObliqMax` moves by hundredths of a degree (14.793 -> 14.788
+  unbowed, 23.61 -> 23.67 with the bow), which is the ring's own curvature
+  being read on a slightly different outline, not a change of section plane.
+  The profile solves k per station to land on the law's area whatever ring
+  the loft hands it, so the morph moves the SHAPE and never the schedule.
+  Both end rings are bit-identical too. The wave's schedule cannot tell these
+  apart; only the neighbours can — the same bar crossRow had to clear before a
+  packing argument got a vote.
+  **THE MORPH AND THE PROFILE READ ONE FUNCTION, NOT TWO COPIES OF A
+  FORMULA.** `expansionPlan` is hoisted above the section construction and
+  both call it on the same two rings, so "the morph's m is the profile's m"
+  is true by construction. There is no circularity: h(0) = 0 and h(1) = 1
+  under every rule, so both END rings are morph-independent and the ratio is
+  a property of those two rings alone. Asserted by `profM === profM`, not by
+  a tolerance — that identity is what would break first if the derivation
+  were ever duplicated.
+  **`k <= 1` ON THE RADIUS RULE IS MEASURED, NOT PROVED.** A pointwise blend
+  of two outlines is not a Minkowski sum, so no inequality is available:
+  measured 0.959..1.000 across sixteen input cases (T, depth, arcs, thetaV,
+  t, grid, bow, bulge) but **3e-4 ABOVE 1 on the gross-area law**. The claim is
+  "within a whisker of 1", never "at most 1", and the test asserts the
+  whisker.
+  **WHAT IT DOES NOT FIX.** The mid-path pinch on the shipped horn has a
+  SECOND cause the morph only raises the floor under: `crossRow` falls back
+  to the radial field for the MIDDLE ROW, because a middle-row cell's outward
+  ray is already along the row and there is no cross-row sense to pick. On a
+  vertically flat mouth the whole length deficit lives in that row, so the
+  cells needing the most bow are exactly the ones crossRow cannot help, and
+  their bows run straight along the row — measured, the two central
+  middle-row cells swing +-11 mm laterally through the window and the pinch
+  is where that swing returns. That is queue material, not this finding.
+  **A CELL WITH NO EXPANSION HAS NO CLOCK TO RUN ON** and falls back to arc
+  length, REPORTED through `shapeMorphEff` rather than silently — the
+  treatment `flattenEff` already gets. Flow mode (no per-cell blend at all)
+  and `profileT: null` (no law imposed) both take that path.
 
 - **THE CLEARANCE AROUND A CELL IS NOT ISOTROPIC, AND THE RADIAL BOW SPENDS
   THE SCARCE HALF OF IT. `dir: "crossRow"` is the fix, it is the new default,
