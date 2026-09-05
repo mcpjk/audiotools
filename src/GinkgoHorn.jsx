@@ -1010,6 +1010,15 @@ export default function GinkgoHorn() {
         // station 10 of 64, which is four preview rings, so the picture would
         // be coarse exactly where it has to be exact.
         rows,
+        // HOW CLOSE THE DIVIDER INSET IS TO SWALLOWING ITS OWN SAMPLES.
+        // It rides here rather than in the render pass because it costs a
+        // measured 14-21 ms — it re-runs the offset on every ring — and
+        // because it belongs to the geometry the exports build, exactly as
+        // the clearance does. Every reversal measured anywhere has been at
+        // station 0, but it is read over the whole path: restricting it to
+        // the throat would make it a proxy for the mechanism instead of the
+        // mechanism.
+        overrun: G.insetOverrun(throat, { rows }, { t: thickness }),
         value: G.ductClearance(rows, {
           jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
           pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
@@ -1022,6 +1031,7 @@ export default function GinkgoHorn() {
   }, [map, sepFloor, stations, throat, mapOpts, depth, profileT, thickness]);
   const clearance = clr && clr.of === map && clr.at === stations ? clr.value : null;
   const clearRows = clr && clr.of === map && clr.at === stations ? clr.rows : null;
+  const overrun = clr && clr.of === map && clr.at === stations ? clr.overrun : null;
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -1247,6 +1257,22 @@ export default function GinkgoHorn() {
       w.push(`${clearance.throat.saturated} of ${clearance.throat.pairs} neighbour pairs never open to the ${fmt(sepFloor, 1)} mm minimum anywhere along the path, so the throat knife-edge run would have swallowed the whole duct — it is capped, and the gap reported is the best those pairs actually have. Lower the minimum, or give the profile more room (lower T, or more depth).`);
     if (map && clearance && clearance.thin && clearance.thin.count > 0 && !(clearance.overlap > 1e-3))
       w.push(`${clearance.thin.count} spot(s) between ducts carry a wall sliver thinner than ${fmt(sepFloor, 1)} mm (worst ${fmt(clearance.thin.worst, 2)} mm at station ${clearance.thin.at}) — separate ducts that close will not print as two walls. Solve the separation in stage 8, or let them merge by raising the bulge.`);
+    // THE DIVIDER IS BOUNDED BY THE THROAT CELL'S OWN SAMPLING, and nothing
+    // else in the tool reports that bound. The inset mitres each corner, and
+    // the mitre reaches d/tan(th/2) back along each side; once that passes
+    // the spacing of the 16 samples on that side, the neighbouring sample's
+    // offset lands in front of the corner's and the outline runs BACKWARDS
+    // through it. The reversal is microns and it is not the damage: offsetting
+    // a reversed segment outward by the shell wall mitres a spike whose tip
+    // angle is nearly 180 deg, which is unbounded. One returned kit carried a
+    // blank whose throat ring reached 2.5 m from a 500 mm horn's axis, from
+    // 2 um of reversal. `insetPolygon` collapses the reversal now, so the
+    // export is sound either way — but a clamped corner is not the corner
+    // that was asked for, and the fix is the divider or the cell, never more
+    // ring points (refining the ring SHRINKS the spacing the mitre is
+    // measured against, so it makes the overrun worse).
+    if (overrun && overrun.reversed > 0)
+      w.push(`The ${fmt(thickness, 2)} mm divider overruns the throat sampling on ${overrun.cells.length} of ${throat.N} cells (${overrun.cells.join(" ")}): the corner mitre reaches ${fmt(overrun.shrinkMax, 2)}x the spacing between ring samples, so ${overrun.reversed} outline segment(s) run backwards and are collapsed to keep the solids sound. It is measured at ${fmt(overrun.shrinkMax, 3)} of a sample step against a limit of 1, and it is nearly proportional to the divider — ${fmt(thickness / overrun.shrinkMax, 3)} mm is where this geometry crosses. Lower the divider, or make the cells bigger (a larger exit, a coarser grid, or shape order m); more ring points makes it WORSE, not better.`);
     if (map && map.lengthen && map.lengthen.shortfall > 0.1)
       w.push(`Path lengthening hit its amplitude cap: the worst cell is still ${fmt(map.lengthen.shortfall, 1)} mm short of the ${fmt(map.lengthen.target, 1)} mm target. More lobes reach the same length at 1/n the amplitude — raise the lobe count rather than accepting the shortfall.`);
     // Only one fc when dL is small — past a few percent the horn does not have
@@ -1258,7 +1284,7 @@ export default function GinkgoHorn() {
     if (solve.converged && solve.monotone && solve.monotone.gap < 0.02)
       w.push(`Two grid lines come within ${solve.monotone.gap.toExponential(2)} of each other in parameter space — the areas are equal but a cell is pinched to nearly nothing there, which will not print and will not behave like a duct. Ease the bow, raise the shape order m, or move the corner angle.`);
     return w;
-  }, [solve, throat, shown, thickness, fab, map, clearance, profileT, fTarget, sepFloor]);
+  }, [solve, throat, shown, thickness, fab, map, clearance, overrun, profileT, fTarget, sepFloor]);
 
   // ── exports ────────────────────────────────────────────────────────────────
   const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.nc}x${shown.nr}_${throat.N}cells`;
@@ -1289,7 +1315,12 @@ export default function GinkgoHorn() {
       `shapeMorph=${map ? map.shapeMorphEff : o.shapeMorph}`,
       `divergeLen=${o.divergeLen}`, `arriveLen=${o.arriveLen}`, `tight=${o.tight}`,
       `mapStations=${stations}`,
-      `lengthen=${o.lengthen ? `${o.lengthen.lobes}lobe/${o.lengthen.dir}/[${o.lengthen.uStart},${o.lengthen.uEnd}]` : "off"}`,
+      // THE REGION GRADE BELONGS IN THE STAMP. It is a shipped slider that
+      // moves the geometry materially — measured 0.15 -> 0.20 costs 41% of
+      // the fold margin — and reproducing a returned export without it means
+      // assuming the default, which is exactly the guesswork the stamp exists
+      // to remove.
+      `lengthen=${o.lengthen ? `${o.lengthen.lobes}lobe/${o.lengthen.dir}/[${o.lengthen.uStart},${o.lengthen.uEnd}]/grade${n(o.lengthen.regionGrade ?? 0)}` : "off"}`,
       `bulge=${o.bulge ? o.bulge.amp : "off"}`,
       // the MODE and the peak amplitude go in the stamp too: a session was
       // spent inferring an export's settings back out of its geometry, and a
@@ -2325,6 +2356,11 @@ export default function GinkgoHorn() {
             // mis-spaces, and a plain throat has no extension ring at all —
             // the wall stops exactly on its own end ring, measured 0.
             const cw = G.throatCellWidth(throat, em, { t: thickness });
+            // The divider's own bound, printed beside the wall's. A kit whose
+            // rings reverse used to ship blanks metres across; they are
+            // collapsed now, so this says the corners were clamped rather
+            // than that the file is broken.
+            const ov = G.insetOverrun(throat, em, { t: thickness });
             const span = 2 * shellWall;
             const reaches = cw && span > cw.min;
             // A region export rests on a mirror, so the mirror is MEASURED
@@ -2345,6 +2381,8 @@ export default function GinkgoHorn() {
                 r.cutterExtMouth ? ` · cutters flush at the throat, ${fmt(r.cutterExtMouth, 2)} mm past the aperture (half a station step)` : ""}${
                 cw ? ` · throat cells ${fmt(cw.min, 1)}-${fmt(cw.max, 1)} mm wide against 2x wall ${fmt(span, 1)} mm${
                   reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt(cw.min / 2, 2)} mm to stop it` : ""}` : ""}${
+                ov ? ` · divider inset reaches ${fmt(ov.shrinkMax, 2)}x the ring sampling${
+                  ov.reversed ? ` — OVERRUN, ${ov.reversed} segment(s) collapsed on ${ov.cells.join(" ")}` : " (limit 1)"}` : ""}${
                 r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
                   mirWorst > 1e-3 ? " — MIRROR BROKEN, this region is not the whole horn" : ""}${
                   r.region.onPlane.length ? `, ${r.region.onPlane.length} cell(s) on the plane (${r.region.onPlane.join(" ")}) — do not duplicate them` : ""}` : ""} · ${

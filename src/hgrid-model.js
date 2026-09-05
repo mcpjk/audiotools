@@ -1753,15 +1753,28 @@ export function mapThroatToMouth(throat, opts) {
             const dP = Math.max(0, gross - openArea(rings[q], dq));
             k0 = (dP + Math.sqrt(dP * dP + 4 * gross * want)) / (2 * gross);
           }
-          // one Newton step against the TRUE area, to absorb the last ulps of
-          // the fit and to catch any section the quadratic does not describe
-          const f0 = O(k0) - want;
-          if (Math.abs(f0) > 1e-12 * want) {
+          // Newton against the TRUE area, to absorb the last ulps of the fit
+          // and to catch any section the quadratic does not describe. ONE
+          // step is enough while open(k) really is quadratic, which is
+          // wherever the inset is a clean offset. It stops being quadratic
+          // once the inset OVERRUNS its own sampling and `insetPolygon`
+          // collapses the reversed segments — the collapse is a clamp, and a
+          // clamp is not a polynomial — so the step is iterated instead of
+          // taken once. Measured: at the shipped t = 0.4 the first residual
+          // is already at ulp level and the loop does not run at all, so this
+          // costs nothing on any horn that is not overrunning; at t = 0.8,
+          // where 164 segments reverse, one step left 1.1e-7 relative and the
+          // loop lands it at 1e-12. Every step is guarded on IMPROVING the
+          // residual, so a section the quadratic cannot describe at all keeps
+          // the best k found rather than a diverged one.
+          for (let it = 0; it < 8; it++) {
+            const f0 = O(k0) - want;
+            if (!(Math.abs(f0) > 1e-12 * want)) break;
             const slope = 2 * a2 * k0 + b2;
-            if (Math.abs(slope) > 1e-12) {
-              const kn = k0 - f0 / slope;
-              if (kn > 1e-6 && isFinite(kn) && Math.abs(O(kn) - want) < Math.abs(f0)) k0 = kn;
-            }
+            if (!(Math.abs(slope) > 1e-12)) break;
+            const kn = k0 - f0 / slope;
+            if (!(kn > 1e-6) || !isFinite(kn) || !(Math.abs(O(kn) - want) < Math.abs(f0))) break;
+            k0 = kn;
           }
           k = k0;
         }
@@ -4755,7 +4768,48 @@ export function lineGridDividerLength(lg) {
 // The outline is K equal runs of n points with corners at multiples of n, so a
 // corner is where two offset lines have to be MITRED rather than displaced —
 // displacing each side along its own normal would leave the corner open.
-export function insetPolygon(poly, dPerSide) {
+//
+// A MITRE CAN SWALLOW ITS OWN NEIGHBOURS, AND THE OFFSET THEN RUNS BACKWARDS
+// THROUGH THEM. The mitre at a corner of interior angle th sits d/sin(th/2)
+// from the vertex along the bisector, so it reaches d/tan(th/2) BACK along
+// each side. Once that reach exceeds the spacing of the samples on that side,
+// the neighbouring sample's own offset lands in front of the corner's and the
+// polygon reverses: a segment that runs one way in the source runs the other
+// way in the offset. Those points are not on the offset boundary at all —
+// they are inside the material the offset removed — and the true offset there
+// is just the mitre point.
+//
+// It has to be repaired here rather than reported and passed on, because the
+// reversal is AMPLIFIED by any later offset. A reversed segment is a spike
+// with a tip angle of nearly 180 deg, and offsetting a spike outward by `w`
+// mitres its tip at w/sin(half tip angle) — unbounded as the tip closes.
+// Measured on the geometry that produced the report: the divider inset left
+// 2 um reversals on 4 of 18 cells' throat rings, and the shell blank's 3 mm
+// outward offset turned each into a 1.6 METRE spike, which is what the
+// exported shell blank 2,1 was.
+//
+// The repair drops the REDUNDANT LINE rather than averaging the two points.
+// out[k] is L(k-1) n L(k) and out[k+1] is L(k) n L(k+1), so both endpoints of
+// a reversed segment lie on L(k) — and the reversal means L(k) contributes no
+// boundary at all between them. The boundary there is L(k-1) n L(k+1)
+// directly, and that is where both points go. That keeps the MITRE exactly
+// where it belongs: on an equilateral triangle sampled 8 a side and inset by
+// 1 mm, where every corner swallows 2.31 samples, the repaired polygon has the
+// closed-form area of the similar triangle of side S - 2 d sqrt(3) to 4e-16
+// (asserted at 1e-9), while collapsing the pair to its midpoint instead loses
+// 14% of the area by dragging every corner inward.
+// When those two neighbours are themselves parallel — three collinear
+// segments, which happens on a straight side and essentially never on a
+// curved one — there is no intersection to take, and the point to keep is the
+// one that came from a real corner rather than from a pure displacement.
+// That is what `pinned` records.
+// The repair is a NO-OP wherever nothing reverses, which is what lets a horn
+// that does not overrun stay bit-identical to before, and it is
+// mirror-covariant, so a horn keeps both mirrors where it does fire.
+// `insetOverrun` measures how far the swallowing goes, because a mitre that
+// eats several samples is a divider growing large against the corner sampling,
+// and that is design information rather than an internal.
+export function insetPolygon(poly, dPerSide, { repair = true } = {}) {
   const N = poly.length, K = dPerSide.length, n = N / K;
   if (!Number.isInteger(n)) return null;
   let A2 = 0;
@@ -4764,27 +4818,71 @@ export function insetPolygon(poly, dPerSide) {
     A2 += a[0] * b[1] - b[0] * a[1];
   }
   const sgn = A2 >= 0 ? 1 : -1; // +1 when the outline runs counter-clockwise
-  // segment k joins point k to k+1 and belongs to side floor(k / n)
+  // Segment k joins point k to k+1 and belongs to side floor(k / n). A
+  // repeated point makes a segment with no direction of its own — which the
+  // collapse below can create, and which a caller can hand in — so the
+  // direction is borrowed from the nearest segment that has one. Without it
+  // the normalised tangent comes out (0, 0) and the point is not offset at
+  // all, leaving a notch the depth of the whole offset.
+  const dir = new Array(N).fill(null);
+  for (let k = 0; k < N; k++) {
+    const a = poly[k], b = poly[(k + 1) % N];
+    const tx = b[0] - a[0], ty = b[1] - a[1];
+    const L = Math.hypot(tx, ty);
+    if (L > 1e-12) dir[k] = [tx / L, ty / L];
+  }
+  if (dir.every((d) => d === null)) return null; // every point coincident
+  for (let pass = 0; pass < 2; pass++)
+    for (let k = 0; k < N; k++)
+      if (!dir[k]) dir[k] = dir[(k - 1 + N) % N] || dir[(k + 1) % N];
   const lineOf = (k) => {
-    const a = poly[k % N], b = poly[(k + 1) % N];
-    let tx = b[0] - a[0], ty = b[1] - a[1];
-    const L = Math.hypot(tx, ty) || 1e-12;
-    tx /= L; ty /= L;
-    const d = dPerSide[Math.floor((k % N) / n)];
+    const i = k % N, a = poly[i], [tx, ty] = dir[i];
+    const d = dPerSide[Math.floor(i / n)];
     return { px: a[0] - ty * sgn * d, py: a[1] + tx * sgn * d, tx, ty };
   };
-  const out = [];
-  for (let k = 0; k < N; k++) {
-    const L1 = lineOf((k - 1 + N) % N), L2 = lineOf(k);
+  // where two offset lines meet, or null when they are parallel
+  const meet = (L1, L2) => {
     const den = L1.tx * L2.ty - L1.ty * L2.tx;
-    if (Math.abs(den) < 1e-7) {
+    if (Math.abs(den) < 1e-7) return null;
+    const u = ((L2.px - L1.px) * L2.ty - (L2.py - L1.py) * L2.tx) / den;
+    return [L1.px + L1.tx * u, L1.py + L1.ty * u];
+  };
+  const out = [], pinned = [];
+  for (let k = 0; k < N; k++) {
+    const p = meet(lineOf((k - 1 + N) % N), lineOf(k));
+    if (p) { out.push(p); pinned.push(true); }
+    else {
       // the two segments are collinear: no corner to mitre, displace instead
-      const d = dPerSide[Math.floor(k / n)];
+      const L2 = lineOf(k), d = dPerSide[Math.floor(k / n)];
       out.push([poly[k][0] - L2.ty * sgn * d, poly[k][1] + L2.tx * sgn * d]);
-    } else {
-      const u = ((L2.px - L1.px) * L2.ty - (L2.py - L1.py) * L2.tx) / den;
-      out.push([L1.px + L1.tx * u, L1.py + L1.ty * u]);
+      pinned.push(false);
     }
+  }
+  if (!repair) return out;
+  // A source segment with no direction of its own cannot be reversed, so it
+  // is skipped rather than judged on a borrowed one.
+  const live = poly.map((a, k) => {
+    const b = poly[(k + 1) % N];
+    return Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-12;
+  });
+  for (let pass = 0; pass < N; pass++) {
+    let moved = false;
+    for (let k = 0; k < N; k++) {
+      if (!live[k]) continue;
+      const j = (k + 1) % N;
+      const ox = out[j][0] - out[k][0], oy = out[j][1] - out[k][1];
+      if (ox * dir[k][0] + oy * dir[k][1] >= 0) continue;
+      // L(k) carries no boundary between these two, so take its neighbours'
+      let p = meet(lineOf((k - 1 + N) % N), lineOf(j));
+      if (!p) p = pinned[k] === pinned[j]
+        ? [(out[k][0] + out[j][0]) / 2, (out[k][1] + out[j][1]) / 2]
+        : (pinned[k] ? out[k] : out[j]);
+      out[k] = p.slice();
+      out[j] = p.slice();
+      pinned[k] = true; pinned[j] = true;
+      moved = true;
+    }
+    if (!moved) break;
   }
   return out;
 }
@@ -4793,7 +4891,7 @@ export function insetPolygon(poly, dPerSide) {
 // own best-fit plane and each point keeps whatever off-plane offset it had.
 // The inset bites hardest near the throat, where sections are still nearly
 // flat, so the plane is a close fit exactly where it matters most.
-export function insetSection3(pts, dPerSide) {
+export function insetSection3(pts, dPerSide, opts = undefined) {
   const n = pts.length;
   const o = [0, 0, 0];
   for (const p of pts) { o[0] += p[0] / n; o[1] += p[1] / n; o[2] += p[2] / n; }
@@ -4818,7 +4916,7 @@ export function insetSection3(pts, dPerSide) {
     flat.push([d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2], d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2]]);
     off.push(d[0] * N[0] + d[1] * N[1] + d[2] * N[2]);
   }
-  const ins = insetPolygon(flat, dPerSide);
+  const ins = insetPolygon(flat, dPerSide, opts);
   if (!ins) return pts;
   return ins.map((q, k) => [
     o[0] + q[0] * e1[0] + q[1] * e2[0] + off[k] * N[0],
@@ -4854,6 +4952,104 @@ export function ductSections(cellRec, row, { t = 0 } = {}) {
     out.push({ s: st.s, area: polyArea3(pts), pts, origin: st.origin });
   }
   return out;
+}
+
+// ── HOW CLOSE THE DIVIDER INSET RUNS TO SWALLOWING ITS OWN SAMPLES ─────────
+//
+// The measured quantity is the SHRINK of each ring segment under the offset:
+//
+//   shrink_k = 1 - (offset segment k) . (unit source direction k) / |source k|
+//
+// 0 means the offset carried the two samples along without changing their
+// spacing; 1 means the offset closed that spacing to nothing; ABOVE 1 means
+// the offset ran backwards through it, which is the reversal `insetPolygon`
+// now collapses. It is dimensionless and defined at every point of every
+// ring, so it says how close the whole horn sits to the boundary rather than
+// only naming the cells that crossed it — which matters here, because the
+// horn sits AT the boundary nearly everywhere and which cells tip over is not
+// a property of those cells.
+//
+// Measured on the geometry that produced the shell-blank report — 6x3, m 3,
+// R 17.75, arcs 500x245, depth 321, T 0.7, divergeLen 1, crossRow 1-lobe bow
+// over [0.02, 0.22] at grade 0.20, 64 stations — sweeping the divider:
+//   t (mm)      0.4     0.45    0.5     0.55    0.6     0.8     1.0
+//   shrinkMax  0.811   0.910   1.008   1.107   1.204   1.597   1.986
+//   reversed     0       0       8      16      32     164     352  segments
+//   cells        0       0       4       8      10      18      18  of 18
+// It is very nearly PROPORTIONAL to the divider — shrinkMax/t is 2.057,
+// 2.047, 2.027, 2.017 and 1.996 at t = 0.1, 0.2, 0.4, 0.5 and 0.8, the droop
+// being the mitre's own nonlinearity — so the crossing is a threshold on t
+// and nothing else, bisected at t = 0.4957 mm on this geometry. The shipped
+// default 0.4 clears it by 19% of a sample step; the owner's 0.5 crosses it.
+// THE REVERSALS START AT STATION 0 AND SPREAD DOWN THE PATH WITH t, which is
+// why `stationMax` is reported and not just where the worst shrink is. The
+// inset tapers as t/2 x (1 - s) while the sections GROW with s, so the ratio
+// of offset to sampling falls monotonically along the path and the reversals
+// occupy a contiguous run from the throat. Measured at 64 stations, count by
+// station:
+//   t 0.5   8 reversals, station 0 only
+//   t 0.6  32, stations 0-1     (24, 8)
+//   t 0.8 164, stations 0-4     (52, 52, 36, 20, 4)
+//   t 1.0 360, stations 0-7     (72, 72, 68, 52, 52, 32, 8, 4)
+// So the throat ring is the first to go and the only one to go until about
+// t = 0.55; past that the clamping reaches into the horn. The straight run
+// does not enter it (identical at divergeLen 0 and 5, because station 0 is
+// before the fan).
+//
+// WHAT MOVES THE THRESHOLD IS THE CELL SIZE, and more cells is worse.
+// Measured at t = 0.5, changing one thing at a time from the geometry above:
+//   R 17.75 -> 20      shrink 1.008 -> 0.897,  0 reversed   (bigger cells)
+//   m 3 -> 2           shrink 1.008 -> 0.983,  0 reversed   (blunter corners)
+//   6x3 -> 6x4         shrink 1.008 -> 1.162, 16 reversed
+//   6x3 -> 8x3         shrink 1.008 -> 1.308, 96 reversed
+// so the divider is bounded by the throat CELL, and the bound tightens as the
+// partition gets finer — which is the same trade already recorded for the
+// open throat area, read on the geometry instead of on the area.
+//
+// THE COUNTER-INTUITIVE PART IS THE RESOLUTION. The mitre's reach back along
+// a side is d/tan(th/2) — a property of the corner and the divider, fixed —
+// while the spacing it is measured against is the side's arc divided by the
+// 16 samples per side. So REFINING the ring makes the overrun worse, not
+// better, and the fix is never more points.
+export function insetOverrun(throat, map, { t = 0 } = {}) {
+  if (!map || !t) return { shrinkMax: 0, reversed: 0, cells: [], at: null, backMax: 0, stationMax: null, stations: 0 };
+  let shrinkMax = 0, reversed = 0, backMax = 0, at = null, stationMax = null;
+  const hitStations = new Set();
+  const cells = [];
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const rim = cellRec.rimSide || [false, false, false, false];
+    let bad = 0;
+    for (let q = 0; q < row.sched.length; q++) {
+      const st = row.sched[q];
+      if (!st.pts) continue;
+      const d = rim.map((isRim) => (isRim ? 0 : (t / 2) * (1 - st.s)));
+      if (!d.some((v) => v > 0)) continue;
+      // the RAW offset, before the collapse — the collapse is exactly what is
+      // being measured, so measuring the repaired ring would report zero
+      const raw = insetSection3(st.pts, d, { repair: false });
+      const P = st.pts, n = P.length;
+      for (let k = 0; k < n; k++) {
+        const j = (k + 1) % n;
+        const s = [P[j][0] - P[k][0], P[j][1] - P[k][1], P[j][2] - P[k][2]];
+        const L = Math.hypot(s[0], s[1], s[2]);
+        if (L < 1e-12) continue;
+        const o = [raw[j][0] - raw[k][0], raw[j][1] - raw[k][1], raw[j][2] - raw[k][2]];
+        const along = (o[0] * s[0] + o[1] * s[1] + o[2] * s[2]) / L;
+        const shrink = 1 - along / L;
+        if (shrink > shrinkMax) { shrinkMax = shrink; at = { label: cellRec.label, station: q, index: k }; }
+        if (shrink > 1) {
+          reversed++; bad++;
+          backMax = Math.max(backMax, -along);
+          hitStations.add(q);
+          if (stationMax === null || q > stationMax) stationMax = q;
+        }
+      }
+    }
+    if (bad) cells.push(cellRec.label);
+  }
+  return { shrinkMax, reversed, cells, at, backMax, stationMax, stations: hitStations.size };
 }
 
 // ── THE APERTURE AS A SURFACE THE SHELL CAN BE SNAPPED TO ──────────────────
