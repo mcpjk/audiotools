@@ -2942,8 +2942,19 @@ head("Duct separation (field and solver)");
     // is never caught up to and the overshoot survives as dL. Scoring on the
     // gap alone let a solve hand back a horn 19.9 mm worse in path spread.
     {
+      // divergeLen 0 ON PURPOSE. This block is about the path-length budget,
+      // and the straight run is incidental to it — but the run now TRANSLATES
+      // the bow window, so leaving one in here would sit the budget's vacuity
+      // guard on a geometry that the window rule itself moves. It did: at
+      // divergeLen 3 and floor 0.5 the guard stopped firing (budgeted and
+      // unbudgeted both landed dL 0.343) while every neighbouring setting
+      // still bit — divergeLen 3 at floor 1.0, and 0, 6 and 12 at both floors.
+      // A guard that depends on landing the right side of a knife edge is not
+      // a guard, so the run is removed rather than re-tuned to another lucky
+      // value. At divergeLen 0 the budget bites hard: 1.007 mm against the
+      // unbudgeted 25.570, 5 states refused.
       const oB = { ...opts, exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245,
-        depth: 300, divergeLen: 3, stations: 32,
+        depth: 300, divergeLen: 0, stations: 32,
         lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.2 } };
       // The budget is lambda/8 at the partition target. ASSERTED AGAINST THE
       // INDEPENDENTLY KNOWN VALUE (2.18 mm at 20 kHz, which this suite already
@@ -4810,6 +4821,195 @@ head("The section's shape morph, and which clock it runs on");
   checkTrue("...as does a horn with no expansion law imposed",
     at({ lengthen: null, profileT: null, shapeMorph: "radius" }).shapeMorphEff === "length",
     "shapeMorphEff = length");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+head("The divergence run TRANSLATES the bow window");
+// The straight run at the throat is a pure RADIAL FAN, and a radial launch
+// expands cells INTO contact rather than apart — the finding is already in
+// CLAUDE.md. So the run separates nothing and simply DELAYS the profile's
+// gap-opening; the bow's window has to ride along with it.
+//
+// It used to be CLAMPED — u0 = max(rq0, divergeLen/L) — which pinned the bow
+// at the end of the run, exactly where the ducts have not separated yet, and
+// ate the window from the front so the turn got steeper as the run grew.
+{
+  const t = 0.4, ST = 64;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c });
+  const common = {
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, stations: ST, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", shapeMorph: "radius", keepGeometry: true,
+    computeClearance: false,
+  };
+  const BOW = { lobes: 1, dir: "crossRow", uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 };
+  const CLR = {
+    thinBand: 1.5, throatFloor: 1.5, pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
+    outline: "inset", t, floor: 1.5, compare: "solid",
+  };
+  const at = (o) => M.mapThroatToMouth(Lay.throat, { ...common, ...o });
+  const spanMin = (m) => Math.min(...m.rows.map((r) => r.snakeSpan).filter((x) => x > 1e-9));
+
+  // ── 1. THE WINDOW RIDES WITH THE RUN, AND ITS SPAN IS INVARIANT ──────────
+  // This is the whole change, stated without needing the superseded rule in
+  // the file to compare against: the realised window must not SHRINK as the
+  // run grows. Measured under the clamp it went 0.1600 -> 0.0668 over
+  // divergeLen 0 -> 40 mm; the recorded worst gap went +0.225 -> -4.657 mm
+  // with the fold margin passing through zero at 20 mm, which is a duct
+  // turned inside out.
+  const spans = [0, 5, 10, 20, 30, 40].map((dv) => spanMin(at({ divergeLen: dv, lengthen: BOW })));
+  checkTrue("the window's span does not shrink as the divergence run grows",
+    Math.max(...spans) - Math.min(...spans) < 1e-6,
+    `${spans.map((x) => x.toFixed(4)).join(" ")} over divergeLen 0..40 mm`);
+
+  // and the START really is the requested one carried past the run, per cell,
+  // measured on the displacement rather than on the bookkeeping
+  {
+    const dv = 20;
+    const m0 = at({ divergeLen: dv, lengthen: null });
+    const m1 = at({ divergeLen: dv, lengthen: BOW });
+    let worstEarly = 0, movedAfter = 0;
+    for (let r = 0; r < m1.rows.length; r++) {
+      const L0 = m0.rows[r].Lpath, f = dv / L0;
+      for (let q = 0; q <= ST; q++) {
+        const a = m0.rows[r].sched[q], b = m1.rows[r].sched[q];
+        const d = Math.hypot(b.origin[0] - a.origin[0], b.origin[1] - a.origin[1],
+                             b.origin[2] - a.origin[2]);
+        // sched[].s is an arc-length FRACTION, not mm — `ductSections` uses
+        // `1 - st.s` as the inset taper. Dividing it by L0 read every
+        // station as inside the run, which is how this test first failed.
+        if (a.s <= f) worstEarly = Math.max(worstEarly, d);
+        else movedAfter = Math.max(movedAfter, d);
+      }
+    }
+    checkTrue("no bow anywhere inside the straight run it was told to leave alone",
+      worstEarly < 1e-6, `${worstEarly.toExponential(2)} mm inside the run, ${movedAfter.toFixed(1)} mm after it`);
+    checkTrue("...and the bow really does act once the run is over", movedAfter > 1,
+      `${movedAfter.toFixed(1)} mm of centreline displacement past the run`);
+  }
+
+  // ── 2. THE ARRIVAL RUN IS STILL A CLAMP, AND THAT IS DELIBERATE ──────────
+  // It is the FAR end of the path, so there is nothing to translate it onto;
+  // cutting the window where the run begins is what stops a bow running
+  // through a stretch the user asked to be straight. Before the excision
+  // existed a 40 mm arrival run measured 1.19-1.41 mm of bow through it.
+  {
+    const arr = 40;
+    const m0 = at({ arriveLen: arr, lengthen: null });
+    const m1 = at({ arriveLen: arr, lengthen: { ...BOW, uStart: 0.5, uEnd: 0.99 } });
+    let worstLate = 0;
+    for (let r = 0; r < m1.rows.length; r++) {
+      const L0 = m0.rows[r].Lpath, g = 1 - arr / L0;
+      for (let q = 0; q <= ST; q++) {
+        const a = m0.rows[r].sched[q], b = m1.rows[r].sched[q];
+        if (a.s < g) continue;
+        worstLate = Math.max(worstLate, Math.hypot(b.origin[0] - a.origin[0],
+          b.origin[1] - a.origin[1], b.origin[2] - a.origin[2]));
+      }
+    }
+    checkTrue("no bow inside the arrival run either", worstLate < 1e-6,
+      `${worstLate.toExponential(2)} mm over the last ${arr} mm`);
+  }
+
+  // ── 3. divergeLen = 0 IS UNTOUCHED, WHICH IS WHY THE FILE STILL READS ────
+  // With no run there is nothing to translate, so the rule is the identity
+  // and every figure recorded at the defaults reproduces. Asserted against
+  // an explicit zero-length run as well, so the branch itself is exercised.
+  check("with no divergence run the rule is the identity",
+    spanMin(at({ divergeLen: 0, lengthen: BOW })),
+    spanMin(at({ lengthen: BOW })), 0, "");
+  {
+    const a = at({ lengthen: BOW }), b = at({ divergeLen: 0, lengthen: BOW });
+    let w = 0;
+    for (let r = 0; r < a.rows.length; r++)
+      for (let q = 0; q <= ST; q++)
+        for (let k = 0; k < a.rows[r].sched[q].pts.length; k++)
+          for (let d = 0; d < 3; d++)
+            w = Math.max(w, Math.abs(a.rows[r].sched[q].pts[k][d] - b.rows[r].sched[q].pts[k][d]));
+    check("...bit for bit", w, 0, 0, "mm");
+  }
+
+  // ── 4. WHAT IT BUYS, IN THE DIRECTION IT GOES ────────────────────────────
+  // The clamp left the shipped horn interpenetrating as soon as a run was
+  // asked for: measured -1.019 mm at 5 mm of run and -2.430 at 10, against
+  // +0.225 with no run at all. Riding along keeps it clear at both.
+  for (const dv of [5, 10]) {
+    const g = M.ductClearance(at({ divergeLen: dv, lengthen: BOW }).rows, CLR).minMid;
+    checkTrue(`a ${dv} mm divergence run no longer drives the ducts together`,
+      g > 0, `worst gap ${g.toFixed(3)} mm, where pinning the window at the run measured ${dv === 5 ? "-1.019" : "-2.430"}`);
+  }
+  // AND IT IS NOT A CURE FOR A LONG RUN. The run also GROWS the deficit the
+  // bow has to correct — dL 14.61 -> 19.64 mm over divergeLen 0 -> 40 at this
+  // depth — so past about 20 mm no window placement is enough and the span
+  // has to widen too. Asserted so the rule is not oversold.
+  {
+    const d0 = at({ divergeLen: 0, lengthen: null }).dL;
+    const d40 = at({ divergeLen: 40, lengthen: null }).dL;
+    checkTrue("...because the run also grows the deficit the bow must correct",
+      d40 > d0 * 1.2, `dL ${d0.toFixed(2)} -> ${d40.toFixed(2)} mm over divergeLen 0 -> 40`);
+    const g40 = M.ductClearance(at({ divergeLen: 40, lengthen: BOW }).rows, CLR).minMid;
+    checkTrue("...so a long run is still not free on placement alone",
+      g40 < 0, `worst gap ${g40.toFixed(3)} mm at 40 mm of run, against -4.657 pinned`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+head("The depth solve and the two straight runs");
+// A straight run adds path length at ONE end, and depth adds it at both — so
+// the runs MOVE the depth at which the path lengths are closest together.
+// `solveDepthForMinDL` reads them straight out of `opts` and always has; what
+// changed on 2026-09-05 is that the UI stopped forcing them to zero before
+// calling it, so the answer describes the horn on screen. Asserted here at
+// the MODEL level, on the direction each run moves the optimum, so nobody can
+// re-zero them without this going red.
+{
+  const t = 0.4;
+  const th = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 2, t, c }).throat;
+  const O = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", stations: 24, samples: 128,
+    keepGeometry: false, computeClearance: false, lengthen: null, ...o,
+  });
+  const solve = (dv, ar) => M.solveDepthForMinDL(th, O({ divergeLen: dv, arriveLen: ar }), {});
+  const bare = solve(0, 0), div = solve(40, 0), arr = solve(0, 40);
+
+  // ── THE DIRECTIONS, WHICH ARE THE PHYSICS ────────────────────────────────
+  // The divergence run adds length at the THROAT, so the mouth has to move
+  // away to bring the curvature centre back onto it: the optimum goes DEEPER.
+  // The arrival run adds it at the MOUTH, so the optimum comes SHALLOWER.
+  checkTrue("a divergence run pushes the dL optimum DEEPER",
+    div.ok && bare.ok && div.depth > bare.depth + 5,
+    `${bare.depth.toFixed(1)} -> ${div.depth.toFixed(1)} mm at 40 mm of divergence`);
+  checkTrue("...and an arrival run pulls it SHALLOWER",
+    arr.ok && arr.depth < bare.depth - 1,
+    `${bare.depth.toFixed(1)} -> ${arr.depth.toFixed(1)} mm at 40 mm of arrival`);
+
+  // ── AND THE SOLVE REALLY IS SOLVING THE HORN IT WAS HANDED ───────────────
+  // The answer must beat the zero-run answer ON THE RUN-CARRYING HORN, or the
+  // solve is decorative. Measured independently through the forward model
+  // rather than trusting the solver's own dL.
+  const dLat = (depth, dv, ar) =>
+    M.mapThroatToMouth(th, O({ depth, divergeLen: dv, arriveLen: ar })).dL;
+  for (const [dv, ar, s2] of [[40, 0, div], [0, 40, arr]]) {
+    const mine = dLat(s2.depth, dv, ar), theirs = dLat(bare.depth, dv, ar);
+    checkTrue(`solving WITH the runs beats the zeroed depth on that horn (dv ${dv}, arr ${ar})`,
+      mine <= theirs + 1e-9,
+      `dL ${theirs.toFixed(3)} at the zeroed depth against ${mine.toFixed(3)} at its own`);
+  }
+  // and the gap is worth having at a long run: one whole lambda/8 budget of
+  // path spread, which is the number the separation solve is judged against
+  checkTrue("...and at a 40 mm divergence run that is worth about a lambda/8",
+    dLat(bare.depth, 40, 0) - dLat(div.depth, 40, 0) > 1.0,
+    `${(dLat(bare.depth, 40, 0) - dLat(div.depth, 40, 0)).toFixed(3)} mm of dL, against a 2.18 mm budget`);
+
+  // no run at all must leave the answer exactly where it was, or this change
+  // would have moved every depth figure recorded in CLAUDE.md
+  check("with no runs the solve is unchanged", solve(0, 0).depth, bare.depth, 0, "mm");
 }
 
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);

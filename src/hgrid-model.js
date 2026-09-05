@@ -1181,14 +1181,57 @@ export function mapThroatToMouth(throat, opts) {
         const d = s3(D, m3(t, dot3(D, t)));
         return nrm3(d) > 1e-6 ? un3(d) : v3(0, 0, 0);
       });
-      // THE SUPPORT. Requested [uStart, uEnd], with the straight runs cut
-      // out of it: a run the user asked to be straight is not a place to put
-      // a bow. Both are in arc-length fraction of THIS cell's own path, so a
-      // run of a given mm length excises the right amount from every cell
-      // whatever its length.
+      // ── THE SUPPORT, AND WHICH POINT THE REQUEST IS MEASURED FROM ─────────
+      // Requested [uStart, uEnd], in arc-length fraction of THIS cell's own
+      // path, so a run of a given mm length means the same thing on every
+      // cell whatever its length.
+      //
+      // THE DIVERGENCE RUN TRANSLATES THE WINDOW; IT DOES NOT TRUNCATE IT.
+      // The straight run is a pure RADIAL FAN, and a radial launch expands
+      // cells INTO contact rather than apart — the finding is already in this
+      // file. So the run separates nothing, and the profile's whole
+      // gap-opening schedule is simply delayed by its length. Measured on the
+      // unbowed default horn, the station at which the worst pair first
+      // reaches 2 mm of wall moves u 0.094 -> 0.219 as divergeLen goes
+      // 0 -> 40 mm, against divergeLen/L of 0 -> 0.125: the profile is
+      // translated, not reshaped.
+      // The request therefore has to be measured from where the bending
+      // actually starts. It used to be CLAMPED — u0 = max(rq0, divergeLen/L)
+      // — which pinned the bow at the end of the straight run, exactly where
+      // the ducts have not separated yet, and ate the window from the front
+      // so the turn got steeper as the run grew. Measured at the shipped
+      // window and grade, worst gap and fold margin:
+      //   divergeLen      0        5       10       20       40   mm
+      //   clamped     +0.225   -1.019   -2.430   -2.857   -4.657 mm
+      //               (1.59)   (1.53)   (1.35)  (-0.47)  (-4.22) fold
+      //   translated  +0.225   +0.290   +0.098   -0.366   -1.492 mm
+      //               (1.59)   (1.17)   (0.80)   (0.01)  (-1.63) fold
+      // — and a negative fold margin is a duct turned inside out, which still
+      // meshes closed and passes every other check in this file.
+      // THE INVARIANT THAT MAKES IT A RULE rather than a better number: at a
+      // FIXED span, the earliest window start that costs nothing sits a
+      // constant distance past the end of the run. Measured as
+      // (start - divergeLen/L) over divergeLen 0..30:
+      //   span 0.28   0.040 0.034 0.028 0.037        spread +-0.006
+      //   span 0.36   0.030 0.024 0.018 0.017 0.016  spread +-0.007
+      //   span 0.48   0.020 0.004 0.008 0.007 0.016  spread +-0.008
+      // so whatever (start, span) is right at divergeLen 0 stays right at any
+      // run length once it rides along with the run. The OFFSET ITSELF is not
+      // one number — it shrinks as the span widens, because a wider window is
+      // a gentler turn that tolerates starting in less room — so this is a
+      // translation rule and NOT a formula for the optimum window.
+      // AT divergeLen = 0 THE TWO RULES ARE IDENTICAL, which is what keeps
+      // every figure recorded in this file reproducible.
+      //
+      // The ARRIVAL run is still a clamp, and for a different reason: it is
+      // the far end of the path, so there is nothing to translate it onto.
+      // A run the user asked to be straight is not a place to put a bow, so
+      // the window is cut where the arrival run begins. Before the excision
+      // existed a 40 mm arrival run measured 1.19-1.41 mm of bow through it.
       const [rq0, rq1] = snake.windowFor(cellRec);
-      const u0 = Math.max(rq0, divergeLen > 0 ? divergeLen / L0 : 0);
-      const u1 = Math.min(rq1, arriveLen > 0 ? 1 - arriveLen / L0 : 1);
+      const shift = divergeLen > 0 ? divergeLen / L0 : 0;
+      const u0 = rq0 + shift;
+      const u1 = Math.min(rq1 + shift, arriveLen > 0 ? 1 - arriveLen / L0 : 1);
       const span = u1 - u0;
       snakeSpan = span;
       // the runs (or the request) have squeezed the support to nothing: there

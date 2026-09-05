@@ -418,7 +418,9 @@ exists.
   with a render of thin needles fanning out of the throat. Reproduced from the
   file's own settings stamp (6x3, m 3, R 17.75, **t 0.5**, arcs 500x245, depth
   321, T 0.7, divergeLen 1, crossRow 1-lobe bow over [0.02, 0.22], wall 3, 32
-  shell stations, the -x -y quarter).
+  shell stations, the -x -y quarter). MEASURED UNDER THE SUPERSEDED CLAMPED
+  BOW WINDOW — see the divergence-run finding; the geometry moves under the
+  translation rule, though nothing here turns on the bow.
   **THE MECHANISM IS TWO STEPS AND ONLY THE SECOND ONE IS VISIBLE.**
   (1) `insetPolygon` mitres each corner, and a mitre at interior angle th sits
   d/sin(th/2) from the vertex — so it reaches **d/tan(th/2) BACK along each
@@ -501,6 +503,158 @@ exists.
   than it has samples, and the solids are sound but the corner is not the one
   that was asked for. The UI warns, naming the cells and the crossing
   thickness, and the shell export note prints the shrink beside the wall.
+
+- **THE DEPTH SOLVE NOW HONOURS THE TWO STRAIGHT RUNS, and zeroing them was
+  answering about a horn nobody was building.** `solveDepthForMinDL` always
+  read `divergeLen` / `arriveLen` straight out of `opts`; what changed
+  (2026-09-05) is that the UI stopped forcing them to zero — and resetting the
+  sliders — before calling it. The old behaviour had a stated rationale, that
+  a solve should be a repeatable reference point rather than a function of
+  wherever the last experiment left the runs. That is a real property, and it
+  was being bought with the wrong currency: a run adds path length at ONE end,
+  which is what depth does at both, so the runs MOVE the optimum.
+    divergeLen  arriveLen   true optimum   dL there   dL at the zeroed depth
+         0          0         319.5 mm      11.929           11.929
+        10          0         324.2 mm      11.882           12.020
+        20          0         328.6 mm      11.834           12.115
+        40          0         337.9 mm      11.737           13.907
+         0         20         318.2 mm      12.694           12.827
+         0         40         316.9 mm      13.585           13.828
+        20         20         327.4 mm      12.593           12.873
+        40         40         335.8 mm      13.373           14.776
+  **THE DIRECTIONS ARE THE PHYSICS AND THEY ARE OPPOSITE.** The divergence run
+  adds length at the THROAT, so the mouth has to move away to bring the
+  curvature centre back onto the throat and the optimum goes DEEPER — 18.4 mm
+  deeper at a 40 mm run. The arrival run adds it at the MOUTH, so the optimum
+  comes SHALLOWER, 2.6 mm at 40. Both are asserted as directions rather than
+  as values, so the mechanism is what is pinned.
+  **WHAT IGNORING THEM COSTS is small at a short run and not at a long one**:
+  0.13 mm of dL at 10 mm of divergence, and **2.17 mm at 40 mm — one whole
+  lambda/8 budget** (2.18 mm at the 20 kHz partition target), which is the
+  number the separation solve is judged against. So on any horn with a real
+  divergence run the zeroed solve was giving away the entire path-spread
+  budget before the bow had spent a millimetre of it.
+  **REPEATABILITY IS KEPT BY REPORTING, NOT BY RESETTING.** The readout stamps
+  the runs the answer was solved for and warns when they have moved since, so
+  a solve still describes a definite horn — just the one on screen rather than
+  a hypothetical one with no runs. Lengthening and the separation field are
+  still held OFF for the solve: the bows are a correction applied on top of
+  whatever depth it lands on, and a field solved for one depth is meaningless
+  at another.
+  **AT divergeLen = arriveLen = 0 THE ANSWER IS UNCHANGED**, asserted exactly,
+  which is what keeps every depth figure recorded in this file reproducible —
+  319.5 mm for this mouth is still 319.5 mm.
+  This is the same mechanism as the divergence-run finding below, read from
+  the other side: there, a run makes the bow's job harder because it grows dL
+  at a depth below the optimum; here, the optimum itself is what moves.
+
+- **THE DIVERGENCE RUN TRANSLATES THE BOW WINDOW; IT USED TO TRUNCATE IT, AND
+  THAT PINNED THE BOW EXACTLY WHERE THERE IS NO ROOM.** Owner's report,
+  2026-09-05: the default horn's middle row is well separated, but adding a
+  divergence run drives the ducts through each other at the start of the bow.
+  It reproduces, and it is worse than intersection — measured at the shipped
+  window [0.02, 0.22] grade 0.20, crossRow 1 lobe, 64 stations:
+    divergeLen      0        5       10       20       40   mm
+    worst gap   +0.225   -1.019   -2.430   -2.857   -4.657  mm
+    fold margin  +1.59    +1.53    +1.35    -0.47    -4.22  mm
+  Past about 20 mm the ducts are FOLDED, not merely overlapping, and a folded
+  duct still meshes closed and passes everything but `bendFold`.
+  **THE MECHANISM IS THAT THE STRAIGHT RUN SEPARATES NOTHING.** It is a pure
+  RADIAL FAN, and the finding further down this file already records that a
+  radial launch expands cells INTO contact rather than apart. So the profile's
+  whole gap-opening schedule is simply DELAYED by the run's length. Measured
+  on the unbowed horn, the station at which the worst pair first reaches a
+  given wall:
+    reaches      1 mm    2 mm    4 mm    8 mm      divergeLen/L
+    dv  0       0.047   0.094   0.203   0.359         0.0000
+    dv 10       0.063   0.125   0.219   0.391         0.0317
+    dv 20       0.078   0.156   0.250   0.422         0.0631
+    dv 40       0.078   0.219   0.328   0.484         0.1250
+  The 2 mm column moves 0.094 -> 0.219 against a divergeLen/L of 0 -> 0.125:
+  translated, not reshaped.
+  **THE FIX IS ONE LINE AND IT IS A TRANSLATION.** `u0 = max(rq0, dv/L0)`
+  became `u0 = rq0 + dv/L0`, so the request is measured from where the bending
+  actually starts. The ARRIVAL run stays a clamp, deliberately: it is the far
+  end of the path, so there is nothing to translate onto, and cutting the
+  window where that run begins is what stops a bow running through it.
+  **THE INVARIANT THAT MAKES IT A RULE rather than a better number**: at a
+  FIXED span, the earliest window start that costs nothing sits a CONSTANT
+  distance past the end of the run. Measured as (start - dv/L) over
+  divergeLen 0..30, where "costs nothing" is a gap within 5% of the unbowed
+  horn's own ceiling with the fold margin above 1 mm:
+    span 0.28    0.040 0.034 0.028 0.037         spread +-0.006
+    span 0.36    0.030 0.024 0.018 0.017 0.016   spread +-0.007
+    span 0.48    0.020 0.004 0.008 0.007 0.016   spread +-0.008
+  So whatever (start, span) is right at divergeLen 0 stays right at any run
+  length once the window rides along. Under the clamp the realised span
+  SHRANK instead — 0.1600 -> 0.0668 over divergeLen 0 -> 40 — which is the
+  window being eaten from the front, and a narrower window is a steeper turn.
+  Span invariance is what the tests assert, and it needs no second code path.
+  **THE OFFSET ITSELF IS NOT ONE NUMBER, and an earlier reading of this said
+  it was.** It is ~0.035 at span 0.28, ~0.02 at 0.36 and ~0.01 at 0.48 —
+  it SHRINKS as the span widens, because a wider window is a gentler turn that
+  tolerates starting in less room (the unbowed wall at the free start goes
+  1.08 -> 0.72 mm over those spans). The first version of this finding
+  measured one span and reported 0.035 as the rule; the span control
+  falsified it. This is a translation rule, NOT a formula for the optimum.
+  **THERE IS NO "OPTIMAL CENTRE" TO FIND.** The gap SATURATES at the unbowed
+  horn's own ceiling (1.50-1.55 mm here) as soon as the window clears the
+  region where the ducts still effectively tile; past that, moving out buys
+  nothing on the gap and only spends fold margin, because a bow further along
+  sits on a FATTER duct and the same span is a tighter turn there. Measured
+  at span 0.20 the gap is flat from centre 0.25 to 0.50 (1.504 to 1.506)
+  while the fold margin runs -0.59 to -7.52. So centre and span must move
+  OUTWARD AND WIDER TOGETHER, and the fold-safe optimum does:
+    dv     centre  span   window         gap    fold
+     0      0.20   0.28   [0.06, 0.34]  1.556   3.93
+    10      0.25   0.36   [0.07, 0.43]  1.544   6.14
+    20      0.25   0.28   [0.11, 0.39]  1.46    2.1
+    40      0.35   0.36   [0.17, 0.53]  1.45    1.7
+  **AND A LONG RUN IS STILL NOT FREE, BECAUSE IT ALSO GROWS THE DEFICIT.**
+  With no bow at all, dL goes 14.61 -> 19.64 mm over divergeLen 0 -> 40 at
+  depth 300, so the run demands a BIGGER bow on a horn with LESS room. That is
+  the third mechanism and placement cannot answer it.
+  **THE DEPTH ANSWERS IT, WHICH IS THE FOURTH TIME THIS FILE HAS REACHED THAT
+  CONCLUSION BY A DIFFERENT ROUTE.** Shipped window against the same window
+  translated, sweeping the axial depth:
+    depth   dv    dL       clamped gap/fold     translated gap/fold
+      300    0   14.61     +0.225/ +1.59         +0.225/ +1.59
+      300   20   16.93     -2.857/ -0.47         -0.366/ +0.01
+      300   40   19.64     -4.657/ -4.22         -1.492/ -1.63
+    319.5   20   12.12     -1.507/ +1.48         +1.482/ +2.35
+      340   10   14.21     -0.605/ +4.00         +1.555/ +5.12
+      340   20   13.48     -0.737/ +1.96         +1.520/ +4.74
+      340   40   11.97     -1.009/ -1.29         +1.522/ +3.77
+  At depth 340 with the translation the run is FREE out to 40 mm — the gap
+  pinned at the ceiling with 3.77 mm of fold margin, no widening and no
+  re-tuning. BOTH changes are needed: at 340 the clamped window still fails,
+  and at 300 the translated one still degrades.
+  **AND THE REASON IS THAT A DIVERGENCE RUN SUBSTITUTES FOR DEPTH ON dL.**
+  Read the dL column: at depth 300 the run GROWS dL (14.61 -> 19.64), at 340
+  it SHRINKS it (14.88 -> 11.97). A straight run adds path length, which is
+  what depth does, so below the dL optimum the run pushes you further off it
+  and above the optimum it pulls you back toward it.
+  **WHAT WAS GIVEN UP.** The clamp is GONE rather than kept as a comparison
+  mode, and unlike `sectionAlign: "bernstein"` or `shapeMorph: "length"` it is
+  NOT reproducible afterwards: the region grade is applied to the requested
+  window before the run is accounted for, so shifting the request rescales
+  each cell's window differently than clamping the graded windows did
+  (measured 0.06 to 11.6 mm apart), and `L0` is per cell so no single shift
+  fixes it. Three figures in this file were taken at divergeLen 1-3 mm and
+  their geometry moves 0.96 / 1.92 / 2.82 mm — the inset-reversal repro, the
+  shell-union adjacency export and the returned-export clearance finding.
+  None of the three is ABOUT the bow window, and **at divergeLen 0 the two
+  rules are bit-identical (0.00e+0 mm, arriveLen included)**, so every default
+  and every other figure here is untouched. That is why the mode was dropped
+  rather than kept.
+  **The owner's own reading of the symptom was the opposite way round and is
+  worth recording**: "the innermost bow starts earlier than it should". Under
+  the CONCENTRIC grade the inner cell's window is narrower about a FIXED
+  centre, so it starts LATEST. What actually happened is that the clamp bit
+  the OUTER cell first — its window starts earliest — compressing it toward
+  the inner one's and squeezing the grade's ordering out from the front. Same
+  symptom, opposite cause, and it matters because it means widening the grade
+  would not have helped.
 
 - **THE SECTION'S SHAPE WAS MORPHING ON A DIFFERENT CLOCK FROM ITS SIZE, AND
   THAT MISMATCH WAS THE WHOLE OF THE NEAR-THROAT DUCT CONVERGENCE.**
@@ -1841,7 +1995,8 @@ exists.
   extension behind it would cut into the real body and is REFUSED, not shipped.
 - **ADJACENCY IS THE RULE FOR THE UNIONS, and the second export made it
   clean.** On the owner's third quarter (settings read from the header: 6x3,
-  m 2, arcs 555x245, depth 357, T 0.7, divergeLen 2, **bulge 4**, radial 1-lobe
+  m 2, arcs 555x245, depth 357, T 0.7, divergeLen 2 (SEE THE CLAMP NOTE IN THE
+  DIVERGENCE-RUN FINDING), **bulge 4**, radial 1-lobe
   bow, wall 3, jitter 0.5, 32 shell stations), 15 pair unions:
     NON-ADJACENT (no shared edge)   4 of 4 succeeded
     ORTHOGONAL neighbours           0 of 7 succeeded (6 failed, 1 non-manifold)
@@ -2155,7 +2310,9 @@ exists.
   The owner returned a shell STEP whose ducts visibly interpenetrate in CAD
   while the tool's own readout said the separation solve had reached
   +1.14 mm. Reproduced exactly from that file's settings stamp (arcH 500,
-  depth 321, divergeLen 3, T 0.7, bulge 4, 1-lobe radial bow over [0, 0.25],
+  depth 321, divergeLen 3 (measured under the superseded CLAMPED bow window —
+  see the divergence-run finding; the station-count conclusion is unaffected),
+  T 0.7, bulge 4, 1-lobe radial bow over [0, 0.25],
   wall 3, jitter 0.3): the UI solved at PREVIEW_STATIONS = 24 and reported
   -0.614 -> +1.144 mm in 20 rounds at amplitude 29.2 mm, matching the owner's
   screenshot to the digit. **That same field re-measured at the export's 64

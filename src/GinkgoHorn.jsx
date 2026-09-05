@@ -873,31 +873,44 @@ export default function GinkgoHorn() {
   // a solver readout describes the geometry it was run against — clear it the
   // moment that geometry moves, or a stale "depth X → Y Hz" sits beside inputs
   // it no longer belongs to
+  // ...and the two straight runs now enter the depth solve, so a readout is
+  // stale the moment either moves — it is stamped with the runs it used, and
+  // the strip says so, but clearing on the mouth inputs stays the same rule
   useEffect(() => { setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT]);
   // a separation field was solved against ONE geometry — any input that moves
   // the ducts it was clearing invalidates it
   useEffect(() => { setSepSolve(null); },
     [thetaH, thetaV, arcH, arcV, profileT, depth, nc, nr, exitDia, thickness, bulgeOn, bulgeAmp,
       shapeMorph]);
-  // EVERY depth solve runs from the same reference state for the two straight
-  // runs — divergence 0, arrival 0 — and resets the sliders to it. A solve is
-  // then a repeatable reference point rather than a function of wherever the
-  // last experiment left the runs; the sliders stay live afterwards, and
-  // lengthening the arrival run FROM the solved state is the experiment
-  // (it holds the path straight off the aperture and pushes the turning back
-  // toward the throat, where the section is small).
-  // The solves also run with lengthening OFF: they solve the bare geometry,
+  // THE DEPTH SOLVE HONOURS THE STRAIGHT RUNS, because they are part of the
+  // path whose spread it is minimising. It used to zero them and reset the
+  // sliders, on a repeatability argument — a solve should be a fixed
+  // reference point rather than a function of wherever the last experiment
+  // left the runs. That is a real property and it was bought at the price of
+  // answering about a horn the user is not building: a run adds path length
+  // at one end, which is what depth does, so it MOVES the optimum. Measured
+  // at the shipped mouth, the solved depth and what zeroing them costs:
+  //   divergeLen  arriveLen   true optimum   dL there   dL at the zeroed depth
+  //        0          0         319.5 mm      11.929           11.929
+  //       10          0         324.2 mm      11.882           12.020
+  //       20          0         328.6 mm      11.834           12.115
+  //       40          0         337.9 mm      11.737           13.907
+  //        0         40         316.9 mm      13.585           13.828
+  //       40         40         335.8 mm      13.373           14.776
+  // The divergence run pushes the optimum DEEPER and the arrival run pulls it
+  // SHALLOWER, which is what adding length at opposite ends should do. The
+  // cost of ignoring them is small at a short run and reaches 2.17 mm at a
+  // 40 mm divergence — one whole lambda/8 budget of path spread, which is the
+  // number the separation solve is judged against.
+  // REPEATABILITY IS KEPT BY REPORTING RATHER THAN BY RESETTING: the readout
+  // states the runs the answer was solved for, so a solve still describes a
+  // definite horn — just the one on screen.
+  // The solves still run with lengthening OFF: they solve the bare geometry,
   // and the bows are the correction applied on top of whatever depth they
-  // land on. The lengthening toggle itself is left alone.
-  const RUN_DEFAULTS = { divergeLen: 0, arriveLen: 0 };
-  const solveRefOpts = () => {
-    setDivergeLen(RUN_DEFAULTS.divergeLen);
-    setArriveLen(RUN_DEFAULTS.arriveLen);
-    // the solves run on the BARE geometry: no lengthening and no separation
-    // field — a field solved for one depth is meaningless at another, and
-    // the sepSolve state is cleared the moment depth moves anyway
-    return { ...mapOpts, ...RUN_DEFAULTS, lengthen: null, separate: null };
-  };
+  // land on. The lengthening toggle itself is left alone. The separation
+  // field goes too — a field solved for one depth is meaningless at another,
+  // and sepSolve is cleared the moment depth moves anyway.
+  const solveRefOpts = () => ({ ...mapOpts, lengthen: null, separate: null });
   // THE DEPTH THAT EQUALISES PATH LENGTH. When the mouth's curvature centre
   // lands on the throat the mouth IS a sphere about the throat, so every cell
   // is equidistant and dL collapses. That happens at depth ~ the mouth radius;
@@ -1926,7 +1939,9 @@ export default function GinkgoHorn() {
           </div>
           <button onClick={() => {
             const r = G.solveDepthForMinDL(throat, solveRefOpts());
-            setDlSolve(r);
+            // stamp the runs it was solved FOR, so the answer carries its own
+            // premises now that it no longer forces them to zero
+            setDlSolve({ ...r, divergeLen, arriveLen });
             if (r.ok) setDepth(Math.round(r.depth));
           }} style={btn(false, C.series4)}>solve depth for minimum ΔL</button>
           <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
@@ -1938,7 +1953,12 @@ export default function GinkgoHorn() {
             {dlSolve.ok
               ? <><span style={{ color: C.inkMuted }}>min ΔL → depth </span>
                   <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
-                  <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span></>
+                  <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span>
+                  <span style={{ color: C.inkMuted }}>
+                    {" · solved with divergence "}{fmt(dlSolve.divergeLen || 0, 1)}{" mm, arrival "}{fmt(dlSolve.arriveLen || 0, 1)}{" mm"}
+                    {(dlSolve.divergeLen !== divergeLen || dlSolve.arriveLen !== arriveLen)
+                      ? <span style={{ color: C.series5 }}>{" — the runs have moved since; re-solve"}</span> : null}
+                  </span></>
               : <span style={{ color: C.series5 }}>min ΔL — {dlSolve.reason}</span>}
           </div>
         )}

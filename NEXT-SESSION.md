@@ -248,6 +248,55 @@ measured, the two central middle-row cells swing ±11 mm laterally through the
 [0.02, 0.22] window and the pinch is where that swing returns. The morph
 raises the floor under it; it does not remove it.
 
+## Shipped 2026-09-05 (third pass) — the divergence run and the bow window
+
+Owner's report: the default horn's middle row is well separated, but adding a
+divergence run drives the ducts together at the start of the bow. Full finding
+in CLAUDE.md.
+
+- **The straight run was TRUNCATING the bow window instead of moving it.**
+  `u0 = max(rq0, divergeLen/L)` pinned the bow at the end of the run — exactly
+  where the ducts have not separated yet — and ate the window from the front,
+  so the turn got steeper as the run grew. Now `u0 = rq0 + divergeLen/L`.
+- **Why**: the straight run is a pure radial fan, so it separates nothing and
+  simply DELAYS the profile's gap-opening. Measured, the station at which the
+  worst pair first reaches 2 mm of wall moves u 0.094 → 0.219 as divergeLen
+  goes 0 → 40 mm, against divergeLen/L of 0 → 0.125. Translated, not reshaped.
+- **The arrival run stays a clamp** — it is the far end of the path, so there
+  is nothing to translate onto.
+- **The clamp is gone, not kept as a mode**, because at divergeLen 0 the two
+  rules are bit-identical so there is nothing to preserve, and the
+  discriminator the tests need (span invariance) needs no second code path.
+  It is NOT reproducible afterwards though — see the finding for what that
+  costs and which three figures were taken under it.
+
+**The numbers**: worst gap at the shipped window went +0.225 / −1.019 / −2.430
+/ −2.857 / −4.657 mm over divergeLen 0 / 5 / 10 / 20 / 40, with the fold margin
+passing through **zero at 20 mm** — folded ducts, which still mesh closed.
+Translated it reads +0.225 / +0.253 / +0.045 / −0.500 / −1.622.
+
+**There is no "optimal bow centre" to solve for.** The gap saturates at the
+unbowed horn's own ceiling as soon as the window clears the tiling region; past
+that, moving out buys nothing and spends fold margin, because a bow further
+along sits on a fatter duct. Centre and span have to move outward and wider
+together.
+
+**Still open, and it is the interesting one**: a long run is not free even
+translated, because it also GROWS ΔL (14.61 → 19.64 mm over divergeLen 0 → 40
+at depth 300), demanding a bigger bow on a horn with less room. **The depth
+answers it** — at depth 340 the translated window makes a 40 mm run completely
+free (gap +1.522, fold 3.77) — and the reason is that a divergence run
+SUBSTITUTES for depth on ΔL: below the dL optimum it pushes you off, above it
+pulls you back.
+
+**The depth solve now knows about the runs** (same pass): it stopped zeroing
+them and resetting the sliders. The divergence run pushes the optimum DEEPER
+(319.5 → 337.9 mm at 40 mm) and the arrival run pulls it SHALLOWER (→ 316.9).
+Ignoring them cost 0.13 mm of ΔL at a 10 mm run and **2.17 mm at 40 mm — one
+whole λ/8 budget**. Repeatability is kept by stamping the readout with the runs
+it solved for and warning when they move, rather than by forcing them to zero.
+At zero runs the answer is unchanged, asserted exactly.
+
 ## Explored and REJECTED, so it is not re-proposed
 
 - **Staggering the bow across a row** (owner's proposal): built, measured on
