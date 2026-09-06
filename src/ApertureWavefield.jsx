@@ -22,9 +22,35 @@ import { C } from "./palette.js";
 //
 // MODEL — one honest sum, no pattern multiplication assumed
 //   Every sub-source radiates p = (1/√r)·e^(−ikr) into its own forward
-//   half-space. Field map, polar and beamwidth sweep are all direct
-//   sums. Array factor and element factor are drawn as separate
-//   overlays so you can see where factorisation holds and where it fails.
+//   half-space. Field map, polar map, polar plot and beamwidth sweep are
+//   all direct sums. Array factor and element factor are drawn as
+//   separate overlays so you can see where factorisation holds and where
+//   it fails.
+//
+// THE POLAR MAP — the 2-D thing the other two charts are slices of
+//   Level over (frequency × angle), far field, one direct sum per band.
+//   The polar plot is one COLUMN of it at one frequency; the beamwidth
+//   chart is a −6 dB CONTOUR of it. Same farPattern(), same sampling
+//   rule, so in the PEAK reference the drawn isobar and the plotted
+//   beamwidth are one measurement read two ways — measured to agree
+//   inside the 2° the sweep's own angle grid quantises to, with the
+//   isobar the finer read because it interpolates between samples
+//   (0.13° against the flat-piston closed form where sinθ < 0.9).
+//
+//   IN THE ON-AXIS REFERENCE THEY ARE NOT THE SAME NUMBER, and the gap
+//   is not small: 31.7° of beamwidth at 5.4 kHz on this tool's own
+//   CD-90 default, because on-axis is not the loudest direction there
+//   (4.6 dB down, on 35 of 96 bands). Which reference is therefore a
+//   physical choice, not a display taste — and the on-axis one, which
+//   is the measurement convention, is the one that RECOVERS THE
+//   GEOMETRY: above 2·f_CD the −6 dB half-edge sits at 29.6 / 44.6 /
+//   59.7° for α = 30 / 45 / 60°, where the peak reference reads
+//   2.4-3.7° narrow because it normalises to the off-axis lobe. So the
+//   beamwidth chart slightly under-reads the CD lock and the map's
+//   default reference does not.
+//
+//   Far field only, deliberately: the listening radius belongs to the
+//   polar plot below, which is where near-field collapse is visible.
 //
 // STATED ASSUMPTIONS
 //   · 2D line sources: amplitude ∝ 1/√r, element factor sinc() not
@@ -80,6 +106,28 @@ const [m1R, m1G, m1B] = rgb255("#00cc00"); // green                  // palette-
 const [m2R, m2G, m2B] = rgb255("#ffff00"); // yellow                 // palette-exempt
 const [m3R, m3G, m3B] = rgb255("#ff8000"); // orange                 // palette-exempt
 const [m4R, m4G, m4B] = rgb255("#ff0000"); // red — loudest          // palette-exempt
+
+// The ramp itself, so the magnitude field view and the polar map cannot drift
+// apart into two copies of the same arithmetic. t = 0 is the quietest end.
+// Writes into a module-level scratch triple rather than allocating: both call
+// sites are tight per-pixel loops. Copy out if you need to keep the value.
+const heatRGB = [0, 0, 0];
+function heat(t) {
+  const seg = (t < 0 ? 0 : t > 1 ? 1 : t) * 4;
+  let r, g, b;
+  if (seg < 1) { const u = seg;
+    r = m0R + u * (m1R - m0R); g = m0G + u * (m1G - m0G); b = m0B + u * (m1B - m0B);
+  } else if (seg < 2) { const u = seg - 1;
+    r = m1R + u * (m2R - m1R); g = m1G + u * (m2G - m1G); b = m1B + u * (m2B - m1B);
+  } else if (seg < 3) { const u = seg - 2;
+    r = m2R + u * (m3R - m2R); g = m2G + u * (m3G - m2G); b = m2B + u * (m3B - m2B);
+  } else { const u = seg - 3;
+    r = m3R + u * (m4R - m3R); g = m3G + u * (m4G - m3G); b = m3B + u * (m4B - m3B);
+  }
+  heatRGB[0] = r; heatRGB[1] = g; heatRGB[2] = b;
+  return heatRGB;
+}
+const heatCss = (t) => { const q = heat(t); return `rgb(${q[0].toFixed(0)},${q[1].toFixed(0)},${q[2].toFixed(0)})`; };
 
 function NumInput({ label, value, onChange, unit, min, max, step = 1, accent }) {
   const [local, setLocal] = useState(String(value));
@@ -191,6 +239,74 @@ function beamwidth(db, nA) {
   return 180;
 }
 
+// ── level over (frequency × angle): the polar map ──
+// One farPattern() per band on ONE sampling sized for the top of the range —
+// deliberately the same rule the beamwidth sweep uses, so the two charts are
+// two readings of one pattern rather than two estimates of it. Far field only;
+// the listening radius belongs to the polar plot, which is where it shows.
+// Each column is dB re that column's own peak; `axis` carries the on-axis
+// level in the same reference, so switching to an on-axis reference is a
+// subtraction and never a second sum.
+function polarMap(cells, N, w, alphaDeg, c, nF, nA, f0, f1) {
+  let M = Math.max(4, Math.ceil(w / (((c / f1) * 1000) / 6)));
+  M = Math.min(M, 60);
+  if (N * M > 600) M = Math.max(4, Math.floor(600 / N));
+  const S = assemble(cells, w, alphaDeg, M);
+  const mid = (nA - 1) / 2;
+  const grid = new Float32Array(nF * nA);
+  const freqs = new Float64Array(nF);
+  const axis = new Float32Array(nF);
+  for (let i = 0; i < nF; i++) {
+    const f = f0 * Math.pow(f1 / f0, i / (nF - 1));
+    freqs[i] = f;
+    const col = farPattern(S, f, c, nA);
+    for (let a = 0; a < nA; a++) grid[i * nA + a] = col[a];
+    axis[i] = col[mid];
+  }
+  // The one thing a clamped colour scale cannot show: a direction louder than
+  // the axis. Reported rather than hidden.
+  let dipDb = 0, dipF = freqs[0], dipN = 0;
+  for (let i = 0; i < nF; i++) {
+    if (-axis[i] > 0.05) dipN++;
+    if (-axis[i] > dipDb) { dipDb = -axis[i]; dipF = freqs[i]; }
+  }
+  return { grid, freqs, axis, nF, nA, mid, M, f0, f1, dipDb, dipF, dipN };
+}
+
+// ── an isobar: the first outward crossing of `lvl`, per frequency column ──
+// Same rule as beamwidth() — first crossing outward from the axis — but read
+// to sub-sample accuracy by interpolating between angle samples. Measured
+// against the flat-piston closed form asin(0.6034 λ/w) it lands within 0.13°
+// wherever sinθ < 0.9, degrading to 0.72° as the edge approaches ±90° where
+// dθ/dlevel diverges. A column whose axis is already below `lvl` has no main
+// lobe on axis and returns null rather than a zero width.
+function isobar(map, lvl, refAxis) {
+  const { grid, freqs, axis, nF, nA, mid } = map;
+  const step = 180 / (nA - 1);
+  const up = new Array(nF).fill(null), dn = new Array(nF).fill(null);
+  for (let i = 0; i < nF; i++) {
+    const base = i * nA, off = refAxis ? axis[i] : 0;
+    if (grid[base + mid] - off < lvl) continue;
+    for (let a = mid; a < nA - 1; a++) {
+      const v = grid[base + a] - off, v1 = grid[base + a + 1] - off;
+      if (v >= lvl && v1 < lvl) { up[i] = (a - mid + (v - lvl) / (v - v1)) * step; break; }
+    }
+    for (let a = mid; a > 0; a--) {
+      const v = grid[base + a] - off, v1 = grid[base + a - 1] - off;
+      if (v >= lvl && v1 < lvl) { dn[i] = -(mid - a + (v - lvl) / (v - v1)) * step; break; }
+    }
+  }
+  return { up, dn, freqs };
+}
+
+// The frequency span every frequency-axis chart in this tool uses. One
+// constant, because the polar map and the beamwidth sweep are drawn stacked
+// and a mismatch between them would be invisible and wrong.
+const SWEEP_F0 = 200, SWEEP_F1 = 20000;
+// [frequency bands, angle samples] — both odd in angle so 0° is a sample
+const MAP_RES = { coarse: [64, 121], med: [96, 181], fine: [144, 271] };
+const MAP_LEVELS = [-3, -6, -12, -18];
+
 const PRESETS = {
   "CD waveguide 90°": { N: 1, d: 300, w: 300, fan: 0, alpha: 45, freq: 4000, Lx: 3.0, rObs: 2.5 },
   "CD waveguide 60°": { N: 1, d: 300, w: 300, fan: 0, alpha: 30, freq: 4000, Lx: 3.0, rObs: 2.5 },
@@ -215,6 +331,11 @@ export default function ApertureWavefield() {
   const [animate, setAnimate] = useState(true);
   const [gain, setGain] = useState(1.0);
   const [showRays, setShowRays] = useState(true);
+
+  const [showMap, setShowMap] = useState(true);
+  const [mapRes, setMapRes] = useState("med");
+  const [mapNorm, setMapNorm] = useState("axis");   // "axis" | "peak"
+  const [mapSpan, setMapSpan] = useState(30);       // dB shown below the reference
 
   const [rObs, setRObs] = useState(2.5);
   const [showAF, setShowAF] = useState(false);
@@ -335,23 +456,11 @@ export default function ApertureWavefield() {
             r = bgR + t * (negR - bgR); g = bgG + t * (negG - bgG); b = bgB + t * (negB - bgB);
           }
         } else {
-          // fixed heat-map ramp — see the m0..m4 constants above.
+          // fixed heat-map ramp — see heat() and the m0..m4 constants above.
           const mg = Math.hypot(re[i], im[i]) * inv;
           const db = 20 * Math.log10(Math.max(mg, 1e-6));
-          const seg = Math.min(Math.max((db + 40) / 40, 0), 1) * 4;
-          if (seg < 1) {
-            const u = seg;
-            r = m0R + u * (m1R - m0R); g = m0G + u * (m1G - m0G); b = m0B + u * (m1B - m0B);
-          } else if (seg < 2) {
-            const u = seg - 1;
-            r = m1R + u * (m2R - m1R); g = m1G + u * (m2G - m1G); b = m1B + u * (m2B - m1B);
-          } else if (seg < 3) {
-            const u = seg - 2;
-            r = m2R + u * (m3R - m2R); g = m2G + u * (m3G - m2G); b = m2B + u * (m3B - m2B);
-          } else {
-            const u = Math.min(seg - 3, 1);
-            r = m3R + u * (m4R - m3R); g = m3G + u * (m4G - m3G); b = m3B + u * (m4B - m3B);
-          }
+          const q = heat((db + 40) / 40);
+          r = q[0]; g = q[1]; b = q[2];
         }
         const p = i * 4;
         data[p] = r; data[p + 1] = g; data[p + 2] = b; data[p + 3] = 255;
@@ -416,7 +525,7 @@ export default function ApertureWavefield() {
   // ── beamwidth vs frequency sweep (the CD chart) ──
   const sweep = useMemo(() => {
     if (!showSweep) return null;
-    const f0 = 200, f1 = 20000, NF = 34, nA = 181;
+    const f0 = SWEEP_F0, f1 = SWEEP_F1, NF = 34, nA = 181;
     // fixed sampling fine enough for the top of the sweep
     let M = Math.max(4, Math.ceil(width / ((c / f1) * 1000 / 6)));
     M = Math.min(M, 60);
@@ -436,6 +545,46 @@ export default function ApertureWavefield() {
     }
     return out;
   }, [showSweep, cells, width, alpha, aRad, N, c]);
+
+  // ── polar map: level over (frequency × angle) ──
+  // Cost measured in node at nF×nA = 96×181: 25 ms for one 300 mm mouth,
+  // 32 ms for 8 cells, 140 ms for a 12-way line array and 223 ms for the
+  // worst case the inputs allow (40 cells). "fine" is 2.25× that. Opt-in for
+  // the same reason the sweep is.
+  const pmap = useMemo(() => {
+    if (!showMap) return null;
+    const [nF, nA] = MAP_RES[mapRes];
+    return polarMap(cells, N, width, alpha, c, nF, nA, SWEEP_F0, SWEEP_F1);
+  }, [showMap, mapRes, cells, N, width, alpha, c]);
+
+  // −6 dB is the one that matters, because it is the beamwidth chart's own
+  // contour; the others are there to show how fast the level falls past it.
+  const mapIso = useMemo(
+    () => (pmap ? MAP_LEVELS.map((lv) => ({ lv, ...isobar(pmap, lv, mapNorm === "axis") })) : null),
+    [pmap, mapNorm]
+  );
+
+  // ── polar map canvas ──
+  const mapCanvasRef = useRef(null);
+  useEffect(() => {
+    const cv = mapCanvasRef.current;
+    if (!cv || !pmap) return;
+    const { grid, axis, nF, nA } = pmap;
+    cv.width = nF; cv.height = nA;
+    const ctx = cv.getContext("2d");
+    const img = ctx.createImageData(nF, nA);
+    const data = img.data;
+    for (let i = 0; i < nF; i++) {
+      const off = mapNorm === "axis" ? axis[i] : 0;
+      for (let a = 0; a < nA; a++) {
+        // row 0 is +90°, so the map reads the same way up as the polar plot
+        const p = ((nA - 1 - a) * nF + i) * 4;
+        const q = heat((grid[i * nA + a] - off + mapSpan) / mapSpan);
+        data[p] = q[0]; data[p + 1] = q[1]; data[p + 2] = q[2]; data[p + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }, [pmap, mapNorm, mapSpan]);
 
   // ── overlay mapping ──
   const { W: FW, H: FH, x0, x1, y0, Ly } = field;
@@ -468,11 +617,29 @@ export default function ApertureWavefield() {
     setAlpha(v.alpha); setFreq(v.freq); setLx(v.Lx); setRObs(v.rObs);
   };
 
-  // ── sweep chart geometry ──
+  // ── chart geometry ──
+  // The polar map and the beamwidth sweep SHARE the frequency axis — same
+  // width, same margins, same sfx — so the two stack and read as one figure,
+  // and the map's −6 dB isobar sits directly above the beamwidth it is.
   const SW = 780, SH = 250, sL = 52, sR = 16, sT = 14, sB = 34;
   const siW = SW - sL - sR, siH = SH - sT - sB;
-  const sfx = (f) => sL + (Math.log(f / 200) / Math.log(100)) * siW;
+  const sfx = (f) => sL + (Math.log(f / SWEEP_F0) / Math.log(SWEEP_F1 / SWEEP_F0)) * siW;
   const sfy = (bw) => sT + siH - (bw / 190) * siH;
+
+  const MH = 322, mB = 34, mT = 14, miH = MH - mT - mB;
+  const mfy = (deg) => mT + ((90 - deg) / 180) * miH;
+  const mClamp = (f) => Math.min(Math.max(f, SWEEP_F0), SWEEP_F1);
+  // one polyline per contour side, broken wherever a column has no crossing
+  const isoPath = (arr) => {
+    let d = "", pen = false;
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (v == null) { pen = false; continue; }
+      const x = sfx(pmap.freqs[i]).toFixed(1), y = mfy(v).toFixed(1);
+      d += `${pen ? "L" : "M"}${x},${y}`; pen = true;
+    }
+    return d;
+  };
 
   const metrics = [
     { label: "Wavelength λ", value: `${fmt(lambda_mm, 1)} mm`, sub: `c = ${fmt(c, 1)} m/s at ${temp}°C` },
@@ -659,6 +826,168 @@ export default function ApertureWavefield() {
         </div>
       </div>
 
+
+      {/* POLAR MAP */}
+      <div style={card}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ ...secTitle, marginBottom: 0 }}>Polar map</span>
+          <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12 }}>
+            <input type="checkbox" checked={showMap} onChange={(e) => setShowMap(e.target.checked)} style={{ accentColor: C.amber }} />
+            <span style={{ color: C.textDim }}>Compute map</span>
+          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>Reference</span>
+            <button onClick={() => setMapNorm("axis")} style={btn(mapNorm === "axis", C.amber)}>on-axis</button>
+            <button onClick={() => setMapNorm("peak")} style={btn(mapNorm === "peak", C.amber)}>peak</button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>Span</span>
+            {[18, 30, 42].map((v) => (
+              <button key={v} onClick={() => setMapSpan(v)} style={btn(mapSpan === v, C.blue)}>{v} dB</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>Resolution</span>
+            {Object.entries(MAP_RES).map(([r, [nf, na]]) => (
+              <button key={r} onClick={() => setMapRes(r)} style={btn(mapRes === r, C.blue)}>{nf}×{na}</button>
+            ))}
+          </div>
+          <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>far field · direct sum per band</span>
+        </div>
+
+        {pmap ? (
+          <>
+            <div style={{ position: "relative", width: "100%" }}>
+              <canvas ref={mapCanvasRef} style={{
+                position: "absolute",
+                left: `${(sL / SW) * 100}%`, top: `${(mT / MH) * 100}%`,
+                width: `${(siW / SW) * 100}%`, height: `${(miH / MH) * 100}%`,
+              }} />
+              <svg viewBox={`0 0 ${SW} ${MH}`} width="100%"
+                style={{ display: "block", position: "relative" }}>
+                {/* frequency axis — identical mapping to the sweep below */}
+                {[200, 500, 1000, 2000, 5000, 10000, 20000].map((f) => (
+                  <g key={f}>
+                    <line x1={sfx(f)} y1={mT + miH} x2={sfx(f)} y2={mT + miH + 4} stroke={C.borderLight} strokeWidth={0.7} />
+                    <text x={sfx(f)} y={mT + miH + 15} fill={C.textMuted} fontSize={9} textAnchor="middle" fontFamily={C.mono}>
+                      {f >= 1000 ? `${f / 1000}k` : f}
+                    </text>
+                  </g>
+                ))}
+                {/* angle axis */}
+                {[-90, -60, -30, 0, 30, 60, 90].map((a) => (
+                  <g key={a}>
+                    <line x1={sL - 4} y1={mfy(a)} x2={sL} y2={mfy(a)} stroke={C.borderLight} strokeWidth={0.7} />
+                    <text x={sL - 7} y={mfy(a) + 3} fill={C.textMuted} fontSize={9} textAnchor="end" fontFamily={C.mono}>{a}°</text>
+                  </g>
+                ))}
+                <line x1={sL} y1={mfy(0)} x2={sL + siW} y2={mfy(0)} stroke={C.white} strokeWidth={0.6} opacity={0.3} strokeDasharray="5 5" />
+
+                {/* grating-lobe loci sinθ = nλ/d — analytic, laid over the sum */}
+                {N > 1 && [1, 2, 3].map((n) => {
+                  const pts = [];
+                  for (let i = 0; i <= 160; i++) {
+                    const f = SWEEP_F0 * Math.pow(SWEEP_F1 / SWEEP_F0, i / 160);
+                    const sn = (n * (c / f) * 1000) / pitch;
+                    if (sn > 1) continue;
+                    pts.push([sfx(f), Math.asin(sn) * DEG]);
+                  }
+                  if (pts.length < 2) return null;
+                  const up = pts.map(([x, d], i) => `${i ? "L" : "M"}${x.toFixed(1)},${mfy(d).toFixed(1)}`).join("");
+                  const dn = pts.map(([x, d], i) => `${i ? "L" : "M"}${x.toFixed(1)},${mfy(-d).toFixed(1)}`).join("");
+                  return (
+                    <g key={`gl${n}`} stroke={C.red} fill="none"
+                      strokeWidth={n === 1 ? 1.2 : 0.7} opacity={n === 1 ? 0.75 : 0.4} strokeDasharray="6 4">
+                      <path d={up} /><path d={dn} />
+                    </g>
+                  );
+                })}
+
+                {/* geometric coverage edges ±α */}
+                {alpha > 0 && [1, -1].map((sg) => (
+                  <line key={sg} x1={sL} y1={mfy(sg * alpha)} x2={sL + siW} y2={mfy(sg * alpha)}
+                    stroke={C.violet} strokeWidth={1.4} strokeDasharray="7 4" opacity={0.85} />
+                ))}
+
+                {/* isobars — −6 dB is the beamwidth chart's own contour */}
+                {mapIso.map(({ lv, up, dn }) => (
+                  <g key={lv} fill="none" stroke={C.white}
+                    strokeWidth={lv === -6 ? 2 : 0.9} opacity={lv === -6 ? 0.95 : 0.45}>
+                    <path d={isoPath(up)} /><path d={isoPath(dn)} />
+                  </g>
+                ))}
+
+                {/* N_F = 1 and the frequency the other charts are showing */}
+                {alpha > 0 && fCD > SWEEP_F0 && fCD < SWEEP_F1 && (
+                  <>
+                    <line x1={sfx(fCD)} y1={mT} x2={sfx(fCD)} y2={mT + miH} stroke={C.cyan} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.85} />
+                    <text x={sfx(fCD) + 4} y={mT + 11} fill={C.cyan} fontSize={9} fontFamily={C.mono}>N_F = 1</text>
+                  </>
+                )}
+                <line x1={sfx(mClamp(freq))} y1={mT} x2={sfx(mClamp(freq))} y2={mT + miH}
+                  stroke={C.green} strokeWidth={1.2} opacity={0.85} />
+
+                <rect x={sL} y={mT} width={siW} height={miH} fill="none" stroke={C.borderLight} strokeWidth={0.8} />
+                <text x={sL + siW / 2} y={MH - 3} fill={C.textDim} fontSize={10} textAnchor="middle" fontFamily={C.sans}>Frequency (Hz)</text>
+                <text x={13} y={mT + miH / 2} fill={C.textDim} fontSize={10} textAnchor="middle" fontFamily={C.sans}
+                  transform={`rotate(-90 13 ${mT + miH / 2})`}>Angle off axis</text>
+              </svg>
+            </div>
+
+            <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>−{mapSpan}</span>
+                <svg width={168} height={11} style={{ display: "block" }}>
+                  {Array.from({ length: 56 }, (_, i) => (
+                    <rect key={i} x={(i * 168) / 56} y={0} width={168 / 56 + 0.6} height={11} fill={heatCss(i / 55)} />
+                  ))}
+                  <rect x={0} y={0} width={168} height={11} fill="none" stroke={C.border} strokeWidth={0.8} />
+                </svg>
+                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>
+                  0 dB re {mapNorm === "axis" ? "on-axis" : "peak"}
+                </span>
+              </div>
+              <span style={{ fontSize: 10, color: C.white }}>━ −6 dB isobar (this is the beamwidth below)</span>
+              <span style={{ fontSize: 10, color: C.white, opacity: 0.6 }}>━ −3 / −12 / −18 dB</span>
+              {alpha > 0 && <span style={{ fontSize: 10, color: C.violet }}>╌ Geometric ±α</span>}
+              {N > 1 && <span style={{ fontSize: 10, color: C.red }}>╌ Grating loci sinθ = nλ/d</span>}
+              {alpha > 0 && fCD > SWEEP_F0 && fCD < SWEEP_F1 &&
+                <span style={{ fontSize: 10, color: C.cyan }}>╌ N_F = 1</span>}
+              <span style={{ fontSize: 10, color: C.green }}>━ Current frequency</span>
+            </div>
+
+            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 7, lineHeight: 1.65 }}>
+              {pmap.nF} frequency bands × {pmap.nA} angles, {pmap.M} sub-sources per mouth — sized
+              for 20 kHz and held fixed across the map, which is the same sampling and summation the
+              beamwidth chart below uses. On the <em>peak</em> reference the −6 dB isobar therefore
+              IS that chart's curve, read between angle samples instead of quantised to them. On the
+              <em> on-axis</em> reference it is not — see the note at the foot of the page for how
+              far apart they get and which one recovers the geometry. A column with no contour is
+              one whose beam is wider than the half-space, which is the chart below pinned at 180°.
+              <br />
+              {pmap.dipDb > 0.05 ? (
+                <span style={{ color: C.amber }}>
+                  The colour scale is clamped at its reference, so it cannot show a lobe louder than
+                  the axis — and there is one: the loudest direction runs {fmt(pmap.dipDb, 1)} dB above
+                  on-axis at {fmt(pmap.dipF, 0)} Hz, on {pmap.dipN} of {pmap.nF} bands.
+                  {mapNorm === "axis"
+                    ? " Switch the reference to peak and that becomes visible as an on-axis dip in colour."
+                    : " In this reference it is showing as the on-axis dip; the on-axis reference hides it in the clamp instead."}
+                </span>
+              ) : (
+                <span>On-axis is the loudest direction in every band here, so the two references
+                  agree and the isobar is exactly the beamwidth curve below.</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: 11, color: C.textMuted, padding: "18px 0", textAlign: "center" }}>
+            Map off. Turn it on for level over frequency × angle — the polar plot below is one column
+            of it and the beamwidth chart is its −6 dB contour.
+          </div>
+        )}
+      </div>
+
       {/* SWEEP */}
       <div style={card}>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
@@ -821,6 +1150,36 @@ export default function ApertureWavefield() {
         R = (w/2)/sinα whose chord endpoints land at ±w/2, each with its normal pointing radially from the virtual apex.
         The spherical wavefront is therefore produced by where the sources <em>are</em>, not by an added phase term —
         the same code path handles flat and curved mouths, and α = 0 reproduces every v1 result exactly.
+        <br />
+        <strong style={{ color: C.textDim }}>What the polar map shows</strong> · Level over frequency
+        × angle, far field, one direct summation per band — the polar plot below is one vertical slice
+        of it and the beamwidth chart is a contour of it. Read the −6 dB isobar against the violet ±α
+        lines: below N_F = 1 it opens out with the diffraction limit, above it, it lies along ±α, and
+        that is the whole constant-directivity claim in one picture rather than in one number.
+        <br />
+        <strong style={{ color: C.textDim }}>Which reference, and why it is not cosmetic</strong> ·
+        Each band is normalised to itself, either to its on-axis level (the measurement convention,
+        and the default) or to its loudest direction (what the beamwidth chart uses). They are the
+        same thing only when on-axis IS the loudest direction, and on a curved mouth it frequently is
+        not: measured on the 90° CD default, on-axis runs up to 4.6 dB down on 35 of 96 bands, and the
+        −6 dB widths the two references report differ by up to 31.7° at 5.4 kHz. The on-axis reference
+        is the one that recovers the geometry — above 2·f_CD its half-edge sits at 29.6 / 44.6 / 59.7°
+        for α = 30 / 45 / 60°, against 27.6 / 41.7 / 56.4° peak-referenced, which is a systematic
+        2.4–3.7° narrow because normalising to an off-axis lobe pulls the −6 dB point inward. So the
+        beamwidth chart mildly under-reads the CD lock, and that is a property of the −6 dB-from-peak
+        convention rather than of this horn. The colour scale is clamped at its reference and so cannot
+        show a lobe louder than the axis at all; the excess is printed under the map instead of being
+        hidden by the clamp.
+        <br />
+        <strong style={{ color: C.textDim }}>What the map cannot show</strong> · It is far field only.
+        The listening radius is the polar plot's variable, deliberately, because that is where the
+        near-field collapse is visible as a change of shape rather than as a shifted contour. The
+        isobar interpolates between angle samples and lands within 0.13° of the flat-piston closed
+        form asin(0.6034 λ/w) wherever sinθ &lt; 0.9, degrading to 0.7° as the edge approaches ±90°
+        where dθ/dlevel diverges — so read an edge near the top or bottom of the map as approximate.
+        The grating loci drawn in red are the analytic sinθ = nλ/d laid over the direct sum, and they
+        land on the map's own lobe peaks within 1.7°: an overlay agreeing with the thing it is drawn
+        over, not a curve fitted to it.
         <br />
         <strong style={{ color: C.textDim }}>What the sweep shows</strong> · Below N_F = 1 the quadratic phase is too
         small to matter across the aperture and beamwidth tracks the flat-mouth diffraction line (blue). Above it,

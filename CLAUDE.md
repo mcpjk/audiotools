@@ -346,6 +346,47 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **(APERTURE WAVEFIELD) A −6 dB BEAMWIDTH TAKEN FROM THE PEAK IS NOT THE
+  GEOMETRIC COVERAGE, AND ON A CURVED MOUTH IT READS NARROW BY 2-4 deg.** The
+  polar map added 2026-09-06 normalises each frequency band either to its
+  on-axis level (the measurement convention, and the default) or to its
+  loudest direction — which is what `beamwidth()` and the beamwidth-vs-
+  frequency chart have always used. **They are the same number only when
+  on-axis IS the loudest direction, and on a CD mouth it frequently is not.**
+  Measured on the tool's own 90 deg default (one 300 mm mouth, alpha 45,
+  30 C, 96 bands): on-axis runs up to **4.6 dB below the loudest direction on
+  35 of 96 bands**, and the two references disagree by up to **31.7 deg of
+  −6 dB width at 5.4 kHz**. It is not a rounding difference.
+  **THE ON-AXIS REFERENCE IS THE ONE THAT RECOVERS THE GEOMETRY.** Above
+  2·f_CD the −6 dB half-edge measures
+    alpha        30       45       60      deg
+    on-axis    29.64    44.62    59.68    (+-1.55, 2.45, 3.50)
+    peak       27.60    41.65    56.35    (+-0.87, 1.45, 1.73)
+  so the peak reference is **systematically 2.4-3.7 deg narrow**, because
+  normalising to an off-axis lobe pulls the crossing inward. The beamwidth
+  chart therefore mildly UNDER-reads the constant-directivity lock, and that
+  is a property of the −6 dB-from-peak convention rather than of any horn.
+  Read the map's on-axis contour against the geometric 2·alpha, not the
+  sweep. Same lesson as the section plane: the metric was measuring a
+  quantity adjacent to the one being claimed.
+  **THE MAP AND THE SWEEP ARE ONE MEASUREMENT, DELIBERATELY** — same
+  `farPattern`, same sub-source count sized for 20 kHz — so in the peak
+  reference the drawn isobar IS the plotted beamwidth, agreeing inside the
+  2 deg the sweep's own 1 deg angle grid quantises to. The isobar is the
+  finer read: interpolating between angle samples it lands within **0.13 deg**
+  of the flat-piston closed form asin(0.6034 lambda/w) wherever sin(theta) <
+  0.9, degrading to 0.72 deg as the edge approaches +-90 deg where
+  d(theta)/d(level) diverges. The analytic grating loci sin(theta) = n
+  lambda/d drawn over it land on the map's own lobe peaks within 1.7 deg —
+  an overlay agreeing with what it is drawn over, which is a mutual check
+  rather than a fit.
+  **THE CLAMP IS THE ONE THING THE PICTURE CANNOT SHOW**, so the excess is
+  printed instead: a colour scale referenced to on-axis cannot render a lobe
+  LOUDER than on-axis, and that is exactly the 4.6 dB above. Cost measured in
+  node at 96x181: 25 ms for one 300 mm mouth, 140 ms for a 12-way line array,
+  223 ms for the 40-cell worst case the inputs allow — so it is opt-in, like
+  the sweep.
+
 - **THE 3-D VIEWPORT PAINTS THE WALLS BY CLEARANCE AND MARKS THE CONTACTS,
   AND THE THING THAT MAKES IT WORTH HAVING IS THE DIRECTION.** Three parts,
   all in `DuctPreview`, all fed by `ductClearance`'s opt-in `perVertex` and
