@@ -651,21 +651,31 @@ export function mapThroatToMouth(throat, opts) {
     // smoothness one. `bendFold` reads the worst curvature over the samples
     // each station stands for, so a bow feature short against `samples` has
     // its peak missed and the reported fold margin comes back OPTIMISTIC.
-    // Measured on the shipped throat-fifth bow at stations 64, against the
-    // converged value of 2.8529 mm:
-    //   samples     64     128     256     512    1024    2048
-    //   foldMin   4.455   3.980   3.349   3.034   2.871   2.853  mm
-    //   optimistic +56%    +40%    +17%   +6.3%   +0.6%    0.0%
-    //   preview    49      46      41      49      68     113   ms
-    //   export    119      95      92      98     131     167   ms
-    // The cost is FLAT to 512 and only starts rising at 1024, so 512 buys
-    // almost all of the accuracy for nothing. The residual +6.3% is a known
-    // ONE-SIDED bias — the metric can only be optimistic, never pessimistic —
-    // and 1024 is the value to reach for if a fold margin is ever marginal.
-    // Nothing else moves: over the same 64 -> 512 step, dL, Lmin, Lmax, mouth
-    // area, wallSpread, fc and kMax are unchanged to four digits or better,
-    // sectionObliq moves 0.9% and turnMax 2.2%.
-    stations = 24, samples = 512, keepGeometry = false,
+    // The bias is ONE-SIDED — the metric can only over-report the margin,
+    // never under-report it — so the honest figure is always the smaller one.
+    // Measured on the SHIPPED bow (crossRow, [0.02, 0.22], region grade 0.20)
+    // at stations 64, against the converged value of 1.3423 mm at 8192, each
+    // timing the median of 15 runs in a FRESH PROCESS (timing several counts
+    // in one process reads them out of order — the first pays the JIT warmup
+    // and 1024 came out FASTER than 512):
+    //   samples      512     1024     2048     4096
+    //   foldMin   1.5913   1.4418   1.3626   1.3445  mm
+    //   optimistic +18.5%   +7.4%    +1.5%    +0.2%
+    //   preview     60.7     82.0    113.1    174.9  ms  (24 stations)
+    //   export     129.6    138.3    175.3    233.5  ms  (64 stations)
+    // 512 was calibrated on the OLD ungraded bow, where it was +6.8%; the
+    // grade NARROWS the inner cells' windows, and a narrower window is a
+    // steeper turn with a sharper curvature peak, so the same count reads
+    // three times worse on the bow that ships. 1024 costs 21 ms of preview
+    // and 9 ms of export for that, and is the owner's number.
+    // **2048 IS WHAT ACTUALLY CONVERGES HERE** (+1.5%), for another 31 ms of
+    // preview — reach for it whenever a fold margin is marginal, which on the
+    // graded default it already is.
+    // Nothing but the fold margin moves: over 512 -> 1024 -> 2048, dL,
+    // wallSpread and sectionObliqMax are IDENTICAL to every digit printed
+    // (0.000 / 15.606 / 24.38 at all three), which is the same result the
+    // 64 -> 512 raise found.
+    stations = 24, samples = 1024, keepGeometry = false,
     // The signed clearance costs ~5x the rest of the mapping put together, so
     // a caller that wants a responsive readout can skip it here and run
     // ductClearance(rows) on its own schedule. Defaults ON: skipping a safety
@@ -3470,6 +3480,78 @@ export function solveDepthForMinDL(throat, opts, cfg = {}) {
     // an answer against the bracket edge means the minimum was not interior
     // here — report it rather than presenting an endpoint as an optimum
     atBound: depth < lo0 * 1.02 || depth > hi0 * 0.98,
+  };
+}
+
+// SOLVE THE THROAT TANGENT FOR MINIMUM dL, on the same objective and the same
+// golden section as the depth solve above — because it is the same physics.
+// dL is the spread in path length across the cells, so it is phase error at
+// the aperture and it is the dominant term in the fc spread; the two Hermite
+// tangent magnitudes are the cubic's only remaining freedom, and they decide
+// where each cell's path length lands just as depth does.
+//
+// THE TWO ARE NOT TWO OPTIMA BUT ONE VALLEY, and that is the finding. Depth
+// and the throat tangent both decide where each cell's path length lands, so
+// they trade one for the other at nearly constant dL. Solving each in turn
+// lands on a DIFFERENT point of the same floor depending which is solved
+// first — depth first gives (319.5, 0.4997), tangent first gives
+// (300, 0.281), and each is a fixed point the other solve will not move.
+// Measured at 6x3, m 3, arcs 500x245, T 0.7, samples 2048, the tangent solved
+// at each depth:
+//   depth        290     300     310   319.5     330     340     357     370
+//   best tt     0.122   0.281   0.402   0.500   0.593   0.674   0.791   0.869
+//   dL         12.164  12.013  11.955  11.929  11.917  11.922  11.943  11.971
+//   wallSpread  13.94   14.00   13.81   13.49   13.01   12.45   11.31   10.34
+//   fc spread   4.21%   4.02%   3.88%   3.75%   3.63%   3.52%   3.25%   3.25%
+//   foldMin     21.96  126.95  185.68  182.42  155.78  128.05   88.66   64.94
+// dL is FLAT to 2% over 80 mm of depth, against 14.61 mm at the shipped
+// (300, 0.5) — so at the shipped depth this solve is worth 14.61 -> 12.01,
+// 97% of what moving the depth would buy, WITHOUT moving it.
+// WHAT BREAKS THE TIE ALONG THE FLOOR IS NOT dL. wallSpread — the phase error
+// across the passage, judged against lambda/8 — falls monotonically with
+// depth, and so does the fc spread, so a free depth should still be spent on
+// depth. This knob is for a depth that is not free.
+//
+// THE BRACKET IS NOT A TASTE. Below about 0.10 the fold margin collapses
+// (3.10 mm at 0.05 against 16.2 at 0.10 and 139 at 0.30) and past about 1.1
+// the tangent overshoots into a loop and the duct FOLDS — measured
+// bendFoldMin -23.5 mm at 1.2 and turnMax 258 deg at 1.4. So the search is
+// held inside [0.12, 1.0] and says when it ends up against an edge, rather
+// than returning a number from a range where the solid is invalid.
+//
+// It solves the BARE geometry, exactly as the depth solve does: with a
+// lengthening bow on, every cell is padded to the longest and dL is 0.000 at
+// every tangent, so the objective is degenerate and the answer is whatever
+// the search happened to bisect. Strip `lengthen` and `separate` first.
+export function solveTightForMinDL(throat, opts, cfg = {}) {
+  const { iters = 40, tol = 0.005, lo0 = 0.12, hi0 = 1.0 } = cfg;
+  let evals = 0;
+  const dLAt = (tt) => {
+    evals++;
+    const m = mapThroatToMouth(throat, {
+      ...opts, tightThroat: tt, profileT: null,
+      keepGeometry: false, computeClearance: false,
+    });
+    return m ? m.dL : Infinity;
+  };
+  const gr = (Math.sqrt(5) - 1) / 2;
+  let lo = lo0, hi = hi0;
+  let x1 = hi - gr * (hi - lo), x2 = lo + gr * (hi - lo);
+  let f1 = dLAt(x1), f2 = dLAt(x2);
+  if (!isFinite(f1) && !isFinite(f2)) return { ok: false, reason: "no mapping", evals };
+  for (let i = 0; i < iters && hi - lo > tol; i++) {
+    if (f1 <= f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - gr * (hi - lo); f1 = dLAt(x1); }
+    else { lo = x1; x1 = x2; f1 = f2; x2 = lo + gr * (hi - lo); f2 = dLAt(x2); }
+  }
+  const tight = f1 <= f2 ? x1 : x2;
+  return {
+    ok: true, tight, dL: Math.min(f1, f2), evals, bracket: hi - lo,
+    // the objective is flat in the bow, so say so rather than returning a
+    // number the caller will read as meaningful
+    degenerate: !!(opts.lengthen || opts.separate),
+    // an answer against a bracket edge is the search running out of range,
+    // not an optimum — at depth 260 and 357 that is exactly what happens
+    atBound: tight < lo0 * 1.02 || tight > hi0 * 0.98,
   };
 }
 

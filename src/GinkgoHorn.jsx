@@ -548,18 +548,26 @@ export default function GinkgoHorn() {
   const [depth, setDepth] = useState(300);
   const [divergeLen, setDivergeLen] = useState(0);
   const [arriveLen, setArriveLen] = useState(0);
-  // BEND TIGHTNESS IS FIXED, NOT DIALLED. The two Hermite tangent
-  // magnitudes are the cubic's only remaining freedom, and the measured
-  // optimum barely moves: wallSpread bottoms at 0.45-0.55 on every
-  // well-posed geometry tried (curved 5.63 mm at 0.55, narrow 3.46 at 0.45)
-  // and the curve is flat between them. Going to the slider MINIMUM is not
-  // the safe choice it looks like — 0.25 measures 8.50 mm of wall spread
-  // against 5.63, and 12.7 mm of dL against 2.4, because the tangents also
-  // set how each cell's path length lands. Above 0.8 it collapses: 1.0
-  // gives a 1 mm minimum radius and 17 mm of duct overlap. So it is pinned
-  // at 0.5, and the model keeps the parameter for the day it is worth
-  // SOLVING per geometry the way depth is.
+  // THE MOUTH TANGENT IS STILL PINNED; THE THROAT ONE IS NOW SOLVED. The two
+  // Hermite tangent magnitudes are the cubic's only remaining freedom, and
+  // both were held at 0.5 on a measurement taken on the curved 90x40 mouth at
+  // depth 425, judged on wallSpread, before the section planes followed the
+  // tangent and before `bendFold` existed. Re-measured on this geometry the
+  // THROAT tangent turns out to move dL — the same objective the depth solve
+  // minimises — by 18% over its usable range, so it gets the same treatment
+  // depth gets: an input and a solve button. `tightMouth` stays 0.5 because
+  // what it sets is where the bend SITS along the path (bendCentroid), which
+  // is an acoustic placement to choose rather than a number to optimise.
+  //
+  // 0.5 REMAINS THE DEFAULT AND IS NOT A COMPROMISE: at the dL-optimal depth
+  // the solve returns 0.4997, so the pinned value was already the right one
+  // on a well-posed horn. What it buys is the OTHER end of the same valley —
+  // depth and this tangent trade at flat dL, so solving it lets a depth stay
+  // where it was chosen. Which one is solved first decides where on the floor
+  // the horn lands, and the model note on `solveTightForMinDL` has the table.
   const tight = 0.5;
+  const [tightThroat, setTightThroat] = useState(0.5);
+  const [tightSolve, setTightSolve] = useState(null);
 
   // "rect" = the original uniform x/y lattice; "arc" = coverage angles,
   // subdivided at equal solid angle
@@ -936,7 +944,7 @@ export default function GinkgoHorn() {
     // the profile is written on the OPEN passage, so it needs the divider
     // thickness — without this it silently falls back to the gross outline
     t: thickness, profileArea,
-    tightThroat: tight, tightMouth: tight,
+    tightThroat, tightMouth: tight,
     mouthMode, thetaH, thetaV, arcH, arcV, sectionMode, shapeMorph,
     lengthen: lengthenOn
       ? { lobes: lengthLobes, dir: lengthDir, uStart: bowFrom, uEnd: bowTo, regionGrade: bowGrade }
@@ -946,7 +954,7 @@ export default function GinkgoHorn() {
       ? { amps: sepSolve.amps, uStart: sepSolve.uStart, uEnd: sepSolve.uEnd,
           lobes: sepSolve.lobes, mode: sepSolve.mode }
       : null,
-  }), [layout, shown, exitAngle, divergeLen, arriveLen,
+  }), [layout, shown, exitAngle, divergeLen, arriveLen, tightThroat,
     thetaH, thetaV, arcH, arcV,
     fTarget, thickness, profileArea, shapeMorph,
     lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes, bowGrade,
@@ -1963,6 +1971,39 @@ export default function GinkgoHorn() {
           </div>
         )}
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          <div style={{ width: 130 }}>
+            <NumInput label="Throat tangent" value={tightThroat} onChange={setTightThroat}
+              unit="" min={0.12} max={1} step={0.01} accent={C.series2} />
+          </div>
+          <button onClick={() => {
+            // `mapOpts` carries no depth — the mapping memo supplies it — and
+            // the depth solve does not notice because it overrides depth on
+            // every evaluation. This one has to pass it, or it silently solves
+            // the model's own 150 mm fallback: measured 0.122 at dL 68.7 mm
+            // against 0.281 at 12.0 for the horn actually on screen.
+            const r = G.solveTightForMinDL(throat, { ...solveRefOpts(), depth });
+            setTightSolve({ ...r, depth });
+            if (r.ok) setTightThroat(Math.round(r.tight * 100) / 100);
+          }} style={btn(false, C.series2)}>solve tangent for minimum ΔL</button>
+        </div>
+        {tightSolve && (
+          <div style={{ marginTop: 5, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+            {tightSolve.ok
+              ? <><span style={{ color: C.inkMuted }}>min ΔL → throat tangent </span>
+                  <span style={{ color: C.series2 }}>{fmt(tightSolve.tight, 3)}</span>
+                  <span style={{ color: C.inkMuted }}> at ΔL {fmt(tightSolve.dL, 2)} mm
+                    {tightSolve.atBound ? " — at the search bound, not an interior optimum" : ""}
+                    {" · solved at depth "}{fmt(tightSolve.depth, 0)}{" mm"}
+                  </span>
+                  {tightSolve.depth !== depth
+                    ? <span style={{ color: C.series5 }}>{" — the depth has moved since; re-solve"}</span> : null}
+                  {Math.abs(tightSolve.tight - 0.5) < 0.02
+                    ? <span style={{ color: C.series4 }}>{" — which is the default: this depth is already the ΔL optimum"}</span> : null}
+                </>
+              : <span style={{ color: C.series5 }}>min ΔL — {tightSolve.reason}</span>}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
           <span style={{ fontSize: 10, color: C.inkMuted }}>divergence run</span>
           <input type="range" min={0} max={40} step={0.5} value={divergeLen} onChange={(e) => setDivergeLen(parseFloat(e.target.value))}
             style={{ width: 110, accentColor: C.series7 }} />
@@ -1975,9 +2016,27 @@ export default function GinkgoHorn() {
         <div style={{ ...hintStyle, marginTop: 6 }}>
           Pick any <strong style={{ color: C.inkDim }}>two of three</strong> — f_c, mouth size, ΔL-optimal depth. Depth buys path length and
           nothing else on the biradial mouth, and at the ΔL optimum the mouth's curvature centre lands on the throat so every cell is
-          equidistant — watch the <strong style={{ color: C.inkDim }}>section</strong> tab while this moves. The solve resets both straight
-          runs to 0 first, so it is a repeatable reference; a long <strong style={{ color: C.inkDim }}>arrival run</strong> then pushes the
-          turning back toward the throat, where the section is small. Bend tightness is fixed at 0.5 — see the notes.
+          equidistant — watch the <strong style={{ color: C.inkDim }}>section</strong> tab while this moves. Both solves read the straight
+          runs as they stand and stamp what they were solved for, so the answer describes the horn on screen; a long{" "}
+          <strong style={{ color: C.inkDim }}>arrival run</strong> pushes the turning back toward the throat, where the section is small.
+        </div>
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          <strong style={{ color: C.inkDim }}>The throat tangent and the depth are one valley, not two optima.</strong> Both decide where each
+          cell's path length lands, so they trade at nearly constant ΔL, and <em>which one you solve first decides where on the floor you
+          land</em>: solve depth and you get 319.5 mm with the tangent at 0.500 — the value it already ships at, which is why it was a
+          defensible pin; solve the tangent at depth 300 and you get 0.281, after which the depth solve returns 300 and neither moves again.
+          Both are fixed points, and ΔL is <strong style={{ color: C.inkDim }}>11.92–12.16 mm all the way from depth 290 to 370</strong>
+          against 14.61 at the shipped pair. So this solve is what pays for holding the depth where you want it — at 300 it is worth
+          97% of what moving to 319.5 would buy, without moving it.
+        </div>
+        <div style={{ ...hintStyle, marginTop: 6 }}>
+          <strong style={{ color: C.inkDim }}>ΔL does not break the tie along that floor — wall spread does, and it favours depth.</strong>{" "}
+          Solving the tangent at each depth, wall spread runs 14.00 → 13.49 → 12.45 → 11.31 mm at depth 300 → 319.5 → 340 → 357, and the f_c
+          spread falls 4.02% → 3.25% with it. A depth you are free to move is still better spent on depth; the tangent is for the depth you
+          are not. Past about 1.1 it overshoots into a loop and the duct <em>folds</em> (bend clearance −23.9 mm at 1.2), and a shallow horn
+          wants a tangent below the 0.12 floor — both ends are bracketed and the solve says when it hits one. One caution worth reading
+          rather than automating: with the bow on, the ΔL-optimal 0.281 sits just past a <strong style={{ color: C.inkDim }}>clearance</strong>{" "}
+          step — the wall between ducts reads 1.51 mm at 0.27 and 0.39 mm at 0.28 — so back it off a hundredth if stage 8 goes thin.
         </div>
       </Stage>
 

@@ -2506,22 +2506,53 @@ head("Throat knife edge (the defect metric's other boundary)");
   checkTrue("the closing pair is called a defect at every RESOLVING station count",
     post.every((r) => r.off.minMid < 0 && r.on.minMid === r.off.minMid && r.on.throat.dipAt === 1),
     post.map((r) => `${r.stations}: ${r.on.minMid.toFixed(3)}`).join(", "));
-  //    THE PREVIEW COUNT IS BELOW THAT, AND NOW MISSES THE DIVE ENTIRELY.
   //    THE PREVIEW NOW SEES THE DIVE, and that is what raising `samples`
   //    bought. This assertion used to read the other way and was written to
   //    flip when the sampling landed: at samples 64 the 24-station pass
   //    reported NO dip and minMid +0.5195 mm where 48 stations read -0.2305,
   //    so the coarse pass was on the wrong side of a minimum sitting at
-  //    u = 0.021. At samples 512 the station positions land close enough to
-  //    their true u that both counts see it. The clearance is still MEASURED
-  //    at the export count (an export came back with 4.9 mm of
+  //    u = 0.021. At samples 512 and above the station positions land close
+  //    enough to their true u that both counts see it. The clearance is still
+  //    MEASURED at the export count (an export came back with 4.9 mm of
   //    interpenetration while the readout said +1.14 mm), so this is belt and
   //    braces rather than the only guard.
   const preview = M.ductClearance(
     M.mapThroatToMouth(th, dflt({ stations: 24 })).rows, { throatFloor: 0.5 });
   checkTrue("the preview's 24 stations now DO sample the dive",
-    preview.throat.dip !== null && preview.minMid < 0 && post[1].on.minMid < -0.2,
+    preview.throat.dip !== null && preview.minMid < 0,
     `24 stations reports a ${preview.throat.dip.toFixed(4)} mm dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
+
+  //    AND THE MAGNITUDE AT 48 STATIONS IS NOT A MEASUREMENT — IT IS A
+  //    LOTTERY ON WHERE THE SAMPLE GRID PUTS THE STATION. This assertion used
+  //    to require `post[1].on.minMid < -0.2` and it went red on the `samples`
+  //    512 -> 1024 raise, which is what exposed the mechanism. Station q sits
+  //    at u = q/stations, but the map can only evaluate WHERE A SAMPLE IS —
+  //    `idx = Math.round(u * M)` — so the u actually read is quantised to the
+  //    sample grid. Station 1 of 48 (true u = 1/48 = 0.020833) is read at:
+  //      samples    480      512      960     1024     1440     2048     4096
+  //      u        .020833  .021484  .020833  .020508  .020833  .020996  .020752
+  //      minMid   -0.3388  -0.3366  -0.3388  -0.1362  -0.3381  -0.3381  -0.3391
+  //    A shift of 0.000325 in u — three hundredths of one percent of the path
+  //    — HALVES the reported dip, and the counts that divide the sample count
+  //    exactly (480, 960, 1440) all return the same -0.3388. So the feature is
+  //    sharper than any station grid can honestly resolve, and asserting its
+  //    depth at one (stations, samples) pair asserts an accident.
+  //    WHAT IS STABLE IS THE STATION-FREE READ, which is what the UI shows:
+  //    `compare: "solid"` measures each wall point against the neighbour's own
+  //    section plane wherever it falls, so it never asks two rings to be at
+  //    the same place. Measured across the same span it moves 0.05 mm, against
+  //    the station read's 0.20.
+  const solidRead = [512, 1024, 2048, 4096].map((samples) => M.ductClearance(
+    M.mapThroatToMouth(th, dflt({ stations: 48, samples })).rows,
+    { throatFloor: 0.5, compare: "solid" }).minMid);
+  const stationRead = [512, 1024, 2048, 4096].map((samples) => M.ductClearance(
+    M.mapThroatToMouth(th, dflt({ stations: 48, samples })).rows,
+    { throatFloor: 0.5 }).minMid);
+  const spread = (a) => Math.max(...a) - Math.min(...a);
+  checkTrue("the dive's DEPTH is a station-grid lottery and the solid read is not",
+    solidRead.every((x) => x < 0) && spread(solidRead) < 0.08 && spread(stationRead) > 0.15,
+    `solid ${solidRead.map((x) => x.toFixed(4)).join(" ")} (spread ${spread(solidRead).toFixed(4)}) ` +
+    `vs station ${stationRead.map((x) => x.toFixed(4)).join(" ")} (spread ${spread(stationRead).toFixed(4)}) mm over samples 512-4096`);
 
   // 4b. A BOW THAT STARTS AT THE THROAT DRIVES THE DUCTS THROUGH EACH OTHER,
   //     AND ONE THAT STARTS PAST IT COSTS NOTHING. This is the geometry of an
@@ -4311,7 +4342,30 @@ head("Bow direction across the row, and the station-free clearance");
   // directions, because a bow's added length depends on its amplitude and its
   // window span and never on which way it points — so the wave cannot tell
   // them apart and only the neighbours can. Asserted rather than argued.
-  check("crossRow vs radial: dL unchanged", cro.dL - rad.dL, 0, 1e-9, "mm");
+  // dL is the RESIDUAL after the bow has equalised the paths, so both numbers
+  // are the length bisection's own convergence floor (~1e-7 mm) and not a
+  // property of the direction. This used to be asserted at 1e-9, which passed
+  // only because at samples 512 the two happened to land on bit-identical
+  // residuals; raising the default to 1024 moved them 1.8e-8 apart and the
+  // assertion went red on a difference 5x below the floor it was measuring.
+  // Assert the floor itself, on BOTH values, so the check cannot be satisfied
+  // by an accident of arithmetic.
+  checkTrue("crossRow vs radial: dL unchanged (both at the bisection floor)",
+    Math.abs(rad.dL) < 1e-6 && Math.abs(cro.dL) < 1e-6 && Math.abs(cro.dL - rad.dL) < 1e-6,
+    `radial ${rad.dL.toExponential(3)}, crossRow ${cro.dL.toExponential(3)}, diff ${(cro.dL - rad.dL).toExponential(3)} mm`);
+  // AND THE PER-CELL AMPLITUDES ARE **NOT** IDENTICAL, which the note that
+  // landed with `crossRow` overstated. The worst cell differs 10.300 mm
+  // radial against 9.872 crossRow — 4% — because on a CURVED centreline a
+  // lateral offset changes length at first order through the kappa.delta
+  // term, so the amplitude that buys a given length does depend on which way
+  // it points. What IS direction-invariant is the binding cell: ampMax,
+  // bendFoldMin and wallSpreadMax all agree to 1e-9, because the cell that
+  // sets them is the one whose bow direction the two fields agree on.
+  const amps = (m) => m.rows.map((r) => r.snakeAmp || 0);
+  const perCell = Math.max(...amps(rad).map((a, i) => Math.abs(a - amps(cro)[i])));
+  checkTrue("the direction invariance is the BINDING cell, not every cell",
+    Math.abs(rad.lengthen.ampMax - cro.lengthen.ampMax) < 1e-9 && perCell > 0.1,
+    `ampMax agrees to ${Math.abs(rad.lengthen.ampMax - cro.lengthen.ampMax).toExponential(1)} mm while the worst cell differs ${perCell.toFixed(3)} mm`);
   check("crossRow vs radial: bow amplitude unchanged",
     cro.lengthen.ampMax - rad.lengthen.ampMax, 0, 1e-9, "mm");
   check("crossRow vs radial: fold margin unchanged",
@@ -5010,6 +5064,130 @@ head("The depth solve and the two straight runs");
   // no run at all must leave the answer exactly where it was, or this change
   // would have moved every depth figure recorded in CLAUDE.md
   check("with no runs the solve is unchanged", solve(0, 0).depth, bare.depth, 0, "mm");
+}
+
+head("The throat-tangent solve, and where it is worth anything");
+// `tightThroat` is one of the cubic's two free scalars and it was pinned at
+// 0.5 for a year on a measurement taken on a geometry this tool no longer
+// builds. `solveTightForMinDL` solves it on the SAME objective as the depth
+// solve — dL, the spread in path length, which is phase error at the aperture
+// and the dominant term in the fc spread — so the two are commensurable and
+// can be read against each other. Every assertion here is against the forward
+// model or against a structural claim, never against the solver's own
+// bookkeeping.
+{
+  const t = 0.4;
+  const th = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c }).throat;
+  const O = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", stations: 24, samples: 512,
+    keepGeometry: false, computeClearance: false, lengthen: null, ...o,
+  });
+  const dLat = (tt, o = {}) => M.mapThroatToMouth(th, O({ tightThroat: tt, ...o })).dL;
+
+  // ── 1. THE ANSWER IS REPRODUCIBLE THROUGH THE FORWARD MODEL ──────────────
+  // The solve reports a dL; feeding its own tangent back through the mapping
+  // must return that number. This is the same round trip the fc metric uses,
+  // and it is what stops the solver reporting a number it did not measure.
+  const r300 = M.solveTightForMinDL(th, O());
+  check("the solved tangent reproduces its own dL through the mapping",
+    dLat(r300.tight), r300.dL, 1e-12, "mm");
+
+  // ── 2. IT IS ACTUALLY A MINIMUM ──────────────────────────────────────────
+  // A search can converge on a point without that point being an optimum.
+  // Step either side by four times the search tolerance and the objective has
+  // to be worse in both directions.
+  checkTrue("and it is a minimum, not just a fixed point of the search",
+    dLat(r300.tight - 0.02) > r300.dL && dLat(r300.tight + 0.02) > r300.dL,
+    `${dLat(r300.tight - 0.02).toFixed(4)} < ${r300.dL.toFixed(4)} > ${dLat(r300.tight + 0.02).toFixed(4)} mm ` +
+    `at tight ${r300.tight.toFixed(4)}`);
+
+  // ── 3. IT IS ONE VALLEY, NOT TWO OPTIMA, AND THE ORDER DECIDES WHERE ─────
+  // The first version of this block asserted a single joint optimum at
+  // (319.5, 0.50), which is what solving DEPTH first gives — and it is why
+  // 0.5 was a defensible pin. Driving the UI showed the other half: solve the
+  // TANGENT first at depth 300 and it returns 0.281, after which the depth
+  // solve returns 300 and neither moves again. Two fixed points, both on a
+  // floor that is flat to 2% in dL across 80 mm of depth. Assert BOTH, and
+  // assert the flatness that makes them equivalent, or the note in CLAUDE.md
+  // is asserting an optimum where there is a valley.
+  const rd = M.solveDepthForMinDL(th, O());
+  const rt = M.solveTightForMinDL(th, O({ depth: rd.depth }));
+  checkTrue("depth first: at the dL-optimal depth the tangent IS the shipped 0.5",
+    rd.ok && rt.ok && Math.abs(rt.tight - 0.5) < 0.02,
+    `depth ${rd.depth.toFixed(1)} mm -> tight ${rt.tight.toFixed(4)}`);
+  const rd2 = M.solveDepthForMinDL(th, O({ tightThroat: r300.tight }));
+  checkTrue("tangent first: the depth solve then returns the depth it was solved AT",
+    Math.abs(rd2.depth - 300) < 6,
+    `tight ${r300.tight.toFixed(3)} at depth 300 -> depth solve says ${rd2.depth.toFixed(1)} mm`);
+  // and the floor between the two is flat — that is what makes them a trade
+  // rather than one being wrong
+  const floor = [290, 300, 310, 320, 340, 357].map((depth) => {
+    const rr = M.solveTightForMinDL(th, O({ depth }));
+    return dLat(rr.tight, { depth });
+  });
+  checkTrue("...and dL along the floor is flat, so the two are interchangeable",
+    Math.max(...floor) - Math.min(...floor) < 0.3,
+    `${floor.map((x) => x.toFixed(3)).join(" ")} mm over depth 290-357, spread ${(Math.max(...floor) - Math.min(...floor)).toFixed(3)}`);
+  // WHAT IS NOT FLAT is the tie-breaker: wall spread is the phase error the
+  // horn is judged on, and it falls monotonically with depth along the same
+  // floor. So a depth that is free should still be spent on depth, and this
+  // solve is for a depth that is not.
+  const wsFloor = [300, 320, 340, 357].map((depth) => {
+    const rr = M.solveTightForMinDL(th, O({ depth }));
+    return M.mapThroatToMouth(th, O({ depth, tightThroat: rr.tight })).wallSpreadMax;
+  });
+  checkTrue("the tie along the floor is broken by wall spread, which favours depth",
+    wsFloor.every((x, i) => i === 0 || x < wsFloor[i - 1]),
+    `${wsFloor.map((x) => x.toFixed(2)).join(" -> ")} mm at depth 300, 320, 340, 357`);
+
+  // ── 4. WHAT IT IS FOR: PAYING FOR A DEPTH HELD OFF ITS OPTIMUM ───────────
+  // Depth 300 is the shipped default and is NOT the dL optimum (it is kept so
+  // the depth solve has something to move). Solving the tangent there has to
+  // recover most of what moving the depth would have bought, or there is no
+  // reason to offer it.
+  const gained = dLat(0.5) - r300.dL, available = dLat(0.5) - rd.dL;
+  checkTrue("at the shipped depth it recovers most of what moving depth buys",
+    gained > 2 && gained / available > 0.9,
+    `dL ${dLat(0.5).toFixed(3)} -> ${r300.dL.toFixed(3)} mm, ${(100 * gained / available).toFixed(1)}% of the ` +
+    `${available.toFixed(3)} mm the depth move would give`);
+
+  // ── 5. THE BRACKET IS A REAL CONSTRAINT AND IS REPORTED ──────────────────
+  // Past about 1.1 the tangent overshoots into a loop and the duct FOLDS, so
+  // the upper bound is not a taste — asserted directly, because a solver that
+  // is allowed to return an invalid solid is worse than one that says it ran
+  // out of room. And at a shallow depth the optimum is outside the bracket
+  // and `atBound` has to say so rather than presenting an edge as an answer.
+  checkTrue("past the bracket the duct folds, which is why the bracket exists",
+    M.mapThroatToMouth(th, O({ tightThroat: 1.2 })).bendFoldMin < 0,
+    `bendFoldMin ${M.mapThroatToMouth(th, O({ tightThroat: 1.2 })).bendFoldMin.toFixed(2)} mm at tight 1.2`);
+  const shallow = M.solveTightForMinDL(th, O({ depth: 260 }));
+  checkTrue("a shallow horn wants a tangent outside the bracket and says so",
+    shallow.atBound && shallow.tight < 0.14, `tight ${shallow.tight.toFixed(4)}, atBound ${shallow.atBound}`);
+
+  // ── 6. WITH A BOW THE OBJECTIVE IS DEGENERATE, AND THE FLAG SAYS SO ──────
+  // The lengthening bow pads every cell up to the longest, so dL is the
+  // bisection floor at EVERY tangent and the search would return whichever
+  // point it happened to bisect. The flag is only worth having if the
+  // degeneracy is real, so assert the degeneracy too.
+  const BOW = { lobes: 1, dir: "crossRow", uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 };
+  const bowed = M.solveTightForMinDL(th, O({ lengthen: BOW }));
+  checkTrue("a bow makes the objective flat, and the solve reports it degenerate",
+    bowed.degenerate && dLat(0.2, { lengthen: BOW }) < 1e-6 && dLat(0.8, { lengthen: BOW }) < 1e-6,
+    `dL ${dLat(0.2, { lengthen: BOW }).toExponential(2)} at tight 0.2 and ` +
+    `${dLat(0.8, { lengthen: BOW }).toExponential(2)} at 0.8`);
+
+  // ── 7. IT CHANGES NOTHING UNTIL IT IS APPLIED ────────────────────────────
+  // The solve must not have side effects on the mapping: the horn at the
+  // shipped tangent has to come out bit-identical after a solve has run.
+  const before = M.mapThroatToMouth(th, O({ keepGeometry: true })).rows[0].sched[12].pts[0];
+  M.solveTightForMinDL(th, O());
+  const after = M.mapThroatToMouth(th, O({ keepGeometry: true })).rows[0].sched[12].pts[0];
+  check("solving does not move the horn it was measuring",
+    Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]), 0, 0, "mm");
 }
 
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);

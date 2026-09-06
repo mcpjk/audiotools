@@ -401,50 +401,54 @@ is 1.77 mm**, the thinnest any shipped default has carried. Not folded, and the
 owner's call — but read `bendFoldMin` in the verdict strip before committing a
 print.
 
-### 0. SOLVE OR RE-PIN `tightThroat` — the largest free improvement on the shipped horn
+### DONE 2026-09-06 — `tightThroat` is SOLVED, and `samples` is 1024
 
-Measured 2026-09-04 on the current defaults (region grade 0.20, samples 2048,
-stations 64, inset outlines, diagonals in, floor 1.5 mm), and it contradicts
-the standing CLAUDE.md finding, which was taken on the old curved mouth at
-depth 425 and judged on `wallSpread` before `bendFold` existed.
+`solveTightForMinDL` is in the model, tested and wired into stage 5 beside the
+depth solve. It minimises the SAME objective — dL, path-length spread, which
+is phase error at the aperture and the dominant term in the fc spread — by
+golden section on the bare geometry, bracketed to [0.12, 1.0] because past
+about 1.1 the duct folds.
 
-At depth 300 with the shipped bow, moving `tightThroat` 0.5 -> 0.25:
+**The earlier entry here was half right and the half it missed matters.** It
+read the sweep at fixed depth and concluded "0.25 is better". Solving it
+properly showed that depth and the throat tangent are ONE VALLEY: they trade
+at flat dL, and which one is solved FIRST decides where on the floor the horn
+lands.
 
-| | 0.5 (shipped) | 0.25 |
-|---|---|---|
-| fold margin | **0.898 mm** | **2.106** |
-| wall gap | **-2.639 mm** | **+0.049** |
-| wallSpread | 14.37 mm | 12.70 |
-| obliquity | 24.3 deg | 18.4 |
-| 1.5 mm reach | 77% | 85% |
-| dL | 0.000 | 0.009 |
+| depth | 290 | 300 | 310 | 319.5 | 330 | 340 | 357 | 370 |
+|---|---|---|---|---|---|---|---|---|
+| best tangent | 0.122 | 0.281 | 0.402 | 0.500 | 0.593 | 0.674 | 0.791 | 0.869 |
+| dL | 12.16 | 12.01 | 11.96 | 11.93 | 11.92 | 11.92 | 11.94 | 11.97 |
+| wallSpread | 13.94 | 14.00 | 13.81 | 13.49 | 13.01 | 12.45 | 11.31 | 10.34 |
 
-Every metric improves and the interpenetration crosses zero. Ends stay exact
-(station 0 at 0.0e+0, mouth on the aperture to 5.7e-14). The fold margin it
-more than doubles is the 0.898 mm the grade-0.20 default carries, which is the
-thinnest any shipped default has had.
+dL is flat to 2% across 80 mm of depth, against **14.61 mm at the shipped
+(300, 0.5)**. So the pin was right — for the depth the tool is not using — and
+solving the tangent is what pays for holding depth 300: dL 14.61 -> 12.01, 97%
+of what moving to 319.5 would buy, without moving it. Both are fixed points:
+the depth solve returns 300.1 mm once the tangent is solved at 300.
 
-**It is compensating for depth 300 being off its optimum**, which is the real
-finding: at 319.5 and 357 the shipped 0.5 is the better value on both fold and
-gap. Depth 300 is settled for UI reasons, so `tightThroat` is the lever that
-pays for it — and it is currently pinned at the value that suits a depth we
-are not using.
+**What breaks the tie along the floor is `wallSpread`, and it favours depth.**
+A depth that is free is still better spent on depth.
 
-Three options, in order of what they cost:
-1. **Re-pin at 0.25.** One line. Wrong if the depth ever moves.
-2. **Make it adjustable again** — it was a slider once.
-3. **Solve it, like depth.** The right value tracks the depth, and the depth
-   solve is a button the owner presses. This is what the old finding's own
-   closing line proposed.
+**Left deliberately undone**, and this is the one thing to read before
+touching it again: with the bow on, the dL-optimal 0.281 sits one hundredth
+past a clearance step — the wall between ducts is 1.505 mm at 0.27 and
+0.388 mm at 0.28. Backing off one step costs 0.14 mm of dL and buys 1.1 mm of
+wall. It is in the stage hint, and it is NOT in the objective, because a
+multi-objective solve would hide exactly that trade. If the owner wants it
+automated, the honest form is a second button (solve for clearance) whose
+answer can be read against this one — never one blended score.
 
-Do NOT fold it into the region-grade solve: the grade sets each cell's window
-width, `tight` sets the base centreline for all cells. Lumping them hides
-which is doing the work — and the grade moves this knob's usable window, so a
-joint solve would be searching a space whose shape it cannot report.
+`tightMouth` stays pinned at 0.5: what it sets is where the bend SITS along
+the path (`bendCentroid`), which is an acoustic placement to choose rather
+than a number to optimise.
 
-The plateau is 0.20-0.25 at the shipped grade 0.20 (it was 0.18-0.28 at grade
-0.15), with a cliff at 0.28 (gap +0.049 -> -0.491). Read it; do not
-extrapolate.
+**`samples` is 1024** (was 512). On the shipped graded bow, fold margin
+optimism 18.5% -> 7.4% for 21 ms of preview. **2048 is what actually
+converges (+1.5%), for another 31 ms** — reach for it whenever a fold margin
+is marginal, which on the graded default it already is. Time sample counts in
+FRESH PROCESSES; in one process the first pays the JIT warmup and the order
+lies.
 
 ### 1. Raise the PREVIEW station count
 
@@ -555,8 +559,15 @@ The fix is to interpolate `C` (and the frame) between samples rather than
 snapping, which is a small change with a wide blast radius: every duct
 moves slightly, and every measurement recorded in CLAUDE.md was taken on the
 snapped geometry. It deserves its own session and its own re-verification.
-Until then, station counts that divide 512 (32 and 64 among them) are exact,
-and everything else is now within about 15%.
+Until then, station counts that divide the sample count are exact, and
+everything else is now within about 15%. **`samples` is 1024 as of 2026-09-06,
+so which counts are exact HAS MOVED** — and the raise showed the snapping bites
+harder than the step ratios suggest. Station 1 of 48 (true u = 0.020833) is
+read at u = 0.021484 at samples 512 and 0.020508 at 1024, and on the 560x250
+geometry that 0.000325 shift HALVES the reported near-throat dip, -0.337 ->
+-0.136 mm. The station-free `compare: "solid"` read moves 0.022 mm over the
+same span. So until this is interpolated, do not quote a station-grid gap
+magnitude at all — quote the solid read.
 
 ## THE SHELL: WHAT FAILED, AND THE RULE THAT COMES OUT OF IT
 
