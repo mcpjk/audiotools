@@ -829,6 +829,25 @@ exists.
   Both options were measured against the acoustic quantities and came back
   equal, so the wave cannot tell them apart and only the neighbours can. That
   is the test a construction has to pass before tidiness gets a vote.
+  **THE INVARIANCE IS THE BINDING CELL, NOT EVERY CELL, and the commit that
+  landed this said "bow amplitude identical" without that qualifier.** The
+  PER-CELL amplitudes differ: the worst runs 10.300 mm radial against 9.872
+  crossRow, 4%. That is the kappa.delta term the lengthening finding already
+  records — on a CURVED centreline a lateral offset changes length at first
+  order through the curvature, so the amplitude that buys a given length does
+  depend on which way it points, and the direction-free result is only exact
+  on a straight path. `ampMax`, `bendFoldMin` and `wallSpreadMax` agree to
+  1e-9 because the cell that SETS them is one the two fields happen to point
+  the same way for. Asserted in the suite from both sides, so the qualifier
+  cannot be dropped again.
+  **`dL` IS NOT AN INVARIANCE TEST HERE AND WAS BEING READ AS ONE.** With the
+  bow on, dL is the length bisection's own convergence floor (~5e-8 to 9e-8 mm)
+  in BOTH directions, not zero. It was asserted at 1e-9 and passed only
+  because at samples 512 the two happened to land on bit-identical residuals;
+  raising the default to 1024 moved them 1.8e-8 apart and it went red on a
+  difference 50x below the floor it was measuring. It now asserts the floor
+  on both values. Same rule as the budget-in-metres finding: a tolerance has
+  to be justified against the mechanism that sets it.
   **WHICH LINE THE PERPENDICULAR COMES FROM MATTERS, and the three candidates
   measured 1.7 mm apart.** The cells tile a DISC, so a row's centroids do not
   lie on a straight line. Measured worst gap on the same horn:
@@ -1231,7 +1250,44 @@ exists.
   spread that is the ring's own slow variation rather than a missed peak. It
   is still optimistic in the SAMPLE count — see the under-resolution finding
   below.
-- **THE 512-SAMPLE DEFAULT IS 19% OPTIMISTIC ON THE GRADED BOW, THREE TIMES
+- **`samples` IS NOW 1024 (owner's number, 2026-09-06), AND 2048 IS WHAT
+  ACTUALLY CONVERGES ON THE GRADED BOW.** Re-measured on the SHIPPED bow
+  (crossRow, [0.02, 0.22], grade 0.20) at stations 64, against 1.3423 mm at
+  8192, each timing the median of 15 runs in a FRESH PROCESS:
+    samples      512     1024     2048     4096
+    foldMin   1.5913   1.4418   1.3626   1.3445  mm
+    optimistic +18.5%   +7.4%    +1.5%    +0.2%
+    preview     60.7     82.0    113.1    174.9  ms  (24 stations)
+    export     129.6    138.3    175.3    233.5  ms  (64 stations)
+  So 1024 costs 21 ms of preview and 9 ms of export and takes the optimism
+  from 18.5% to 7.4%; **2048 is the value that converges, for another 31 ms**,
+  and is what to reach for whenever a fold margin is marginal — which on the
+  graded default it already is. Nothing but the fold margin moves: dL,
+  wallSpread and sectionObliqMax are IDENTICAL to every digit printed over
+  512 -> 1024 -> 2048.
+  **TIME EACH COUNT IN A FRESH PROCESS.** Timing several in one run reads them
+  out of order — the first pays the JIT warmup — and produced the nonsense that
+  1024 was FASTER than 512 (55 ms against 70). In separate processes the cost
+  is monotone, as it must be.
+  **RAISING `samples` MOVES WHICH u A STATION GRID ACTUALLY READS, and that
+  broke a test in a way worth keeping.** Station q is at u = q/stations, but
+  the map can only evaluate WHERE A SAMPLE IS — `idx = Math.round(u * M)` — so
+  the u read is quantised to the sample grid. Station 1 of 48 (true u =
+  1/48 = 0.020833) on the 560x250 geometry:
+    samples    480      512      960     1024     1440     2048     4096
+    u        .020833  .021484  .020833  .020508  .020833  .020996  .020752
+    minMid   -0.3388  -0.3366  -0.3388  -0.1362  -0.3381  -0.3381  -0.3391
+  **A shift of 0.000325 in u — three hundredths of one percent of the path —
+  HALVES the reported dip**, and the counts that divide the sample count
+  exactly all return the same -0.3388. So the near-throat dive is sharper than
+  any station grid can honestly resolve, and asserting its DEPTH at one
+  (stations, samples) pair asserts an accident. What is stable is the
+  station-free `compare: "solid"` read the UI shows: -0.097 to -0.120 mm over
+  the same span, a 0.022 mm spread against the station read's 0.203. The test
+  now asserts that contrast rather than a magnitude.
+
+- **(SUPERSEDED by the raise above; kept for the measurement.) THE 512-SAMPLE
+  DEFAULT IS 19% OPTIMISTIC ON THE GRADED BOW, THREE TIMES
   ITS ERROR ON THE BOW IT WAS CALIBRATED FOR — and the fold margin is a
   `samples` measurement, NOT a `stations` one.** The convergence table below
   was taken on the [0, 0.20] grade 0 bow, and 512 was chosen there. The
@@ -1523,55 +1579,67 @@ exists.
   stayed on the current one, and a real 40x12 drag still moved it. A test
   that dragged by a real distance could not have told the two apart.
 
-- **BEND TIGHTNESS IS THE LARGEST UNUSED LEVER ON THE SHIPPED HORN, AND THE
-  FINDING BELOW IS STALE — it was measured on a geometry this tool no longer
-  builds.** `tight` was pinned at 0.5 on the curved 90x40 / depth 425 mouth,
-  judged on `wallSpread`, before the section planes followed the tangent,
-  before the mouth went vertically flat at arcH 500, before depth 300, and
-  before `bendFold` existed at all. Re-measured on the CURRENT defaults —
-  6x3, m 3, arcs 500x245, depth 300, T 0.7, 1-lobe radial over [0.02, 0.22]
-  at **region grade 0.20**, samples 2048, stations 64, the UI's own pair set
-  with diagonals in, INSET outlines, floor 1.5 mm — sweeping `tightThroat`
-  with `tightMouth` at 0.5:
-    tightThroat   0.20    0.22    0.25    0.28    0.30    0.40    0.50
-    foldMin       2.209   2.101   2.106   2.055   2.006   1.473  0.898  mm
-    wall gap     -0.002  +0.004  +0.049  -0.491  -1.428  -2.600 -2.639  mm
-    wallSpread    12.79   12.71   12.70   12.44   12.55   13.24  14.37  mm
-    obliquity     18.51   18.52   18.37   18.32   18.88   21.66  24.30  deg
-    1.5 mm reach    87%     86%     85%     83%     82%     79%    77%
-    dL            0.000   0.000   0.009   0.001   0.000   0.000  0.000  mm
-  **Every metric the tool reports improves at once, and the interpenetration
-  crosses zero.** At 0.25 the ducts stop passing through each other entirely
-  (+0.049 mm of real wall) where the shipped 0.5 leaves -2.639 mm, and the
-  fold margin — 0.898 mm at grade 0.20, the thinnest any shipped default has
-  carried — goes to 2.106 mm, a factor of 2.3, for no dL at all. Ends stay
-  exact: station 0 in the throat plane to 0.0e+0 and the mouth on the
-  aperture to 5.7e-14 at every value. `fluxContractMax` is 0.00% throughout.
-  **BUT IT IS COMPENSATING FOR A DEPTH THAT IS OFF ITS OPTIMUM, and that is
-  the finding rather than "0.25 is better".** Same settings, sweeping depth:
-    depth        fold @0.5   fold @0.25   gap @0.5   gap @0.25
-    300           0.898       2.106       -2.639     +0.049
-    319.5         3.389       3.215       +0.224     +0.081
-    357           5.339       3.580       +1.645     +0.138
-  At the dL optimum 0.5 is the better value on both counts; at depth 300 it is
-  0.25 by a wide margin. So the tangent magnitude and the axial depth are
-  COUPLED, and the pinned 0.5 suits a depth the tool is deliberately not
-  using. Depth 300 is settled for UI reasons (it is what the dL solve is read
-  against), which makes `tightThroat` the lever that pays for that choice.
-  **THE OPTIMUM IS A PLATEAU AND THE REGION GRADE MOVES ITS EDGE.** At grade
-  0.15 the gap is flat from 0.18 to 0.28 and drops 1.4 mm at 0.30; at the
-  shipped grade 0.20 the cliff has moved in to 0.28 (-0.491 mm). So the
-  usable window is **0.20 to 0.25** as the tool ships, and it NARROWS as the
-  grade rises — the two knobs are not independent, which is the second reason
-  not to lump them. The conclusion itself is unchanged across the grade
-  change: at 0.15 the same move read 1.496 -> 2.833 mm of fold and
-  -2.845 -> +0.049 mm of gap.
-  **WHAT TO DO WITH IT**: the old note's own closing line — "if it is ever
-  worth per-geometry accuracy, SOLVE it like depth" — is now clearly worth it,
-  because the right value tracks the depth. Do NOT fold it into the region
-  grade: the grade sets each cell's own window width and `tight` sets the base
-  centreline for all of them, so lumping them hides which one is doing the
-  work, which is the mistake this file has already recorded twice.
+- **THE THROAT TANGENT IS NOW SOLVED (`solveTightForMinDL`), AND WHAT IT
+  REVEALED IS THAT DEPTH AND THE TANGENT ARE ONE VALLEY, NOT TWO OPTIMA.**
+  `tight` was pinned at 0.5 on the curved 90x40 / depth 425 mouth, judged on
+  `wallSpread`, before the section planes followed the tangent, before the
+  mouth went vertically flat at arcH 500, before depth 300, and before
+  `bendFold` existed. It moves dL — the same objective the depth solve
+  minimises, and the dominant term in the fc spread — so it gets the same
+  golden section on the same quantity, on the BARE geometry (a lengthening
+  bow pads every cell to the longest, so dL is the bisection floor at every
+  tangent and the objective is degenerate; the solve reports that).
+  **BOTH KNOBS DECIDE WHERE EACH CELL'S PATH LENGTH LANDS, SO THEY TRADE AT
+  FLAT dL, AND WHICH ONE IS SOLVED FIRST DECIDES WHERE ON THE FLOOR THE HORN
+  LANDS.** Measured at 6x3, m 3, arcs 500x245, T 0.7, samples 2048, solving
+  the tangent at each depth:
+    depth        290     300     310   319.5     330     340     357     370
+    best tt     0.122   0.281   0.402   0.500   0.593   0.674   0.791   0.869
+    dL         12.164  12.013  11.955  11.929  11.917  11.922  11.943  11.971
+    wallSpread  13.94   14.00   13.81   13.49   13.01   12.45   11.31   10.34
+    fc spread   4.21%   4.02%   3.88%   3.75%   3.63%   3.52%   3.36%   3.25%
+    foldMin     21.96  126.95  185.68  182.42  155.78  128.05   88.66   64.94
+  **dL is FLAT to 2% over 80 mm of depth**, against 14.607 mm at the shipped
+  (300, 0.5). Two fixed points, both real: depth first gives (319.5, 0.4997)
+  and tangent first gives (300, 0.281), and each survives a second round of
+  the other solve (the UI's own depth solve returns 300.1 mm after the tangent
+  is solved at 300). So **the pinned 0.5 was correct — for the depth the tool
+  is not using**, and solving the tangent is what pays for holding depth 300
+  on purpose: dL 14.61 -> 12.01, which is 97% of the 2.68 mm that moving to
+  319.5 would buy, without moving it.
+  **WHAT BREAKS THE TIE ALONG THE FLOOR IS NOT dL — IT IS `wallSpread`, AND IT
+  FAVOURS DEPTH.** The phase error across the passage falls monotonically with
+  depth along the same floor (14.00 -> 10.34 mm), and the fc spread with it.
+  So a depth that is FREE is still better spent on depth; this knob is for a
+  depth that is not. Asserted both ways in the suite, because the first
+  version of this finding claimed a single joint optimum and that was only the
+  half you see if you solve depth first.
+  **THE BRACKET [0.12, 1.0] IS A CONSTRAINT, NOT A TASTE.** Past about 1.1 the
+  tangent overshoots into a loop and the duct FOLDS — measured `bendFoldMin`
+  -23.9 mm at 1.2 and `turnMax` 258 deg at 1.4 — and below 0.10 the fold
+  margin collapses the other way (3.10 mm at 0.05 against 16.2 at 0.10). A
+  shallow horn wants a tangent outside it and `atBound` says so rather than
+  presenting an edge as an optimum.
+  **AND THE dL OPTIMUM AT DEPTH 300 SITS ONE HUNDREDTH PAST A CLEARANCE STEP.**
+  With the shipped bow on, the wall between ducts reads **1.505 mm at tangent
+  0.27 and 0.388 mm at 0.28** — the solve returns 0.281. Backing off one step
+  costs 0.14 mm of dL and buys 1.1 mm of wall. Reported in the stage hint and
+  deliberately NOT folded into the objective: a multi-objective solve would
+  hide exactly this trade. `tightMouth` stays pinned at 0.5, because what it
+  sets is where the bend SITS along the path (`bendCentroid`), which is an
+  acoustic placement to choose rather than a number to optimise.
+  **DO NOT FOLD IT INTO THE REGION-GRADE SOLVE**: the grade sets each cell's
+  own window width and `tight` sets the base centreline for all of them, so
+  lumping them hides which one is doing the work — and the grade moves this
+  knob's usable window, so a joint solve would search a space whose shape it
+  cannot report.
+  **ONE UI TRAP WORTH KEEPING**: `mapOpts` carries NO `depth` (the mapping
+  memo supplies it), so a solver handed `solveRefOpts()` alone silently solves
+  the model's 150 mm fallback. The depth solve never noticed because it
+  overrides depth on every evaluation. Measured: 0.122 at dL 68.7 mm against
+  0.281 at 12.0 for the horn actually on screen. Caught only by driving the
+  real UI — node reproduced the right answer throughout.
+
 
 - **(STALE — see above.) BEND TIGHTNESS IS PINNED AT 0.5, and the minimum is NOT the safe end.**
   The two Hermite tangent magnitudes are the cubic's only remaining freedom
