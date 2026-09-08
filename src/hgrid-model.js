@@ -6566,6 +6566,7 @@ export function buildShellSTEP(throat, map, {
   t = 0, wall = 3, ext = 3, cutterExt = 1, extend = true, stations = 32,
   extendThroat = null, extendMouth = null, trimThroat = null, trimMouth = null,
   only = null, xSide = 0, ySide = 0, params = null, folders = true,
+  flare = null, c = 343,
   name = "ginkgo_horn_shell",
 } = {}) {
   if (!map) return null;
@@ -6688,16 +6689,35 @@ export function buildShellSTEP(throat, map, {
       trims.push("mouth trim");
     }
   }
+  // THE MOUTH FLARE COLLAR rides in its own folder, one quadrant piece per
+  // mirror quadrant the region keeps. It is a separate body by design: its
+  // root face lies ON the aperture, flush with the trimmed mouth face, so it
+  // can be unioned onto the rim in CAD or printed on its own. The two-cell
+  // test never carries it. A collar that cannot be built (radius under
+  // 1.5 wall) is REFUSED and reported, never clamped — see `flareCollar`.
+  let flareOut = null;
+  if (flare && !only && (flare.flareH > 0 || flare.flareV > 0)) {
+    const fc = flareCollar(throat, map, { t, wall: flare.wall ?? wall, c, xSide, ySide, ...flare });
+    if (fc) {
+      flareOut = fc.report;
+      for (const s of fc.solids) solidsSpec.push({ label: s.label, group: "mouth flare", sections: s.sections });
+    }
+  }
+  const nF = flareOut && flareOut.ok ? flareOut.pieces : 0;
   const ends = eT && eM ? "both end faces" : eT ? "the throat face" : eM ? "the mouth face" : null;
   const cutBack = trims.length ? `subtract ${trims.map((x) => `'${x}'`).join(" and ")}, then ` : "";
-  const recipe = ends
+  const withFlare = nF ? `, then union the ${nF} 'mouth flare' piece(s) onto the rim (their root faces lie on the aperture; or print them separately)` : "";
+  const recipe = (ends
     ? (only
       ? `union the ${n} blanks (they are extended past ${ends}; a full export ships the trim solid(s) that cut them back)`
       : `union the ${n} 'shell blank' solids (extended past ${ends}), then ${cutBack}subtract the ${n} 'duct cutter' solids`)
-    : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
+    : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`) + withFlare;
+  const flareStamp = flare && (flare.flareH > 0 || flare.flareV > 0)
+    ? `flare=H${flare.flareH}/V${flare.flareV}/turn${flare.turn ?? 90}/lead${flare.lead ?? 0}/lip${flare.lip ?? 0}/wall${flare.wall ?? wall}${flareOut && !flareOut.ok ? "(REFUSED)" : ""}`
+    : "flare=off";
   const out = stepEmit({
     name, solidsSpec, folders,
-    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExtMouth=${+cutterExtUsed.toFixed(3)} cutterExtThroat=0 extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide}`,
+    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExtMouth=${+cutterExtUsed.toFixed(3)} cutterExtThroat=0 extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide} ${flareStamp}`,
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
     fileDesc: `ginkgo multicell horn shell kit: ${recipe}${
       folders ? "; the solids are filed into folders by role, each named for its cell, all at the identity transform" : ""}`,
@@ -6712,11 +6732,427 @@ export function buildShellSTEP(throat, map, {
     // requested minimum and half a station step, so it is not `cutterExt`
     out.cutterExtMouth = cutterExtUsed;
     out.region = region;
+    // the collar's report, or null when none was asked for; `ok: false`
+    // with `why` means it was asked for and refused
+    out.flare = flareOut;
+    out.flarePieces = nF;
     // how the file is organised for the reader: how many folders the product
     // tree carries and how many named parts sit inside them
     out.tree = out.checks.tree;
   }
   return out;
+}
+
+// ── MOUTH FLARE — a collar that carries the wall past the rim ───────────────
+//
+// WHAT IT IS FOR. The aperture rim is where the horn stops guiding the wave
+// and the wall ends abruptly, so the rim re-radiates (edge diffraction) and
+// the impedance steps. A roundover spreads that discontinuity over a surface
+// the wave rides continuously. Its benefit is set by the roundover's SIZE
+// against wavelength, and this tool computes no radiated field, so the
+// collar is stated as GEOMETRY plus the two heuristic frequencies (kR = 1 at
+// c/2piR, lambda/4 = R at c/4R — they differ by pi/2 and neither is verified
+// here). The acoustic effect is BEM territory. Every number the collar
+// reports is about the surface, never about the wave.
+//
+// THE SURFACE THE WAVE RIDES IS THE INNER FACE, so that is the face that is
+// exact; the back face and the caps are fabrication and are reported.
+//
+// THREE MEASURED FACTS SET THE CONSTRUCTION (6x3, 500x245, depth 300, T 0.7,
+// t 0.4 unless stated; see CLAUDE.md for the tables):
+//   1. THE RIM IS ONE EXACT CURVE ON THE ANALYTIC APERTURE — worst deviation
+//      5.7e-14 mm over every mouth-ring point — and the rim FACES of adjacent
+//      cells are tangent-continuous across every seam to within 2.15 deg on
+//      the shipped horn and 2.91 deg across fourteen geometries (theta_v 0-60,
+//      depth 200-400, T 0-1, grids 4x2-8x3, bow, bulge). So one collar can
+//      continue the wall: it inherits that kink and adds none.
+//   2. THE WALL ARRIVES STILL OPENING, at 10.5-12.7 deg off the aperture normal
+//      on the left/right rim and 17.6-19.2 deg on the top/bottom, and across
+//      the family that range is 6.9-26.9 deg WITH THE ORDERING REVERSING on a
+//      curved mouth (theta_v 60: vertical 9.0-10.4 against horizontal 10.6-
+//      12.7). So the angle the flare starts from is READ from each rim
+//      station's own wall, never assumed and never a user input.
+//   3. THE MOUTH FACE IS 2.74 mm WIDE AT THE RIM (the shell wall snapped onto
+//      the aperture), so a CAD fillet on the shipped kit is bounded at
+//      r <= 2.74 mm, effective above 20 kHz. There is no material to round.
+//      The collar ADDS the material.
+//
+// PARAMETERS, each named for the quantity it serves:
+//   flareH, flareV  radius per axis (mm; 0 = none on that pair of edges).
+//                   Serves the frequency the termination acts above. Two
+//                   radii because the two axes differ in coverage, in exit
+//                   angle and in the room the print has, and because the
+//                   ordering flips with mouth curvature (fact 2).
+//   turn            total turn in degrees, measured FROM THE WALL'S OWN EXIT
+//                   DIRECTION (owner's call, 2026-09-08). Serves where the
+//                   residual edge points: past ~90 the surface ends facing
+//                   sideways, past ~180 backwards — which a freestanding horn
+//                   wants, since a 90 deg roundover ending in a flat lip leaves
+//                   a fresh edge at a LARGER dimension.
+//   lead            fraction of the nominal arc over which curvature ramps
+//                   (smoothstep) from the wall's own ~0 up to 1/R. Serves G2
+//                   at the junction: the wall's curvature at the rim measures
+//                   3.5e-4..9.8e-4 /mm (radius 1250-1570 mm, i.e. straight),
+//                   so a circular arc steps it 39x at R 30 and 118x at R 10.
+//                   lead 0 is the pure arc, bit-identical.
+//   lip             a straight run at the exit angle before the turn (mm).
+//                   Continues the horn's own expansion briefly; also the band
+//                   a separately printed collar registers on — reported, not
+//                   argued.
+//   wall            the collar's shell thickness (fabrication).
+// NOT SHIPPED, DELIBERATELY: a curvature TAPER across the turn (the knob that
+// makes an elliptical or tractrix roundover). It is arguable — it trades
+// loading against diffraction — but nothing here can measure the difference,
+// and a knob whose only justification is that other horns have one is the
+// kind the standing priority forbids.
+//
+// CONSTRUCTION. The rim is walked as the union of every rim cell's own mouth-
+// ring boundary points on the aperture edge (`rimExitField`): an evaluated
+// set, not a search, which is the rule every solid here has to obey. At each
+// station the frame is closed form from the aperture's own (a, e) — outward
+// tangent o, normal n, rim tangent tau — and the wall's exit angle is the
+// last station step of that boundary point projected into the (o, n) plane.
+// A seam point shared by two cells takes the MEAN of their two directions and
+// reports the difference. The profile (`flareProfile`) is a 2-D strip in that
+// plane: the air face p(s) integrated from psi(s) with the lip, the lead ramp
+// and the constant-radius turn all closed form in psi, the back face its
+// normal offset by `wall`, the far edge radial, and the ROOT EDGE lying ON THE
+// APERTURE — snapped there — so the collar seats flush on the trimmed mouth
+// face. The back face is blended onto the root over a few walls so no root
+// finding is needed; its thickness there is wall/cos(theta0) measured along
+// the aperture, reported.
+// THE MATERIAL SITS INSIDE THE BEND: the air is on the convex side, so the
+// back face is an offset TOWARD the centre of curvature and R must exceed the
+// wall. Below 1.5 wall the collar is REFUSED and says why, never clamped.
+// THE CORNER IS A FAN: the four rim corners are sharp (the cells tile a
+// rectangle in (a, e)), so the profiles there emanate from one point with o
+// rotating from one edge's outward tangent to the other's, R blended
+// linearly, and the exit angle read from the corner vertex's own trajectory
+// projected on each o — evaluated, not interpolated. The loft's inner face
+// therefore carries a pole at each corner, the same degeneracy a CAD vertex
+// blend or a sphere carries. The fan step is sized so the far end of the
+// profile moves about one rim station per step.
+// FOUR QUADRANT PIECES, each from one mirror plane to the other through a
+// corner, so `xSide`/`ySide` select them exactly as they select cells, and
+// the pieces are mirror images. Their caps lie on the mirror planes — where
+// a print would be split anyway.
+// PARAMETER-SPACE OFFSETS WERE NOT USED. A rounded-rectangle offset in (a, e)
+// is an exact physical offset only where the aperture metric is uniform,
+// which is the flat mouth; on a curved one |dV/da| = rH - rV(1 - cos e) falls
+// 6.6% / 9.8% / 14.4% centre-to-rim at theta_v 40 / 60 / 90. Building in the
+// physical frame at each rim station sidesteps it entirely.
+
+const RIM_TOL = 1e-6;
+
+// Frame on the aperture at parameters (a, e): normal, the two unit parameter
+// tangents (orthogonal by construction — a stated property of the surface).
+// When an axis is flat its parameter is the coordinate itself and the
+// corresponding angle is zero.
+function apertureTangents(surf, a, e) {
+  const aA = isFinite(surf.rH) ? a : 0, eA = isFinite(surf.rV) ? e : 0;
+  const ca = Math.cos(aA), sa = Math.sin(aA), ce = Math.cos(eA), se = Math.sin(eA);
+  return {
+    n: [sa * ce, se, ca * ce],
+    tH: [ca, 0, -sa],
+    tV: [-se * sa, ce, -se * ca],
+  };
+}
+
+// Every rim station round the aperture, with the wall's measured exit
+// direction. Returns the four edges as ordered station lists, each station
+// carrying its 3-D point, its (a, e), its outward and rim tangents, the
+// normal, the wall direction `d`, the exit angle `theta` in the (o, n) plane
+// (radians, + outward), and the seam kink where two cells met there.
+export function rimExitField(throat, map, { t = 0 } = {}) {
+  const surf = map && map.mouthSurf;
+  if (!surf) return null;
+  const ap = apertureFrame(surf);
+  const fH = isFinite(surf.rH), fV = isFinite(surf.rV);
+  const aLim = fH ? (surf.thetaH / 2) * D2R : surf.arcH / 2;
+  const eLim = fV ? (surf.thetaV / 2) * D2R : surf.arcV / 2;
+  const tolA = RIM_TOL * (1 + Math.abs(aLim)), tolE = RIM_TOL * (1 + Math.abs(eLim));
+  const raw = { left: [], right: [], top: [], bottom: [] };
+  let rimPoints = 0;
+  for (const cellRec of throat.cells) {
+    const row = map.rows.find((r) => r.id === cellRec.id);
+    if (!row) continue;
+    const duct = ductSections(cellRec, row, { t });
+    if (!duct || duct.length < 2) continue;
+    const Q = duct.length - 1, last = duct[Q].pts, prev = duct[Q - 1].pts;
+    for (let k = 0; k < last.length; k++) {
+      const P = last[k], pr = ap.param(P);
+      if (!pr.ok) continue;
+      const sides = [];
+      if (Math.abs(pr.a - aLim) < tolA) sides.push("right");
+      if (Math.abs(pr.a + aLim) < tolA) sides.push("left");
+      if (Math.abs(pr.e - eLim) < tolE) sides.push("top");
+      if (Math.abs(pr.e + eLim) < tolE) sides.push("bottom");
+      if (!sides.length) continue;
+      rimPoints++;
+      const d = un3(s3(P, prev[k]));
+      for (const sd of sides) raw[sd].push({ P, a: pr.a, e: pr.e, d, cell: cellRec.label });
+    }
+  }
+  const edges = {};
+  let kinkMax = 0, seams = 0;
+  const exit = { H: [Infinity, -Infinity], V: [Infinity, -Infinity] };
+  for (const side of ["left", "right", "top", "bottom"]) {
+    const vertical = side === "left" || side === "right";
+    // merge coincident points (a seam shared by two cells)
+    const groups = new Map();
+    for (const p of raw[side]) {
+      const key = p.P.map((v) => Math.round(v * 1e4)).join("|");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    }
+    const st = [];
+    for (const arr of groups.values()) {
+      const p0 = arr[0];
+      const { n, tH, tV } = apertureTangents(surf, p0.a, p0.e);
+      const o = side === "right" ? tH : side === "left" ? m3(tH, -1) : side === "top" ? tV : m3(tV, -1);
+      const tau = vertical ? tV : tH;
+      const thetas = arr.map((p) => Math.atan2(dot3(p.d, o), dot3(p.d, n)));
+      let theta = thetas.reduce((s, x) => s + x, 0) / thetas.length;
+      // the seam kink in the flare plane: what the collar inherits
+      let kink = 0;
+      for (let i = 0; i < thetas.length; i++) for (let j = i + 1; j < thetas.length; j++)
+        kink = Math.max(kink, Math.abs(thetas[i] - thetas[j]));
+      if (arr.length > 1) { seams++; kinkMax = Math.max(kinkMax, kink); }
+      // the mean direction, for the corner fan — renormalised
+      let d = [0, 0, 0];
+      for (const p of arr) d = a3(d, p.d);
+      d = un3(d);
+      st.push({ P: p0.P, a: p0.a, e: p0.e, o, n, tau, d, theta, kink, cells: arr.map((p) => p.cell) });
+      const ex = vertical ? exit.H : exit.V;
+      ex[0] = Math.min(ex[0], theta); ex[1] = Math.max(ex[1], theta);
+    }
+    // order along the edge by its running parameter
+    st.sort((p, q) => (vertical ? p.e - q.e : p.a - q.a));
+    // a station exactly ON the mirror plane, interpolated if the grid has no
+    // rim point there (an odd row or column count) — theta is smooth along
+    // an edge, so a linear blend of the two bracketing stations is the
+    // evaluation of a smooth quantity, not a search
+    const par = (p) => (vertical ? p.e : p.a);
+    const tolP = vertical ? tolE : tolA;
+    if (st.length >= 2 && !st.some((p) => Math.abs(par(p)) < tolP)) {
+      const i = st.findIndex((p) => par(p) > 0);
+      if (i > 0) {
+        const A = st[i - 1], B = st[i];
+        const w = (0 - par(A)) / (par(B) - par(A));
+        const a = vertical ? A.a : 0, e = vertical ? 0 : A.e;
+        const P = ap.at(a, e);
+        const { n, tH, tV } = apertureTangents(surf, a, e);
+        const o = side === "right" ? tH : side === "left" ? m3(tH, -1) : side === "top" ? tV : m3(tV, -1);
+        const theta = A.theta + (B.theta - A.theta) * w;
+        const d = un3(a3(m3(A.d, 1 - w), m3(B.d, w)));
+        st.splice(i, 0, { P, a, e, o, n, tau: vertical ? tV : tH, d, theta, kink: 0, cells: [], interpolated: true });
+      }
+    }
+    edges[side] = st;
+  }
+  return { edges, exit, kinkMax, seams, rimPoints, aLim, eLim, surf, ap };
+}
+
+// The 2-D flare strip in the flare plane, x along the outward tangent o and
+// z along the aperture normal n, origin at the rim point. Returns the air
+// face `inner` (n+1 points), the back face `back` (n+1 points), the ring as
+// 4 runs of n points with corners at 0, n, 2n, 3n, the direction angle psi at
+// each sample and the profile's arc length. `psi` is measured from n toward
+// o, so the wall's exit angle theta0 is psi(0) and the turn adds to it.
+export function flareProfile({ R, turn, lead = 0, lip = 0, wall = 3, theta0 = 0, n = 8, sub = 24 }) {
+  const Phi = turn * D2R;
+  const sLead = lead * R * Phi;
+  const Lt = R * Phi * (1 + lead / 2);
+  const L = lip + Lt;
+  const psi = (s) => {
+    if (s <= lip) return theta0;
+    const u = s - lip;
+    if (sLead > 0 && u <= sLead) { const x = u / sLead; return theta0 + (sLead / R) * (x * x * x - (x * x * x * x) / 2); }
+    return theta0 + (Phi * lead) / 2 + (u - sLead) / R;
+  };
+  // composite Simpson between consecutive samples
+  const inner = [[0, 0]], psis = [theta0];
+  let x = 0, z = 0;
+  const m = sub % 2 ? sub + 1 : sub;
+  for (let i = 1; i <= n; i++) {
+    const s0 = ((i - 1) * L) / n, s1 = (i * L) / n, h = (s1 - s0) / m;
+    let sx = 0, sz = 0;
+    for (let j = 0; j <= m; j++) {
+      const w = j === 0 || j === m ? 1 : j % 2 ? 4 : 2;
+      const p = psi(s0 + j * h);
+      sx += w * Math.sin(p); sz += w * Math.cos(p);
+    }
+    x += (h / 3) * sx; z += (h / 3) * sz;
+    inner.push([x, z]); psis.push(psi(s1));
+  }
+  // the back face: normal offset toward the centre of the bend, blended onto
+  // a root point that lies on the aperture (z = 0) over a few walls
+  const nu = (p) => [Math.cos(p), -Math.sin(p)];
+  const q0 = [wall * Math.cos(theta0), -wall * Math.sin(theta0)];
+  const root = [wall / Math.cos(theta0), 0];
+  const corr = [root[0] - q0[0], root[1] - q0[1]];
+  const sMerge = Math.min(4 * wall, 0.5 * L);
+  const back = inner.map((p, i) => {
+    const v = nu(psis[i]);
+    const s = (i * L) / n;
+    const u = sMerge > 0 ? Math.min(1, s / sMerge) : 1;
+    const blend = 1 - (3 * u * u - 2 * u * u * u);
+    return [p[0] + wall * v[0] + corr[0] * blend, p[1] + wall * v[1] + corr[1] * blend];
+  });
+  const ring = [];
+  for (let j = 0; j < n; j++) ring.push(inner[j]);
+  const A = inner[n], B = back[n];
+  for (let j = 0; j < n; j++) ring.push([A[0] + ((B[0] - A[0]) * j) / n, A[1] + ((B[1] - A[1]) * j) / n]);
+  for (let j = 0; j < n; j++) ring.push(back[n - j]);
+  const C0 = back[0], D0 = inner[0];
+  for (let j = 0; j < n; j++) ring.push([C0[0] + ((D0[0] - C0[0]) * j) / n, C0[1] + ((D0[1] - C0[1]) * j) / n]);
+  return { inner, back, ring, psi: psis, length: L, turnLength: Lt, leadLength: sLead, rootThick: root[0], n };
+}
+
+// The collar: up to four quadrant solids plus the report the UI prints.
+export function flareCollar(throat, map, {
+  t = 0, wall = 3, flareH = 0, flareV = 0, turn = 90, lead = 0, lip = 0,
+  n = 8, every = 2, xSide = 0, ySide = 0, c = 343,
+} = {}) {
+  const field = rimExitField(throat, map, { t });
+  if (!field) return null;
+  const { edges, surf, ap } = field;
+  const R2D = 180 / Math.PI;
+  const report = {
+    on: flareH > 0 || flareV > 0, ok: true, why: null,
+    exitH: [field.exit.H[0] * R2D, field.exit.H[1] * R2D],
+    exitV: [field.exit.V[0] * R2D, field.exit.V[1] * R2D],
+    kinkMax: field.kinkMax * R2D, seams: field.seams, rimPoints: field.rimPoints,
+    flareH, flareV, turn, lead, lip, wall,
+  };
+  if (!report.on) return { solids: [], field, report };
+  if (!field.rimPoints) { report.ok = false; report.why = "no rim geometry to read — the map carries no duct rings"; return { solids: [], field, report }; }
+  for (const [nm, Rv] of [["flareH", flareH], ["flareV", flareV]])
+    if (Rv > 0 && Rv < 1.5 * wall) { report.ok = false; report.why = `${nm} = ${Rv} mm is under 1.5x the ${wall} mm wall — the back face would fold through the air face`; }
+  if (turn < 1) { report.ok = false; report.why = `turn = ${turn} deg is not a turn`; }
+  if (!report.ok) return { solids: [], field, report };
+
+  // one ring at a station: the 2-D strip lifted into the station's frame,
+  // root edge snapped onto the aperture
+  const lift = (P, o, nn, prof) => {
+    const N4 = prof.ring.length, n4 = N4 / 4;
+    const pts = prof.ring.map(([x, z]) => a3(P, a3(m3(o, x), m3(nn, z))));
+    for (let j = 3 * n4; j < N4; j++) pts[j] = ap.snap(pts[j]);
+    return pts;
+  };
+  const section = (P, o, nn, theta, R, s) => {
+    const prof = flareProfile({ R, turn, lead, lip, wall, theta0: theta, n });
+    const pts = lift(P, o, nn, prof);
+    return { s, area: polyArea3(pts), pts, origin: P, R, theta, reach: prof.inner[n] };
+  };
+  const decimate = (st, ev) => {
+    if (ev <= 1 || st.length < 3) return st;
+    const out = [];
+    for (let i = 0; i < st.length; i += ev) out.push(st[i]);
+    if (out[out.length - 1] !== st[st.length - 1]) out.push(st[st.length - 1]);
+    return out;
+  };
+  // The stations of one quadrant piece, from the mirror plane on the
+  // vertical-running edge, through the corner fan, to the mirror plane on
+  // the horizontal-running edge. Used twice: decimated at the drawn/exported
+  // resolution for the solids, and UNDECIMATED for the report — so no figure
+  // the report prints can get safer when the viewport samples more coarsely.
+  const quadrantStations = (sx, sy, ev, nProbe) => {
+    let eH = edges[sx > 0 ? "right" : "left"].filter((p) => p.e * sy >= -RIM_TOL);
+    if (sy < 0) eH = eH.slice().reverse();
+    let eV = edges[sy > 0 ? "top" : "bottom"].filter((p) => p.a * sx >= -RIM_TOL);
+    if (sx > 0) eV = eV.slice().reverse();
+    eH = decimate(eH, ev); eV = decimate(eV, ev);
+    const out = [];
+    if (flareH > 0) for (const p of eH) out.push({ P: p.P, o: p.o, n: p.n, theta: p.theta, R: flareH });
+    if (flareH > 0 && flareV > 0 && eH.length && eV.length) {
+      // the corner fan, from the H edge's outward tangent to the V edge's,
+      // the exit angle read from the corner vertex's own direction on each o
+      const cH = eH[eH.length - 1], cV = eV[0];
+      const oH = cH.o, oV = cV.o, nn = cH.n, d = cH.d, P = cH.P;
+      // step so the far end of the profile moves about one station per step
+      const step = (eH.length > 1 ? nrm3(s3(eH[eH.length - 1].P, eH[eH.length - 2].P)) : 0)
+        || (eV.length > 1 ? nrm3(s3(eV[1].P, eV[0].P)) : 5);
+      const probe = flareProfile({ R: 0.5 * (flareH + flareV), turn, lead, lip, wall, theta0: 0.5 * (cH.theta + cV.theta), n: nProbe });
+      const reach = Math.hypot(probe.inner[nProbe][0], probe.inner[nProbe][1]);
+      const steps = Math.max(2, Math.round((reach * Math.PI) / 2 / Math.max(step, 1e-6)));
+      for (let i = 1; i < steps; i++) {
+        const b = ((i / steps) * Math.PI) / 2;
+        const o = un3(a3(m3(oH, Math.cos(b)), m3(oV, Math.sin(b))));
+        out.push({ P, o, n: nn, theta: Math.atan2(dot3(d, o), dot3(d, nn)), R: flareH + ((flareV - flareH) * i) / steps, corner: true });
+      }
+    }
+    if (flareV > 0) for (const p of eV) out.push({ P: p.P, o: p.o, n: p.n, theta: p.theta, R: flareV });
+    return out;
+  };
+  const solids = [];
+  let stationsTotal = 0;
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+    if (xSide && sx !== Math.sign(xSide)) continue;
+    if (ySide && sy !== Math.sign(ySide)) continue;
+    const secs = quadrantStations(sx, sy, every, n).map((q) => section(q.P, q.o, q.n, q.theta, q.R, 0));
+    if (secs.length < 2) continue;
+    secs.forEach((sec, i) => { sec.s = i / (secs.length - 1); });
+    stationsTotal += secs.length;
+    const lab = `mouth flare ${sx > 0 ? "+x" : "-x"}${sy > 0 ? "+y" : "-y"}`;
+    solids.push({ label: lab, group: "mouth flare", sections: secs, quadrant: [sx, sy] });
+  }
+  // ── the report: a FINE pass over every rim station of the WHOLE horn ──────
+  // Extents, volume and mass are read at 48 profile samples on undecimated
+  // stations whatever `n` and `every` the caller drew or exported with, and
+  // over all four quadrants whatever region was selected: the report
+  // describes the horn, not the file.
+  const NF = 48;
+  const ext = (pts, i) => pts.reduce((m, p) => Math.max(m, Math.abs(p[i])), 0);
+  const rimAll = [];
+  for (const side in edges) for (const p of edges[side]) rimAll.push(p.P);
+  const rimX = ext(rimAll, 0), rimY = ext(rimAll, 1), rimZ = rimAll.reduce((m, p) => Math.max(m, p[2]), -Infinity);
+  let gX = 0, gY = 0, gZ = -Infinity, aX = 0, aY = 0, volume = 0, thetaMax = 0, fineStations = 0;
+  const cen = (pts) => { const q = [0, 0, 0]; for (const p of pts) { q[0] += p[0] / pts.length; q[1] += p[1] / pts.length; q[2] += p[2] / pts.length; } return q; };
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+    let prevA = null, prevC = null;
+    for (const q of quadrantStations(sx, sy, 1, NF)) {
+      const prof = flareProfile({ R: q.R, turn, lead, lip, wall, theta0: q.theta, n: NF });
+      const pts = lift(q.P, q.o, q.n, prof);
+      for (let j = 0; j < pts.length; j++) {
+        const p = pts[j];
+        gX = Math.max(gX, Math.abs(p[0])); gY = Math.max(gY, Math.abs(p[1])); gZ = Math.max(gZ, p[2]);
+        if (j <= NF) { aX = Math.max(aX, Math.abs(p[0])); aY = Math.max(aY, Math.abs(p[1])); }
+      }
+      const A = polyArea3(pts), Cc = cen(pts);
+      if (prevA != null) volume += 0.5 * (prevA + A) * nrm3(s3(Cc, prevC));
+      prevA = A; prevC = Cc;
+      thetaMax = Math.max(thetaMax, Math.abs(q.theta));
+      fineStations++;
+    }
+  }
+  const Rmin = Math.min(...[flareH, flareV].filter((v) => v > 0));
+  Object.assign(report, {
+    pieces: solids.length, stations: stationsTotal, fineStations,
+    growX: fineStations ? gX - rimX : 0,
+    growY: fineStations ? gY - rimY : 0,
+    growZ: fineStations ? gZ - rimZ : 0,
+    // the air face's furthest reach per axis: an UPPER bound on the effective
+    // aperture, since the roundover is a fast flare and does not load like a
+    // same-area horn
+    effW: fineStations ? 2 * aX : 2 * rimX,
+    effH: fineStations ? 2 * aY : 2 * rimY,
+    rimW: 2 * rimX, rimH: 2 * rimY,
+    volume, massKg: (volume * 1.24) / 1e6,
+    radiusMin: Rmin, fKR1: (c * 1000) / (2 * Math.PI * Rmin), fQuarter: (c * 1000) / (4 * Rmin),
+    rootThick: wall / Math.cos(thetaMax),
+    // where the surface ends facing, measured from the aperture normal:
+    // the wall's own exit angle plus the turn, per axis
+    endH: flareH > 0 ? [report.exitH[0] + turn, report.exitH[1] + turn] : null,
+    endV: flareV > 0 ? [report.exitV[0] + turn, report.exitV[1] + turn] : null,
+  });
+  if (map.mouthAreaTotal && report.rimW > 0 && report.rimH > 0) {
+    const A = map.mouthAreaTotal * ((report.effW * report.effH) / (report.rimW * report.rimH));
+    report.effArea = A;
+    report.loadingEff = (c * 1000) / (Math.PI * 2 * Math.sqrt(A / Math.PI));
+    report.loadingRim = (c * 1000) / (Math.PI * 2 * Math.sqrt(map.mouthAreaTotal / Math.PI));
+  }
+  return { solids, field, report };
 }
 
 // How much of one blank's surface runs as a near-copy of its neighbour's.

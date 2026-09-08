@@ -5190,5 +5190,246 @@ head("The throat-tangent solve, and where it is worth anything");
     Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]), 0, 0, "mm");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+head("The mouth flare collar — a surface stated as geometry");
+// ═══════════════════════════════════════════════════════════════════════════
+// The collar carries the wall past the rim. Nothing here measures its
+// acoustic effect (the tool has no radiated field); what is asserted is that
+// the surface is the one that was asked for, that it continues the wall it
+// was read from, that it lives entirely outside the aperture, and that with
+// it off nothing at all has changed.
+{
+  const t = 0.4, R2D = 180 / Math.PI;
+  const th = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c }).throat;
+  const O = (extra = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, stations: 64, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", shapeMorph: "radius", keepGeometry: true, computeClearance: false,
+    samples: 512, ...extra,
+  });
+  const map = M.mapThroatToMouth(th, O());
+  const ap = M.apertureFrame(map.mouthSurf);
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+  // ── 1. THE PROFILE AGAINST ITS CLOSED FORMS ──────────────────────────────
+  // A pure arc (lead 0, lip 0) of radius R turning Phi from a start angle
+  // theta0 ends at R(cos th0 - cos(th0+Phi), sin(th0+Phi) - sin th0) and is
+  // R·Phi long; the back face is a constant `wall` inside it past the root
+  // blend; the root point sits ON the aperture plane at wall/cos(theta0).
+  const th0 = 12 * Math.PI / 180, Rf = 30, Phi = 90;
+  const arc = M.flareProfile({ R: Rf, turn: Phi, lead: 0, lip: 0, wall: 3, theta0: th0, n: 8 });
+  const end = arc.inner[8];
+  check("arc profile: end point x", end[0], Rf * (Math.cos(th0) - Math.cos(th0 + Phi * Math.PI / 180)), 1e-9, "mm");
+  check("arc profile: end point z", end[1], Rf * (Math.sin(th0 + Phi * Math.PI / 180) - Math.sin(th0)), 1e-9, "mm");
+  check("arc profile: length R·Phi", arc.length, Rf * Math.PI / 2, 1e-12, "mm");
+  let devWall = 0;
+  for (let i = 0; i <= 8; i++)
+    if ((i * arc.length) / 8 >= 4 * 3) devWall = Math.max(devWall, Math.abs(Math.hypot(arc.back[i][0] - arc.inner[i][0], arc.back[i][1] - arc.inner[i][1]) - 3));
+  check("arc profile: back face is exactly `wall` inside the air face past the root blend", devWall, 0, 1e-12, "mm");
+  check("arc profile: root point lies on the aperture plane (z = 0)", Math.abs(arc.back[0][1]), 0, 0, "mm");
+  check("arc profile: root thickness along the aperture is wall/cos(theta0)", arc.back[0][0], 3 / Math.cos(th0), 1e-12, "mm");
+  // the material sits INSIDE the bend: the back face's end is closer to the
+  // arc's centre than the air face's end
+  const ctr = [Rf * Math.cos(th0), -Rf * Math.sin(th0)];
+  checkTrue("the back face is offset toward the centre of the bend",
+    Math.hypot(arc.back[8][0] - ctr[0], arc.back[8][1] - ctr[1]) < Math.hypot(arc.inner[8][0] - ctr[0], arc.inner[8][1] - ctr[1]),
+    `${Math.hypot(arc.back[8][0] - ctr[0], arc.back[8][1] - ctr[1]).toFixed(3)} against ${Rf}`);
+  // the lead ramp: turn exactly Phi, length R·Phi(1 + lead/2) + lip, and the
+  // first sample of a lip collinear with the start direction
+  const led = M.flareProfile({ R: Rf, turn: Phi, lead: 0.4, lip: 5, wall: 3, theta0: th0, n: 16 });
+  check("lead profile: total turn is exactly the request", (led.psi[16] - th0) * R2D, Phi, 1e-9, "deg");
+  check("lead profile: length is lip + R·Phi·(1 + lead/2)", led.length, 5 + Rf * (Math.PI / 2) * 1.2, 1e-12, "mm");
+  const s1 = led.length / 16;
+  checkTrue("lip: the first sample runs straight at the exit angle",
+    s1 <= 5 && Math.abs(led.inner[1][0] - s1 * Math.sin(th0)) < 1e-9 && Math.abs(led.inner[1][1] - s1 * Math.cos(th0)) < 1e-9,
+    `sample at ${s1.toFixed(3)} mm of a ${5} mm lip`);
+  checkTrue("lead 0 reproduces the pure arc bit for bit",
+    M.flareProfile({ R: Rf, turn: Phi, lead: 0, lip: 0, wall: 3, theta0: th0, n: 8 }).inner.every((p, i) => p[0] === arc.inner[i][0] && p[1] === arc.inner[i][1]));
+  const ringN = arc.ring.length;
+  const same = (p, q) => p[0] === q[0] && p[1] === q[1];
+  checkTrue("the strip ring is 4 runs of n with the corners at the run boundaries",
+    ringN === 32 && same(arc.ring[0], arc.inner[0]) && same(arc.ring[8], arc.inner[8]) && same(arc.ring[16], arc.back[8]) && same(arc.ring[24], arc.back[0]));
+
+  // ── 2. THE RIM IS READ, NOT ASSUMED ──────────────────────────────────────
+  const fld = M.rimExitField(th, map, { t });
+  check("every rim point is on the aperture edge: 302 on a 6x3", fld.rimPoints, 302, 0);
+  check("14 seams — one per rim cell boundary on a 6x3", fld.seams, 14, 0);
+  checkTrue("the wall arrives still opening: 10-13 deg on the sides, 17-20 deg top and bottom",
+    fld.exit.H[0] * R2D > 10 && fld.exit.H[1] * R2D < 13 && fld.exit.V[0] * R2D > 17 && fld.exit.V[1] * R2D < 20,
+    `H ${(fld.exit.H[0] * R2D).toFixed(2)}-${(fld.exit.H[1] * R2D).toFixed(2)}, V ${(fld.exit.V[0] * R2D).toFixed(2)}-${(fld.exit.V[1] * R2D).toFixed(2)} deg`);
+  checkTrue("adjacent cells' rim faces are tangent to within 3 deg at every seam",
+    fld.kinkMax * R2D < 3, `worst ${(fld.kinkMax * R2D).toFixed(3)} deg`);
+  // a 6x3 has a grid line at a = 0 (even columns) and none at e = 0 (odd
+  // rows) — but every cell side carries 16 samples, so the middle row's rim
+  // side has a sample at its own midpoint, which the equal-area cuts put
+  // exactly on e = 0. So on this grid NOTHING is interpolated, and the
+  // interpolation path is a guard for a sample count that is ever made odd.
+  checkTrue("a station sits exactly on each mirror plane, and none had to be interpolated here",
+    fld.edges.left.some((p) => Math.abs(p.e) < 1e-9) && fld.edges.top.some((p) => Math.abs(p.a) < 1e-9)
+    && !Object.values(fld.edges).some((ed) => ed.some((p) => p.interpolated)));
+  let offSurf = 0;
+  for (const side in fld.edges) for (const p of fld.edges[side]) offSurf = Math.max(offSurf, Math.abs(ap.deviation(p.P)));
+  check("every rim station is on the analytic aperture", offSurf, 0, 1e-9, "mm");
+  // the frame is the aperture's own: o and tau in the tangent plane, n normal
+  let frameErr = 0;
+  for (const side in fld.edges) for (const p of fld.edges[side]) {
+    const dotv = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    frameErr = Math.max(frameErr, Math.abs(dotv(p.o, p.n)), Math.abs(dotv(p.tau, p.n)), Math.abs(dotv(p.o, p.tau)));
+  }
+  check("station frames are orthonormal", frameErr, 0, 1e-12);
+
+  // ── 3. THE COLLAR CONTINUES THE WALL AND LIVES OUTSIDE THE APERTURE ──────
+  const F = { t, wall: 3, flareH: 30, flareV: 20, turn: 180, lead: 0.2, lip: 0, c, n: 8, every: 1 };
+  const col = M.flareCollar(th, map, F);
+  check("four quadrant pieces on a full export", col.solids.length, 4, 0);
+  let rootDev = 0, startDev = 0, dirErr = 0, planar = 0, ringsBad = 0;
+  for (const s of col.solids) for (const sec of s.sections) {
+    const N = sec.pts.length, n = N / 4;
+    if (N !== 32) ringsBad++;
+    // the root edge lies on the aperture; the air face starts AT the rim point
+    for (let j = 3 * n; j < N; j++) rootDev = Math.max(rootDev, Math.abs(ap.deviation(sec.pts[j])));
+    startDev = Math.max(startDev, dist(sec.pts[0], sec.origin));
+    // the ring is planar in its flare plane — all but the ROOT run, which
+    // is snapped onto the curved aperture by design (0.006 mm of sag here)
+    const A = sec.pts[0], B = sec.pts[n], Cc = sec.pts[2 * n];
+    const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [Cc[0] - A[0], Cc[1] - A[1], Cc[2] - A[2]];
+    const nn = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const nl = Math.hypot(...nn) || 1;
+    for (let j = 0; j < 3 * n; j++) { const p = sec.pts[j]; planar = Math.max(planar, Math.abs(((p[0] - A[0]) * nn[0] + (p[1] - A[1]) * nn[1] + (p[2] - A[2]) * nn[2]) / nl)); }
+  }
+  check("every ring is 4 x 8 points", ringsBad, 0, 0);
+  check("the air face starts exactly at the rim point", startDev, 0, 0, "mm");
+  check("the root edge lies on the aperture", rootDev, 0, 1e-9, "mm");
+  check("every strip is planar in its own flare plane, root run aside", planar, 0, 1e-9, "mm");
+  // tangency: at every EDGE station the collar's start direction is the
+  // wall's measured direction projected into the flare plane — exact where
+  // one cell owns the point, within half the seam kink where two do
+  for (const side in fld.edges) for (const p of fld.edges[side]) {
+    if (p.interpolated) continue;
+    const pr = M.flareProfile({ R: 30, turn: 180, lead: 0.2, lip: 0, wall: 3, theta0: p.theta, n: 8 });
+    const d0 = [Math.sin(pr.psi[0]), Math.cos(pr.psi[0])];
+    const dot2 = p.d[0] * (p.o[0] * d0[0] + p.n[0] * d0[1]) + p.d[1] * (p.o[1] * d0[0] + p.n[1] * d0[1]) + p.d[2] * (p.o[2] * d0[0] + p.n[2] * d0[1]);
+    // the along-rim lean of the vertex is not part of the flare plane, so
+    // compare against the wall direction with that component removed
+    const lean = p.d[0] * p.tau[0] + p.d[1] * p.tau[1] + p.d[2] * p.tau[2];
+    const inPlane = Math.sqrt(Math.max(0, 1 - lean * lean));
+    const err = Math.acos(Math.max(-1, Math.min(1, dot2 / inPlane))) * R2D;
+    dirErr = Math.max(dirErr, err - 0.5 * p.kink * R2D);
+  }
+  // 1e-5 deg is acos round-off near 1 (acos(1 - eps) ~ sqrt(2 eps)), not slack
+  checkTrue("the collar starts tangent to the wall it was read from (inside half the seam kink)",
+    dirErr < 1e-5, `worst excess ${dirErr.toExponential(2)} deg`);
+  // both mirrors, by construction: the quadrants are mirror images
+  const Q = (lab) => col.solids.find((s) => s.label.endsWith(lab));
+  const mirror = (A, B, ax) => {
+    let w = 0;
+    for (let i = 0; i < A.sections.length; i++) {
+      const P = A.sections[i].pts, Qs = B.sections[i].pts;
+      for (const p of P) { const m = p.slice(); m[ax] = -m[ax]; let best = Infinity; for (const q of Qs) best = Math.min(best, dist(q, m)); w = Math.max(w, best); }
+    }
+    return w;
+  };
+  check("x mirror between the +x+y and -x+y pieces", mirror(Q("+x+y"), Q("-x+y"), 0), 0, 1e-8, "mm");
+  check("y mirror between the +x+y and +x-y pieces", mirror(Q("+x+y"), Q("+x-y"), 1), 0, 1e-8, "mm");
+  // the reach in each station's OWN frame against the arc's closed form: a
+  // 180-degree pure arc from theta0 ENDS at x = R(cos theta0 - cos(theta0 +
+  // pi)) = 2R cos theta0 along o (the arc's furthest point, at psi = 180
+  // deg, is not a sample, so the end sample is the closed form to use). The
+  // bounding-box growth the report prints is NOT that number on a curved
+  // rim — the horizontal rim's outward tangent is tilted by the coverage
+  // half-angle, so x-growth mixes o and n — which is why it is a readout
+  // and not an assertion.
+  const rp = col.report;
+  const arcCol = M.flareCollar(th, map, { ...F, lead: 0 });
+  let reachErr = 0, reachN = 0;
+  for (const s of arcCol.solids) for (const sec of s.sections) {
+    const st = [...fld.edges.left, ...fld.edges.right].find((p) => dist(p.P, sec.origin) < 1e-9);
+    if (!st || Math.abs(Math.abs(st.e) - 122.5) < 1e-6) continue;   // an edge station, not a corner
+    const e8 = sec.pts[8];
+    const reach = (e8[0] - sec.origin[0]) * st.o[0] + (e8[1] - sec.origin[1]) * st.o[1] + (e8[2] - sec.origin[2]) * st.o[2];
+    reachErr = Math.max(reachErr, Math.abs(reach - 2 * 30 * Math.cos(st.theta)));
+    reachN++;
+  }
+  // 1e-6 mm is Simpson's quadrature over 22.5-degree sample intervals (24
+  // sub-steps each; measured 2.3e-8 mm), not a geometric slack — the
+  // 90-degree profile above, with half the interval, holds 1e-9
+  check("a 180-degree arc ends 2R cos theta0 along each side station's outward tangent", reachErr, 0, 1e-6, "mm");
+  checkTrue("...and that was measured on every side station, not a lucky few", reachN >= 90, `${reachN} stations`);
+  checkTrue("the reported growth is a bounding box, positive on all three axes",
+    rp.growX > 0 && rp.growY > 0 && rp.growZ > 0, `+${rp.growX.toFixed(1)} h, +${rp.growY.toFixed(1)} v, +${rp.growZ.toFixed(1)} forward`);
+  checkTrue("the report names the two heuristic frequencies from the smaller radius",
+    Math.abs(rp.fKR1 - (c * 1000) / (2 * Math.PI * 20)) < 1e-9 && Math.abs(rp.fQuarter - (c * 1000) / (4 * 20)) < 1e-9);
+  checkTrue("the surface ends facing backwards at 180 deg of turn", rp.endH[0] > 180 && rp.endV[0] > 180);
+  // the strip's area on a pure arc is an annular sector, (R^2 - (R-w)^2)Phi/2,
+  // which the polygon reaches under refinement
+  const fine = M.flareProfile({ R: 30, turn: 90, lead: 0, lip: 0, wall: 3, theta0: 0, n: 128 });
+  const pts3 = fine.ring.map(([x, z]) => [x, z, 0]);
+  const sector = ((30 * 30 - 27 * 27) * (Math.PI / 2)) / 2;
+  checkTrue("a pure-arc strip's area is the annular sector to 0.1% at n = 128",
+    Math.abs(M.polyArea3(pts3) - sector) / sector < 1e-3, `${M.polyArea3(pts3).toFixed(4)} against ${sector.toFixed(4)} mm2`);
+
+  // ── 4. IT MOVES NOTHING INSIDE THE APERTURE, AND OFF IT DOES NOT EXIST ───
+  const before = { A: map.mouthAreaTotal, fc: map.profFcMin, dL: map.dL, ob: map.sectionObliqMax };
+  M.flareCollar(th, map, F);
+  checkTrue("building the collar changes no figure of the map it read",
+    map.mouthAreaTotal === before.A && map.profFcMin === before.fc && map.dL === before.dL && map.sectionObliqMax === before.ob);
+  const base = { t, wall: 3, stations: 32, extendThroat: false, extendMouth: true, trimMouth: true };
+  const strip = (s) => s.text.replace(/FILE_NAME\(.*\n/, "");
+  const off1 = M.buildShellSTEP(th, map, base), off2 = M.buildShellSTEP(th, map, { ...base, flare: { flareH: 0, flareV: 0 } });
+  checkTrue("with the flare off the shell kit is byte-identical", strip(off1) === strip(off2) && off1.flarePieces === 0 && /flare=off/.test(off1.text));
+  const on = M.buildShellSTEP(th, map, { ...base, flare: { flareH: 30, flareV: 20, turn: 180, lead: 0.2 }, c });
+  checkTrue("with it on the kit gains exactly the four pieces in their own folder",
+    on.checks.ducts === off1.checks.ducts + 4 && on.flarePieces === 4 && on.tree.folders === off1.tree.folders + 1
+    && /mouth flare -x-y/.test(on.text), `${on.checks.ducts} solids, ${on.tree.folders} folders`);
+  checkTrue("the flared kit passes the writer's own checks",
+    M.stepIntegrity(on.text).ok && on.checks.edgePairing && on.checks.residual < 1e-6, `residual ${on.checks.residual.toExponential(1)}`);
+  checkTrue("the blanks and cutters are the same entities with the collar on",
+    (() => {
+      // every blank/cutter B-spline surface of the off file appears verbatim in the on file
+      const surfs = (txt) => txt.split("\n").filter((l) => /B_SPLINE_SURFACE_WITH_KNOTS/.test(l)).map((l) => l.replace(/^#\d+=/, ""));
+      const a = surfs(off1.text), b = new Set(surfs(on.text));
+      return a.every((s) => b.has(s));
+    })());
+  checkTrue("the settings stamp carries the collar", /flare=H30\/V20\/turn180\/lead0.2\/lip0\/wall3/.test(on.text));
+  // a quarter export keeps one piece, the one in that quadrant
+  const quarter = M.buildShellSTEP(th, map, { ...base, xSide: -1, ySide: -1, flare: { flareH: 30, flareV: 20, turn: 180 } });
+  checkTrue("a quarter export carries the one piece in its quadrant",
+    quarter.flarePieces === 1 && /mouth flare -x-y/.test(quarter.text) && !/mouth flare \+x/.test(quarter.text));
+  checkTrue("the two-cell test never carries a collar",
+    M.buildShellSTEP(th, map, { ...base, only: [th.cells[0].label, th.cells[1].label], flare: { flareH: 30, flareV: 20 } }).flarePieces === 0);
+
+  // ── 5. REFUSED, NEVER CLAMPED ────────────────────────────────────────────
+  const bad = M.buildShellSTEP(th, map, { ...base, flare: { flareH: 4, flareV: 20, turn: 180 } });
+  checkTrue("a radius under 1.5 wall is refused with a reason, and the kit ships without it",
+    bad && bad.flare && !bad.flare.ok && /under 1.5x/.test(bad.flare.why) && bad.flarePieces === 0 && strip(bad).replace(/flare=[^ ']*/, "") === strip(off1).replace(/flare=[^ ']*/, ""),
+    bad && bad.flare ? bad.flare.why : "no report");
+  // one axis only: the pieces are the half-edges, no corner fan
+  const vOnly = M.flareCollar(th, map, { ...F, flareH: 0, flareV: 25, turn: 120 });
+  checkTrue("a vertical-only collar has four pieces with no corner fan and no horizontal growth beyond the tilt of the normal",
+    vOnly.solids.length === 4 && vOnly.report.endH === null && vOnly.solids.every((s) => s.sections.every((sec) => sec.R === 25)));
+
+  // ── 6. THE FAMILY: the rim holds wherever the tool can go ────────────────
+  // The construction rests on the seams staying tangent; assert it on the
+  // three geometries that stressed it most in the survey (theta_v 60,
+  // depth 200, 4x2) rather than on the default alone.
+  for (const [nm, lay, extra] of [
+    ["curved mouth theta_v 60", th, { thetaV: 60 }],
+    ["shallow depth 200", th, { depth: 200 }],
+    ["4x2 grid", M.buildLayout({ family: "hgrid", R, nc: 4, nr: 2, m: 3, t, c }).throat, { nc: 4, nr: 2 }],
+  ]) {
+    const f2 = M.rimExitField(lay, M.mapThroatToMouth(lay, O(extra)), { t });
+    checkTrue(`${nm}: rim seams tangent inside 3 deg, exit angle inside 5-30 deg`,
+      f2 && f2.kinkMax * R2D < 3 && f2.exit.H[0] * R2D > 5 && f2.exit.V[1] * R2D < 30,
+      f2 ? `kink ${(f2.kinkMax * R2D).toFixed(2)}, H ${(f2.exit.H[0] * R2D).toFixed(1)}-${(f2.exit.H[1] * R2D).toFixed(1)}, V ${(f2.exit.V[0] * R2D).toFixed(1)}-${(f2.exit.V[1] * R2D).toFixed(1)}` : "no field");
+  }
+  // and on the curved mouth the vertical exit angle drops BELOW the
+  // horizontal one — the reversal that makes the angle a reading, not a knob
+  const f60 = M.rimExitField(th, M.mapThroatToMouth(th, O({ thetaV: 60 })), { t });
+  checkTrue("theta_v 60 reverses the axis ordering of the exit angle", f60.exit.V[1] < f60.exit.H[0],
+    `V ${(f60.exit.V[1] * R2D).toFixed(2)} < H ${(f60.exit.H[0] * R2D).toFixed(2)} deg`);
+}
+
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

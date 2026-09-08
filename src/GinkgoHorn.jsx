@@ -49,6 +49,18 @@ import * as G from "./hgrid-model.js";
 // file shows requested against achieved for every parameter and never quietly
 // moves a slider the user set.
 //
+// THE MOUTH FLARE COLLAR (stage 3) is the one feature whose acoustic job is a
+// SURFACE rather than a passage: it carries the wall past the rim so the wave
+// leaves a surface that turns away instead of an edge. It is stated as
+// geometry only — the tool computes no radiated field — and every readout it
+// prints is about size, growth and cost, never benefit. The turn is measured
+// from the wall's own exit direction, which the model READS at every rim
+// station (it ranges 6.9-26.9 deg across the family and reverses its axis
+// ordering on a curved mouth, so it is never a constant). Off by default,
+// and with it off every export is byte-identical to before it existed. The
+// viewport draws it faint, at the owner's call: material, but visible, or the
+// knob could not be judged by eye.
+//
 // THE ONE THING TO KEEP IN MIND WHILE READING THE NUMBERS
 //   An equal-area map cannot also be conformal unless it is a rigid motion.
 //   The residual cell aspect ratios are the mandatory price of holding the
@@ -246,7 +258,10 @@ function DuctPreview({ ducts, dim, paint, floor, contacts, ghost }) {
       let inTrouble = !paint || !d.gaps || ghost == null;
       if (paint && d.gaps && ghost != null)
         for (let i = 0; i < d.gaps.length && !inTrouble; i++) if (d.gaps[i] < ghost) inTrouble = true;
-      solidDuct.push(inTrouble);
+      // a FAINT body is drawn translucent in every mode: the mouth flare
+      // collar is material, not air, and it is shown so the size of the
+      // roundover can be judged by eye — not so it can hide the ducts
+      solidDuct.push(d.faint ? "faint" : inTrouble);
       for (let q = 0; q < S - 1; q++)
         for (let k = 0; k < n; k++) {
           quads.push([base + q * n + k, base + q * n + ((k + 1) % n),
@@ -324,7 +339,8 @@ function DuctPreview({ ducts, dim, paint, floor, contacts, ghost }) {
       const lamb = Math.abs((0.33 * nx + 0.24 * ny + 0.91 * nz) / nl);
       const sIdx = Math.max(0, Math.min(16, Math.round(lamb * 16)));
       const di = geom.quadDuct[q];
-      const want = geom.solidDuct[di] ? 1 : 0.07;
+      const sd = geom.solidDuct[di];
+      const want = sd === "faint" ? 0.38 : sd ? 1 : 0.07;
       if (want !== alpha) { g.globalAlpha = want; alpha = want; }
       const tab = geom.shades[di];
       g.fillStyle = geom.paint ? tab[geom.quadBand[q]][sIdx] : tab[sIdx];
@@ -589,6 +605,20 @@ export default function GinkgoHorn() {
   // 457-494 Hz.
   const [arcH, setArcH] = useState(500);
   const [arcV, setArcV] = useState(245);
+  // ── mouth flare collar ──
+  // OFF BY DEFAULT (both radii 0), so every recorded figure reproduces and
+  // because there is no number the tool could defend as a default radius:
+  // it computes no radiated field, and the collar's benefit is set by its
+  // size against wavelength. Two radii because the axes differ in coverage,
+  // in the wall's exit angle and in the room a print has, and because the
+  // measured ordering flips with mouth curvature. The turn is measured FROM
+  // THE WALL'S OWN EXIT DIRECTION, which the model reads at every rim
+  // station (6.9-26.9 deg across the family — never a constant).
+  const [flareH, setFlareH] = useState(0);
+  const [flareV, setFlareV] = useState(0);
+  const [flareTurn, setFlareTurn] = useState(90);
+  const [flareLead, setFlareLead] = useState(0);
+  const [flareLip, setFlareLip] = useState(0);
   const [dlSolve, setDlSolve] = useState(null);
   // ── per-cell path lengthening ──
   // Off by default: it is a correction to apply after depth has done what it
@@ -967,6 +997,21 @@ export default function GinkgoHorn() {
     ...mapOpts, depth, profileT, keepGeometry: true, computeClearance: false,
   }), [throat, mapOpts, depth, profileT]);
 
+  // THE MOUTH FLARE COLLAR, built on the preview map. The rim stations are
+  // the ducts' own mouth-ring boundary points, so their count does not
+  // depend on the station count; only the wall's exit angle is read from
+  // the last station step, and that moves under 0.6 deg between 24 and 256
+  // stations. The export rebuilds it on the export map. Measured ~50 ms at
+  // the defaults, so it lives in a memo like the map itself; the report is
+  // what stage 3 prints and the solids are what the viewport draws.
+  const flareCfg = useMemo(() => ({
+    flareH, flareV, turn: flareTurn, lead: flareLead, lip: flareLip, wall: shellWall,
+  }), [flareH, flareV, flareTurn, flareLead, flareLip, shellWall]);
+  const flare = useMemo(() => {
+    if (!map || !(flareH > 0 || flareV > 0)) return null;
+    return G.flareCollar(throat, map, { t: thickness, c: shown.c, n: 6, every: 3, ...flareCfg });
+  }, [throat, map, thickness, shown, flareCfg, flareH, flareV]);
+
   // Same treatment as the equal-area solve: the mapping's own numbers track
   // the sliders live, the clearance follows a beat later, and everything that
   // reads it shows a solving mark meanwhile. The timeout also coalesces a
@@ -1231,6 +1276,11 @@ export default function GinkgoHorn() {
       w.push(`Dividers block ${fmt(throat.blockage * 100, 1)}% of the exit. That is an unintended compression step: the shell has to grow to ⌀${fmt(fab.dShell, 2)} mm to give the area back.`);
     if (thickness > 0 && thickness < fab.tMin)
       w.push(`${fab.process.label} needs at least ${fab.tMin} mm of wall; ${fmt(thickness, 2)} mm will not print reliably.`);
+    // a collar that was asked for and cannot be built is refused, never
+    // clamped — the material sits inside the bend, so the back face folds
+    // through the air face once the radius drops under the wall
+    if (flare && flare.report.on && !flare.report.ok)
+      w.push(`Mouth flare refused: ${flare.report.why}. Raise the radius or thin the shell wall.`);
     if (map && map.band !== "ok")
       w.push(`Path-length spread ΔL = ${fmt(map.dL, 2)} mm is λ/${fmt(map.lambda / map.dL, 1)} at ${fmt(fTarget / 1000, 1)} kHz — ${map.band === "warn" ? "inside λ/4 but past λ/8" : "past λ/4"}. Padding can only lengthen the short cells; the longest cell sets the budget.`);
     // The throat dip has its own warning below, which names the mechanism and
@@ -1305,7 +1355,7 @@ export default function GinkgoHorn() {
     if (solve.converged && solve.monotone && solve.monotone.gap < 0.02)
       w.push(`Two grid lines come within ${solve.monotone.gap.toExponential(2)} of each other in parameter space — the areas are equal but a cell is pinched to nearly nothing there, which will not print and will not behave like a duct. Ease the bow, raise the shape order m, or move the corner angle.`);
     return w;
-  }, [solve, throat, shown, thickness, fab, map, clearance, overrun, profileT, fTarget, sepFloor]);
+  }, [solve, throat, shown, thickness, fab, map, clearance, overrun, profileT, fTarget, sepFloor, flare]);
 
   // ── exports ────────────────────────────────────────────────────────────────
   const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.nc}x${shown.nr}_${throat.N}cells`;
@@ -1350,6 +1400,9 @@ export default function GinkgoHorn() {
       `wall=${shellWall}`, `shellStations=${shellStations}`,
       `throatEnd=plain`, `mouthEnd=${mouthEnd}`, `folders=${shellFolders}`,
       `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
+      // the collar is a shipped knob that adds solids, so it is in the stamp
+      // from the day it landed — the region grade taught that lesson
+      `flare=${flareH > 0 || flareV > 0 ? `H${flareH}/V${flareV}/turn${flareTurn}/lead${flareLead}/lip${flareLip}` : "off"}`,
     ];
     return g.join(" ");
   };
@@ -1408,10 +1461,20 @@ export default function GinkgoHorn() {
         }
         ducts.push(d);
       }
+      // THE FLARE COLLAR IS DRAWN, COARSELY (owner's call, 2026-09-08). The
+      // viewport shows the air, and the collar is material — but its inner
+      // face is the boundary the air rides beyond the mouth, and a roundover
+      // whose size cannot be judged by eye is a knob nobody can set. So the
+      // quadrant pieces go in as faint bodies: every 3rd rim station, the
+      // whole strip, translucent in every colour mode, never painted by
+      // clearance and never counted as a duct in trouble.
+      if (flare && flare.solids.length)
+        for (const s of flare.solids)
+          ducts.push({ id: s.label, color: C.accentDim, faint: true, rings: s.sections.map((sec) => sec.pts) });
       setSolids3d({ of: map, mode: colorMode, rows: src, ducts });
     }, 80);
     return () => clearTimeout(id);
-  }, [map, colorMode, clearRows]);
+  }, [map, colorMode, clearRows, flare]);
   const solidsStale = !solids3d || solids3d.of !== map || solids3d.mode !== colorMode;
 
   const throatSVG = () => {
@@ -1888,6 +1951,51 @@ export default function GinkgoHorn() {
           <em> to</em> it. Θ = 0 on either axis makes that axis flat; there is <strong style={{ color: C.inkDim }}>no apex</strong>, and ducts
           arrive normal to the surface. The per-axis pattern limits these arcs buy sit in the verdict pane, keyed to the chords dimensioned
           on the drawing.
+        </div>
+        {/* ── mouth flare collar ── */}
+        <div style={{ ...secTitle, marginTop: 12, marginBottom: 6 }}>Mouth flare — rim termination</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "0 10px" }}>
+          <NumInput label="Radius h" value={flareH} onChange={setFlareH} unit="mm" min={0} max={300} step={5} accent={C.accent} />
+          <NumInput label="Radius v" value={flareV} onChange={setFlareV} unit="mm" min={0} max={300} step={5} accent={C.series2} />
+          <NumInput label="Turn" value={flareTurn} onChange={setFlareTurn} unit="°" min={0} max={200} step={5} accent={C.accentDim} />
+          <NumInput label="Lead-in" value={flareLead} onChange={setFlareLead} unit="" min={0} max={1} step={0.05} accent={C.accentDim} />
+          <NumInput label="Lip" value={flareLip} onChange={setFlareLip} unit="mm" min={0} max={100} step={1} accent={C.accentDim} />
+        </div>
+        {flare && flare.report.on && (() => {
+          const r = flare.report;
+          const mono = { fontFamily: C.mono, fontSize: 11 };
+          const k = { color: C.inkMuted }, v = { color: C.ink };
+          const face = (deg) => (deg < 60 ? "forward" : deg < 120 ? "sideways" : deg < 160 ? "back and out" : "backwards");
+          if (!r.ok) return <div style={{ ...mono, marginTop: 4, color: C.series5 }}>collar refused: {r.why}</div>;
+          return (
+            <div style={{ marginTop: 4, display: "flex", gap: 14, flexWrap: "wrap", ...mono }}>
+              <span><span style={k}>wall exits at </span><span style={v}>{fmt(r.exitH[0], 1)}–{fmt(r.exitH[1], 1)}° h · {fmt(r.exitV[0], 1)}–{fmt(r.exitV[1], 1)}° v</span>
+                <span style={k}> off the normal, read from the ducts</span></span>
+              <span><span style={k}>surface ends facing </span><span style={v}>
+                {r.endH ? `${face(r.endH[1])} h (${fmt(r.endH[1], 0)}°)` : "—"}{r.endH && r.endV ? " · " : ""}{r.endV ? `${face(r.endV[1])} v (${fmt(r.endV[1], 0)}°)` : ""}</span></span>
+              <span><span style={k}>seam kink inherited </span><span style={{ color: r.kinkMax > 3 ? C.series5 : C.ink }}>{fmt(r.kinkMax, 2)}°</span></span>
+              <span><span style={k}>acts above ~</span><span style={v}>{fmt(r.fKR1, 0)} Hz</span><span style={k}> (kR = 1) or {fmt(r.fQuarter, 0)} Hz (λ/4) — heuristics, not verified here</span></span>
+              <span><span style={k}>grows the horn </span><span style={v}>+{fmt(r.growX, 1)} mm/side h · +{fmt(r.growY, 1)} mm/side v · +{fmt(r.growZ, 1)} mm forward</span></span>
+              <span><span style={k}>effective aperture ≤ </span><span style={v}>{fmt(r.effW, 0)} × {fmt(r.effH, 0)} mm</span>
+                <span style={k}> (rim {fmt(r.rimW, 0)} × {fmt(r.rimH, 0)}), loading limit {fmt(r.loadingRim, 0)} → ≥{fmt(r.loadingEff, 0)} Hz, upper bound</span></span>
+              <span><span style={k}>collar </span><span style={v}>{r.pieces} piece{r.pieces === 1 ? "" : "s"} · {fmt(r.volume / 1000, 0)} cm³ · ~{fmt(r.massKg, 2)} kg PLA</span>
+                <span style={k}> · root {fmt(r.rootThick, 2)} mm thick on the aperture</span></span>
+            </div>
+          );
+        })()}
+        <div style={{ ...hintStyle, marginTop: 4 }}>
+          <strong style={{ color: C.inkDim }}>A collar that carries the wall past the rim</strong>, so the wave leaves a surface that turns
+          away instead of an edge. It is stated as geometry: this tool computes no radiated field, so what it can print is the size against
+          wavelength and what the collar costs — never the benefit. <strong style={{ color: C.inkDim }}>Radius</strong> sets the frequency
+          the termination starts to act at, per axis (the two rims differ in coverage, in exit angle and in room, and their ordering flips on
+          a curved mouth). <strong style={{ color: C.inkDim }}>Turn</strong> is measured from the wall's own exit direction, which the model
+          reads at every rim station rather than assumes: past ~90° the surface ends facing sideways, past ~180° backwards — what a
+          freestanding horn wants, since a 90° roundover ending in a lip leaves a fresh edge at a <em>larger</em> dimension.{" "}
+          <strong style={{ color: C.inkDim }}>Lead-in</strong> ramps the curvature up from the wall's own (measured ~straight, radius
+          1250–1570 mm at the rim) instead of stepping it to 1/R at the junction; 0 is a circular arc. <strong style={{ color: C.inkDim }}>Lip</strong> is
+          a straight run before the turn. The collar lives entirely outside the aperture and moves nothing inside it — fc, ΔL, mouth area and
+          every clearance figure are unchanged with it on. It ships as separate pieces in the shell kit and is drawn faint in the 3-D view.
+          Material is never the constraint (a 180° roll at 30 mm is about half a kilogram); the print bed and overhangs are.
         </div>
       </Stage>
 
@@ -2419,7 +2527,10 @@ export default function GinkgoHorn() {
               extendMouth: endCfg(mouthEnd).extend, trimMouth: endCfg(mouthEnd).trim,
               folders: shellFolders,
             };
-            const r = G.buildShellSTEP(throat, em, { ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell` });
+            const r = G.buildShellSTEP(throat, em, {
+              ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell`,
+              flare: flareCfg, c: shown.c,
+            });
             if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
             const integ = G.stepIntegrity(r.text);
             const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
@@ -2448,10 +2559,12 @@ export default function GinkgoHorn() {
             const axes = r.region ? [regX && "x", regY && "y"].filter(Boolean) : [];
             const mirWorst = mir ? Math.max(...axes.map((k) => mir[k].worst)) : 0;
             const ends = [r.ends.throat && "throat", r.ends.mouth && "mouth"].filter(Boolean);
-            const recipe = ends.length
+            const recipe = (ends.length
               ? `${r.cells} blanks + ${r.cells} cutters${r.trims ? ` + ${r.trims} trim${r.trims > 1 ? "s" : ""}` : ""} — union the blanks (extended past the ${ends.join(" and ")}${ends.length > 1 ? " faces" : " face"})${
                 r.trimNames.length ? `, subtract ${r.trimNames.join(" and ")}` : ""}, subtract the cutters`
-              : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`;
+              : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`)
+              + (r.flarePieces ? ` + ${r.flarePieces} flare piece${r.flarePieces > 1 ? "s" : ""} (root on the aperture; union onto the rim or print apart)` : "")
+              + (r.flare && !r.flare.ok ? ` · FLARE REFUSED: ${r.flare.why}` : "");
             setStepNote({
               ok,
               msg: `${recipe} · ${r.tree.folders ? `${r.tree.folders} folders, ${r.tree.parts} named parts` : "one flat part"} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
@@ -2615,11 +2728,20 @@ export default function GinkgoHorn() {
           and fewer knots is a better-conditioned boolean. Never offset one of our faces in CAD — that extrapolates the wall surfaces past
           their range and the corner identity breaks (a +1 mm throat offset succeeded and +2 mm failed); ask for the extension here instead,
           where it is built into the loft.
-          {" "}The mouth end faces of every solid lie on the aperture surface the coverage arcs define, so the mouths are co-surface and
-          that outer rim edge is the one to fillet against edge diffraction. The wall is exactly {fmt(shellWall, 1)} mm on every face at
+          {" "}The mouth end faces of every solid lie on the aperture surface the coverage arcs define, so the mouths are co-surface.
+          <strong style={{ color: C.inkDim }}> A CAD fillet on that rim is not a roundover</strong>: the mouth face is only{" "}
+          {fmt(shellWall, 1)} mm wide there (2.74 mm measured at the shipped wall, snapped onto the curved aperture), which bounds any
+          fillet at that radius — effective above about 20 kHz. A termination that acts in the horn's own band needs material the kit
+          does not have, which is what the <em>mouth flare</em> in stage 3 adds. The wall is exactly {fmt(shellWall, 1)} mm on every face at
           every station — the blank is an offset of the duct's own rings, not a shape fitted to them — with two stated exceptions: a mitred
           corner reaches further than the wall by construction (1/sin of the half-angle), and the mouth lip measures about 0.26 mm under
           because it is snapped onto the curved aperture.
+          {flare && flare.report.on ? <>
+            {" "}<strong style={{ color: C.inkDim }}>The flare collar ships in its own folder</strong>, one piece per mirror quadrant the
+            region keeps, each named for its quadrant. Its root face lies on the aperture, flush with the trimmed mouth face, so it can be
+            unioned onto the rim or printed on its own and seated against the mouth; its caps lie on the mirror planes, where a print is
+            split anyway. Nothing inside the aperture moves when it is on — the blanks and cutters are byte-identical with it off.
+          </> : null}
         </div>
       </Stage>
 

@@ -333,7 +333,9 @@ duct export keeps the flat form it has always had. The canvas shows the AIR ONLY
 and dropped at the owner's call.
 **THE ONLY EXPORTS ARE THE THREE THAT CARRY A SOLID** — the STL, the duct
 STEP and the shell STEP kit (plus the two-cell test, which is the shell format
-on one adjacent pair). The DXF, JSON, per-cell CSV and ΣA(x) CSV were removed
+on one adjacent pair). The shell kit can also carry the MOUTH FLARE COLLAR
+(`flareCollar`, 2026-09-08) — up to four quadrant pieces in their own folder,
+off by default, byte-identical off; see the first finding below. The DXF, JSON, per-cell CSV and ΣA(x) CSV were removed
 on 2026-09-04; with the last of those went the tool's only route into a 1-D
 simulator.
 
@@ -345,6 +347,136 @@ poorly-loaded case. That is the thing to move off, and the reason the profile
 exists.
 
 ## Known findings worth not re-deriving
+
+- **THE MOUTH FLARE COLLAR IS BUILT (`flareCollar`, stage 3, 2026-09-08), AND
+  THE MEASUREMENT THAT SHAPED IT IS THAT THE RIM WAS ALREADY ONE SMOOTH
+  SURFACE.** Owner's ask: a rounded flare round the mouth against reflection
+  and diffraction, for a FREESTANDING horn, with size and geometry adjustable
+  because the tool is general; the turn measured from the wall; drawn in the
+  viewport but not in detail. Everything below is measured on the shipped
+  default (6x3, m 3, arcs 500x245, depth 300, T 0.7, t 0.4, wall 3) unless
+  stated, at 64 stations.
+  **WHAT THE WAVE SEES AT THE RIM NOW.** The wall arrives STILL OPENING:
+    exit angle off the aperture normal, left/right rim   10.5-12.7 deg
+                                        top/bottom rim   17.6-19.2 deg
+    local flare rate dlnA/dx at the mouth                16.6-17.4 /m  (= 2m)
+    mouth face width at the rim (duct lip -> blank lip)  2.74-3.38 mm
+  So the horn stops while expanding at an e-fold distance of 58 mm, and the
+  material outside the lip is the shell wall and nothing else. **THAT BOUNDS A
+  CAD FILLET AT r <= 2.74 mm — effective above 20 kHz (kR = 1) or 32 kHz
+  (lambda/4)** — which corrects the earlier NEXT-SESSION note that offered a
+  fillet on the kit's rim as the cheapest roundover. There is no material to
+  round; the collar ADDS it. And theta_v = 0 claims a planar vertical
+  wavefront while the top and bottom walls arrive 18 deg outward, so the
+  vertical rim releases a still-diverging wave straight down the forward
+  axis: a design observation in its own right, recorded here rather than
+  acted on.
+  **THE RIM IS ONE EXACT CURVE AND ITS FACES ARE TANGENT ACROSS THE SEAMS.**
+  Worst deviation of any mouth-ring point from the analytic aperture
+  5.7e-14 mm; 302 of 302 rim points on the domain limit; and the DIHEDRAL of
+  the outer rim face across each of the 14 cell seams is 0.00-2.15 deg. So
+  one collar can continue the wall and inherits that kink, adding none.
+  Across fourteen geometries (theta_v 0-60, theta_h 60-120, depth 200-400,
+  T 0-1, grids 4x2-8x3, the shipped bow, bulge 4) the worst seam is
+  **2.91 deg**. THE MEASUREMENT TRAP, recorded because it was nearly
+  reported: comparing the two cells' corner-VERTEX trajectories at a seam
+  reads 22.8-37.8 deg, and that number is almost entirely the vertices
+  leaning toward each other ALONG the rim (+18.7 / -19.0 deg), which does not
+  tilt the surface — the face normal is cross(rim tangent, wall direction)
+  and only sees the perpendicular part. Separate the components before
+  calling a seam a crease.
+  **THE EXIT ANGLE IS READ FROM EACH RIM STATION, NEVER ASSUMED AND NEVER A
+  KNOB**, because across the family it spans 6.9-26.9 deg and REVERSES its
+  axis ordering on a curved mouth:
+    case                         horizontal      vertical
+    shipped 90x0 d300            10.5-12.5       17.7-19.0
+    theta_v 40 / 60              10.5-12.5       12.0-13.4 / 9.0-10.4
+    depth 200 / 400              14.7-17.5 / 6.9-8.4    22.2-24.8 / 13.7-15.4
+    T 0 / 1                      13.8-16.1 / 9.5-11.4   20.8-22.2 / 16.7-18.0
+    4x2                          16.4-18.2       25.3-26.9
+  It tracks depth strongly — a deeper horn arrives nearer the normal — so it
+  is also a readout of how far the horn is from terminated, and the stage
+  prints it. It moves under 0.6 deg between 24 and 256 stations (10.6-11.7 at
+  the preview's 24, 10.57-12.07 at 64, 10.5-12.65 at 256); the export builds
+  the collar on the export map.
+  **TWO CONSTRUCTIONS WERE REJECTED ON MEASUREMENT.** (1) Flaring the AIR per
+  cell — physically the right idea — fails on construction, not continuity:
+  only a rim cell's outward side can advance past the aperture, its opposite
+  side is shared with a neighbour and cannot move, so consecutive extension
+  rings share that whole edge and the loft grows a zero-width face; and the
+  16 rim pieces would then be adjacent-blank unions, measured succeeding 2 of
+  13. (2) A rounded-rectangle offset in the aperture's (a, e) parameters is an
+  exact physical offset only where the metric is uniform, which is the flat
+  mouth: |dV/da| = rH - rV(1 - cos e) falls 6.6% / 9.8% / 14.4% centre-to-rim
+  at theta_v 40 / 60 / 90. The collar is built in the physical frame at each
+  rim station instead, which sidesteps the metric entirely.
+  **THE CONSTRUCTION.** `rimExitField` walks every rim cell's own mouth-ring
+  boundary points on the aperture edge — an evaluated set, obeying the rule
+  that a solid lofts through rings the model can evaluate — merging a seam's
+  two directions to their mean and reporting the difference, and inserting a
+  station on each mirror plane (interpolated only if no sample lands there;
+  on every grid tried one does, because 16 samples per side put one at the
+  middle cell's midpoint). `flareProfile` is a 2-D strip in the (outward,
+  normal) plane: air face integrated from psi(s) with the lip, the smoothstep
+  lead ramp and the constant-radius turn all closed form in psi (Simpson for
+  the position, 2e-8 mm at 22.5-degree intervals), back face its normal
+  offset by `wall` blended onto a ROOT THAT LIES ON THE APERTURE over four
+  walls (no root finding; thickness there wall/cos theta0, reported), far
+  edge radial. THE MATERIAL SITS INSIDE THE BEND — the air is the convex
+  side — so the back face is an offset toward the centre and a radius under
+  1.5 wall is REFUSED with a reason, never clamped. The four rim corners are
+  sharp, so the corner is a FAN of profiles from one point with the outward
+  direction rotating between the two edges', R blended linearly and the exit
+  angle read from the corner vertex's own direction on each o (it peaks
+  diagonally — 21.5 deg between an 11.8 deg side and an 18.5 deg top — which
+  is the vertex's real direction); the loft carries a pole there, as a CAD
+  vertex blend does. Four QUADRANT PIECES, mirror plane to mirror plane
+  through a corner, so `xSide`/`ySide` select them as they select cells; they
+  ship in their own folder of the assembly with the root face flush on the
+  trimmed mouth face, to be unioned onto the rim or printed apart (owner:
+  CAD decides). Asserted: arc end point and length to 1e-9, lead turn exact,
+  back face `wall` to 1e-15, root on the aperture to 5.7e-14, air face
+  starting AT the rim point (0), both mirrors to 3e-10, the writer's checks
+  (residual 2.3e-13, edges paired, integrity), and **with the collar off
+  the shell kit is byte-identical** and with it on the blanks' and cutters'
+  surfaces are the same entities.
+  **THE KNOBS, each named for what it serves.** `flareH` / `flareV` (mm, 0 =
+  off): the frequency the termination acts above, per axis — two because the
+  axes differ in coverage, in exit angle and in room, and the ordering flips.
+  `turn` (deg, FROM THE WALL'S OWN DIRECTION): where the residual edge
+  points; freestanding wants past 180, because a 90-degree roundover ending
+  in a lip leaves a fresh edge at a LARGER dimension. `lead` (0-1): curvature
+  continuity at the junction — the wall's own curvature at the rim measures
+  3.5e-4..9.8e-4 /mm (radius 1250-1570 mm, i.e. straight), so a circular arc
+  steps it 39x at R 30 and 118x at R 10; 0 is the pure arc, bit-identical.
+  `lip` (mm): a straight run before the turn. NOT SHIPPED, deliberately: a
+  curvature TAPER across the turn (elliptical / tractrix). It is arguable but
+  nothing here can measure the difference, and a knob whose justification is
+  that other horns have one is what the standing priority forbids. DEFAULT
+  OFF in model and UI: there is no number the tool could defend.
+  **WHAT IT COSTS, AND MATERIAL IS NOT THE CONSTRAINT.** A hollow 3 mm
+  collar round the 1490 mm rim:
+    R 20 / 30 / 50 mm at 180 deg   281 / 421 / 702 cm3   0.35 / 0.52 / 0.87 kg PLA
+  i.e. S$10-24 of filament (estimate). What binds is the bed on the current
+  half-split — 30.9 mm of room per side horizontally, 5.5 mm per side
+  vertically — so the collar is best its own printed part, and the stage
+  prints the growth per axis so the split can be planned. The stage's
+  extents, volume and effective aperture come from a FINE pass (48 profile
+  samples, every rim station, all four quadrants) whatever the viewport
+  draws: the first version read them off the drawn rings and reported
+  +46.9 mm of horizontal growth at the preview's coarseness against +54.7 mm
+  on the export geometry — a number that got safer the less closely it
+  looked, caught before it shipped.
+  **WHAT NONE OF IT MEASURES.** The acoustic effect. The tool computes no
+  radiated field and `ApertureWavefield` states "no mouth diffraction", so
+  the collar is stated as geometry and the two heuristic frequencies (kR = 1
+  at c/2piR, lambda/4 at c/4R, differing by pi/2, neither verified here).
+  Its kinks (2 deg) and steps (0.1 mm) are of order lambda/350 at 10 kHz:
+  they decide the construction and not the acoustics. What decides the
+  acoustics is the radius, the turn, and the standing alternative of a
+  bigger mouth. The effective-aperture and loading figures are UPPER bounds
+  — a roundover is a fast flare and does not load like a same-area horn.
+  Validation is BEM.
 
 - **(APERTURE WAVEFIELD) A −6 dB BEAMWIDTH TAKEN FROM THE PEAK IS NOT THE
   GEOMETRIC COVERAGE, AND ON A CURVED MOUTH IT READS NARROW BY 2-4 deg.** The
