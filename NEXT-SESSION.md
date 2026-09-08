@@ -13,6 +13,21 @@ happens otherwise: a construction chosen for construction reasons satisfied
 every number the tool reported while the passage the wave crosses contracted
 27% below its own throat.
 
+## Review branch 2026-09-07 — state, responsiveness and diagnostics
+
+Implemented exact design provenance, stale-result invalidation, cancellable
+worker calculations, cached export-resolution diagnostics, station interpolation
+and regression/interaction tests. See README for the calculation contract.
+
+**Accepted low-priority quirk:** the reviewed actual throat cell areas have an
+approximately **0.216% spread**. The owner accepts this discrepancy for now.
+Retain it as a measurement/solver precision follow-up; do not retune the layout
+solver or claim the actual cells are mathematically equal-area in this pass.
+
+**Still deferred:** continuous STEP loft parameterisation and CAD-kernel
+validity/boolean checks. Interpolated stations and sampled diagnostic convergence
+do not prove that a cubic surface cannot overshoot between rings.
+
 ## Shipped 2026-09-05 — the mitre that swallowed its own samples
 
 Owner's report: "shell blank 2,1 in this file is broken in some way", with a
@@ -526,7 +541,14 @@ Pairs with (2) — same root cause, and (2) is the more general fix. The
 `samples` raise already took the irregularity from 2.4x to 1.15x, so this is
 no longer urgent on its own. See the map defect below.
 
-## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
+## Station snapping — fixed in the 2026-09-07 review branch
+
+The UI now selects `stationSampling: "interpolated"`. Positions and path
+distances interpolate linearly; frame directions interpolate and are
+re-orthogonalised. Tests preserve endpoints, dividing-count geometry, the Hypex
+area law and STEP replay. The model retains snapped mode by default so the
+historical measurements below remain reproducible. The following is the
+original diagnosis, not an outstanding request to implement this again.
 
 `mapThroatToMouth` samples each centreline at `samples` internal points and
 then places each station by **`idx = Math.round(u * M)`, taking
