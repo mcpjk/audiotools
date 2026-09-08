@@ -349,6 +349,59 @@ exists.
 
 ## Known findings worth not re-deriving
 
+- **THE STEP LOFT IS PARAMETERISED BY CHORD LENGTH (2026-09-08), AND THE
+  UNIFORM FORM IT REPLACED WAS ONE BUG WITH THREE RECORDED SYMPTOMS.**
+  `ductBrep` interpolated its rings on a uniform knot vector, so it never knew
+  how far apart they were: a short gap followed by a full station step was
+  told the two were equal, the cubic delivered a full pitch of curvature into
+  a fraction of the distance and overshot BACKWARDS past the ring. The cutter
+  extension folding at 1 mm, the 32-of-48 shell subsample running off its
+  rings and the station snapping were all that. `ringParams` now measures the
+  mean ring-to-ring distance and `vParam: "chord"` (the default) puts the
+  knots there; `"uniform"` is kept as the baseline, and every STEP stamps
+  `loft=` in its settings string. Measured on the shipped horn, 64 stations,
+  all 18 ducts, reversal = the wall travelling back OUT while v walks IN:
+    extension              uniform     chord
+    mouth 1 mm             0.155 mm    0.000
+    mouth 0.5 mm           0.420 mm    0.000
+    throat 1 mm            0.157 mm    0.000
+    blank 3 mm, 32 st.     0.114 mm    9e-16   (shellCapOvershoot, shipped kit)
+  The uniform column reproduces the recorded 0.161 / 0.428 / 0.154 to 2%, so
+  the fix was measured against the defect rather than against itself. Ring
+  residual is unchanged at 2e-13.
+  **WHAT MOVES IS SMALL AND IT IS WHERE THE BOW IS.** Nearest distance from the
+  uniform loft to the chord loft along the same material line: **0.259 mm
+  worst, at cell 3,2, u = 0.07**, every value above 0.01 mm inside u < 0.2,
+  0.002 mm outside. The bow is what makes consecutive ring steps uneven —
+  1.4x between neighbours in the middle row, at every station count, in both
+  sampling modes — so that is the only place the two lofts disagree. Nothing
+  measured on RINGS moves at all: clearance, fold margin, dL, obliquity and
+  every ring assertion in the suite are upstream of the loft. Re-baselined:
+  the two fold tables and the cap-overshoot table, which now hold for
+  `"uniform"` only; `cutterExtMouth` is back to the 1 mm the cap sag needs,
+  with the half-step floor kept for the uniform baseline.
+  **WHAT IT DOES NOT FIX IS RESOLUTION, and the divisor snap stays for that
+  reason.** Departure of a subsampled loft from the rings it SKIPPED:
+    32 of 48, gaps 1,2 (non-divisor)    uniform 3.89 mm    chord 3.10 mm
+    32 of 64, every 2nd, shipped bow    uniform 1.27 mm    chord 1.27 mm
+    32 of 64, every 2nd, no bow         uniform 0.18 mm    chord 0.18 mm
+  So NEXT-SESSION's claim that chord-length "subsumes the divisor rule" was
+  wrong: the parameterisation moves the non-divisor case by a fifth and the
+  rest is rings not being on the surface. And the recorded "halving is
+  nearly free, 0.105 mm" shell figure PREDATES THE BOW: with it, a 32-station
+  blank is 1.27 mm off the 64-station geometry through the bow window
+  (u < 0.2), which is where the cutter it will be subtracted from is exact.
+  **INFERRED, NOT YET MEASURED ON A BLANK**: the wall left by that boolean is
+  then not 3.000 mm through the bow. Whether the shell count moves to 64
+  (bow resolution) or stays at 32 (SSI conditioning, the reason it was
+  chosen) is the owner's call and is queued.
+  **THE PREVIEW COUNT IS A SEPARATE QUESTION AND 32 IS FREE.** Measured in
+  fresh processes, the preview map costs 158 / 155 / 210 / 243 ms at 24 / 32
+  / 48 / 64 stations, and 24 reads the section tilt 1.8x too high against
+  1.5x at 32. Under interpolated sampling 32 also makes the preview rings
+  exactly every second export ring. Not changed here; it changes no reported
+  number.
+
 - **(APERTURE WAVEFIELD) A −6 dB BEAMWIDTH TAKEN FROM THE PEAK IS NOT THE
   GEOMETRIC COVERAGE, AND ON A CURVED MOUTH IT READS NARROW BY 2-4 deg.** The
   polar map added 2026-09-06 normalises each frequency band either to its
@@ -964,7 +1017,9 @@ exists.
   parameterised loft overshoots BACKWARDS through its own cap plane. The two
   were one number and are no longer.
 
-- **A FIXED-MILLIMETRE CUTTER EXTENSION CANNOT BE SAFE, BECAUSE THE FOLD
+- **(SUPERSEDED by the chord-length loft above, which removes the fold; kept
+  for the measurement, which `vParam: "uniform"` still reproduces.) A
+  FIXED-MILLIMETRE CUTTER EXTENSION CANNOT BE SAFE, BECAUSE THE FOLD
   THRESHOLD IS A RATIO — and the 1 mm shipped on 2026-09-04 folded the wall
   at BOTH ends. The owner found it in CAD before it had shipped a part.**
   The reported symptom: "the side walls fold back on themselves before
@@ -2069,8 +2124,9 @@ exists.
   the geometry class. Note also 1,1-3,2 — two columns apart, no shared edge —
   overlapping 4.62 mm over 40 mm of path, which is the reaching above, measured
   on the shipped file rather than in the model.
-- **THE LOFTED WALL RUNS PAST ITS OWN THROAT CAP PLANE, and that is a
-  SELF-INTERSECTING SOLID no self-check in the file can see.** `extendSections`
+- **(SUPERSEDED by the chord-length loft; `shellCapOvershoot` now reads 9e-16
+  on the shipped kit and runs as the regression guard.) THE LOFTED WALL RUNS
+  PAST ITS OWN THROAT CAP PLANE, and that is a SELF-INTERSECTING SOLID no self-check in the file can see.** `extendSections`
   prepends ONE ring at distance `ext`, and `ductBrep` interpolates with a
   UNIFORM parameterisation, so a short first gap followed by a full station
   step is told the two are equal and the cubic overshoots BACKWARDS. The wall
@@ -3413,8 +3469,9 @@ identity, independent interpolation/area-law checks and STEP replay are covered
 by `scripts/test-ginkgo-state.mjs`. Layout and long jobs run in workers with exact
 input keys, cancellation and stale-reply rejection. Export checks refine samples
 at the export station count and cache the checked map; sampled convergence is
-not evidence of continuous STEP loft validity. Loft parameterisation remains an
-outstanding acoustics/CAD investigation.
+not evidence of continuous STEP loft validity. The loft's parameterisation was
+fixed on 2026-09-08 (chord length; see the finding); kernel validity of the
+continuous surface is still only observable in CAD.
 
 The owner accepts the reviewed ~0.216% actual throat cell area spread as a
 low-priority quirk. No layout solver tolerance/policy change was made for it.

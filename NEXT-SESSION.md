@@ -24,9 +24,9 @@ approximately **0.216% spread**. The owner accepts this discrepancy for now.
 Retain it as a measurement/solver precision follow-up; do not retune the layout
 solver or claim the actual cells are mathematically equal-area in this pass.
 
-**Still deferred:** continuous STEP loft parameterisation and CAD-kernel
-validity/boolean checks. Interpolated stations and sampled diagnostic convergence
-do not prove that a cubic surface cannot overshoot between rings.
+**Still deferred:** CAD-kernel validity/boolean checks. The loft
+parameterisation shipped on 2026-09-08 (below); sampled diagnostic convergence
+still does not prove anything about the continuous surface in a kernel.
 
 ## Shipped 2026-09-05 — the mitre that swallowed its own samples
 
@@ -502,44 +502,37 @@ readout already dodges this by building its own 64-station map, so what is
 still exposed is the 3-D preview — the picture the horn is judged by is a
 coarser horn than the one exported.
 
-### 2. Chord-length parameterisation in `ductBrep` — the root cause of three symptoms
+### 2. Chord-length parameterisation in `ductBrep` — SHIPPED 2026-09-08
 
-**This is the item to reach for next.** `ductBrep` interpolates its loft with a
-UNIFORM parameterisation: it assumes every station ring is the same distance
-from the next and never measures. Where the rings really are evenly spaced that
-is right. Where they are not, the spline is told a short gap is a full one, so
-it delivers a full pitch of curvature into a fraction of the distance —
-overshooting past the end ring and coming back. The wall then pokes through the
-cap meant to close it, and **no self-check in the file can see it**: residual,
-edge pairing and referential integrity all pass, because none of them tests a
-surface against itself.
+`ductBrep` now measures the distance between its rings (`ringParams`,
+`vParam: "chord"`, default) instead of assuming it uniform. The fold at the
+cutter extension is 0.000 mm at 0.5 and 1 mm (was 0.42 / 0.16), the blank's
+cap overshoot is 9e-16 (was 0.11), the rings are still interpolated to 2e-13,
+and the surfaces move at most 0.26 mm, all inside the bow window. The mouth
+cutter extension is back to the 1 mm the cap sag needs. `vParam: "uniform"`
+reproduces every pre-change surface and the recorded tables; every STEP stamps
+`loft=`. Full finding in CLAUDE.md.
 
-Three recorded symptoms, one bug:
+**What the measurement corrected**: the claim that this "subsumes the divisor
+rule" was wrong. A subsampled loft's departure from the rings it skips is
+resolution, not parameterisation (3.1 mm chord against 3.9 uniform on the
+32-of-48 case; 1.27 mm both ways on the 32-of-64 divisor WITH the bow). The
+snap stays.
 
-1. **The cutter extension** — a 1 mm prepend against 4.87 mm station steps
-   folded the wall 0.15 mm at the throat and 0.16 at the mouth (2026-09-04,
-   found in CAD). Worked around by sizing the mouth extension from the step.
-2. **A non-dividing shell station count** — 32 rings from a 48-ring map gives
-   gaps alternating 1 and 2, and the loft ran **4.6 mm** off its own rings.
-   Worked around by snapping the count to a divisor.
-3. **The station snapping** (the map defect below) — rings land on 21/22-sample
-   gaps and are told they are equal. (Note this is NOT what moves the fold
-   margin; see item 1.)
+### 2b. The shell station count through the bow — OPEN, owner's call
 
-The fix is to measure the real distance between consecutive rings and hand it
-to the spline. It **subsumes item 3 and the divisor rule**, and it frees the
-cutter's mouth extension to go back to the ~1 mm the cap-fill sag actually
-needs.
+The "halving is nearly free, 0.105 mm" figure that set the shell at 32
+stations predates the bow. With the shipped bow a 32-station blank is
+**1.27 mm off the 64-station geometry at u < 0.2**, where the 64-station
+cutter is exact, so the wall the boolean leaves is inferred not to be 3.000 mm
+through the bow. Not yet measured on a blank. The trade is that against the
+SSI-conditioning argument for fewer knots. Measure the wall after a two-cell
+subtraction in CAD at 32 and at 64 before deciding.
 
-Why it has not been done yet: it changes the interpolation on every surface in
-every STEP export by a small amount, so **every recorded STEP measurement in
-CLAUDE.md re-baselines**. Its own session, with its own verification pass.
+### 3. Interpolate the station position and frame between samples — DONE
 
-### 3. Interpolate the station position and frame between samples
-
-Pairs with (2) — same root cause, and (2) is the more general fix. The
-`samples` raise already took the irregularity from 2.4x to 1.15x, so this is
-no longer urgent on its own. See the map defect below.
+Shipped in the 2026-09-07 review branch (`stationSampling: "interpolated"`,
+the UI default). See the map defect below for the original diagnosis.
 
 ## Station snapping — fixed in the 2026-09-07 review branch
 

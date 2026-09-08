@@ -85,6 +85,10 @@ export function createCompute() {
       const params = designStamp({ ...state,
         mapping: { ...options, samples: check.samples, stations: map.stations },
         verification: { samples: check.compared, ...check.change },
+        // the STEP loft's parameterisation along the path: "chord" since
+        // 2026-09-08; "uniform" is the pre-change surface. Rings are the same
+        // either way, so it is a property of the written SURFACES only.
+        loft: 'chord',
       });
       const suffix = ` · checked at ${map.stations} stations / ${check.samples} samples; ${check.change.stable ? 'diagnostics stable under refinement' : 'diagnostics NOT converged at sample limit'} · sampled ducts, not a CAD solid-validity certificate`;
       if (format === 'stl') {

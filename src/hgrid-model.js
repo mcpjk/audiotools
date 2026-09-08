@@ -5422,11 +5422,22 @@ export function cellPhase5(label) {
 // 1.707 mm — monotone, and all of it at the mouth where the sections open
 // fastest.
 //
-// The count is snapped to a DIVISOR of the map's own, because the loft
-// interpolates with a UNIFORM parameterisation: unevenly spaced rings are
-// then told they are evenly spaced, and the surface leaves them. Measured at
-// 32 of 48 — gaps alternating 1 and 2 — the loft ran 4.6 mm from the very
-// rings it was built through, while every divisor lands them to 0.
+// The count is snapped to a DIVISOR of the map's own. The first reason was
+// the loft's UNIFORM parameterisation — unevenly spaced rings were told they
+// were evenly spaced, and at 32 of 48 (gaps alternating 1 and 2) the surface
+// ran 4.6 mm off the map's own rings. The chord-length loft (2026-09-08)
+// removed that mechanism, and the snap STAYS, for the reason the measurement
+// then exposed: the departure from the SKIPPED rings is mostly resolution,
+// not parameterisation. Measured on the shipped horn with the shipped bow,
+// against the rings the subsample left out:
+//   32 of 48, gaps 1,2 (non-divisor)   uniform 3.89 mm   chord 3.10 mm
+//   32 of 64, every 2nd (divisor)      uniform 1.27 mm   chord 1.27 mm
+//   32 of 64, every 2nd, NO bow        uniform 0.18 mm   chord 0.18 mm
+// So a divisor gives every skipped ring the same resolution, and the loft's
+// parameterisation is no longer what decides how far off it is. Note the
+// third row: the 0.105 mm "halving is free" figure above predates the bow,
+// and through the bow window (u < 0.2) a 32-station blank is a millimetre
+// coarser than the 64-station cutter it will be subtracted from.
 function stationIndices(Q, stations) {
   if (!stations || stations >= Q) return Array.from({ length: Q + 1 }, (_, q) => q);
   let step = Math.max(1, Math.round(Q / Math.max(3, stations)));
@@ -5755,12 +5766,17 @@ function dersBasisFuns(span, t, deg, nDer, knots) {
 
 // Clamped knot vector for interpolating m+1 uniformly spaced data points with
 // a cubic: interior knots at the interior data parameters, m+3 control points.
-function interpKnots(m) {
-  const k = [0, 0, 0, 0];
-  for (let q = 1; q < m; q++) k.push(q / m);
+// Knot vector for cubic interpolation at the parameters tp (tp[0] = 0,
+// tp[m] = 1): clamped at both ends, one interior knot at every interior
+// parameter. Uniform tp gives the classic uniform clamped vector; chord-length
+// tp puts the knots where the rings actually are.
+function interpKnotsFrom(tp) {
+  const m = tp.length - 1, k = [0, 0, 0, 0];
+  for (let q = 1; q < m; q++) k.push(tp[q]);
   k.push(1, 1, 1, 1);
   return k;
 }
+const uniformParams = (m) => Array.from({ length: m + 1 }, (_, q) => q / m);
 
 // LU factorisation with partial pivoting, kept so one matrix can solve many
 // right-hand sides — every row of a net uses the same collocation matrix.
@@ -5800,13 +5816,15 @@ function luSolve(lu, b) {
   return x;
 }
 
-// The collocation matrix for cubic interpolation of m+1 uniform data points
-// with natural end conditions (zero second derivative at both ends). Rows:
-// C(t_0) = D_0, C''(t_0) = 0, C(t_1)..C(t_{m-1}), C''(t_m) = 0, C(t_m) = D_m
-// — so the right-hand side is the data with a zero inserted second and
-// second-to-last.
-function interpSystem(m) {
-  const knots = interpKnots(m), n = m + 3, deg = 3;
+// The collocation matrix for cubic interpolation of m+1 data points at the
+// parameters tp, with natural end conditions (zero second derivative at both
+// ends). Rows: C(t_0) = D_0, C''(t_0) = 0, C(t_1)..C(t_{m-1}), C''(t_m) = 0,
+// C(t_m) = D_m — so the right-hand side is the data with a zero inserted
+// second and second-to-last. Knots at the parameters keeps every t_q inside
+// the support of its own basis function, so the system is never singular for
+// strictly increasing tp.
+function interpSystem(tp) {
+  const m = tp.length - 1, knots = interpKnotsFrom(tp), n = m + 3, deg = 3;
   const A = Array.from({ length: n }, () => new Array(n).fill(0));
   const rowAt = (row, t, der) => {
     const span = findSpan(knots, deg, n, t);
@@ -5815,7 +5833,7 @@ function interpSystem(m) {
   };
   rowAt(0, 0, 0);
   rowAt(1, 0, 2);
-  for (let q = 1; q < m; q++) rowAt(1 + q, q / m, 0);
+  for (let q = 1; q < m; q++) rowAt(1 + q, tp[q], 0);
   rowAt(n - 2, 1, 2);
   rowAt(n - 1, 1, 0);
   return { knots, lu: luFactor(A) };
@@ -5841,14 +5859,50 @@ const interpSolve3 = (sys, pts) => {
   return xs.map((x, i) => [x, ys[i], zs[i]]);
 };
 
-// The collocation matrix depends only on the point count, so it is factored
-// once per count and reused across every side of every duct.
+// A UNIFORM collocation matrix depends only on the point count, so it is
+// factored once per count and reused across every side of every duct. A
+// chord-length system is per duct — its parameters are that duct's own ring
+// spacing — and is factored on the spot: one LU of order stations + 3 per
+// duct, which is nothing against the map that produced the rings, and
+// caching it would grow without bound over a session.
 const interpCache = new Map();
 const interpSystemCached = (m) => {
   let s = interpCache.get(m);
-  if (!s) { s = interpSystem(m); interpCache.set(m, s); }
+  if (!s) { s = interpSystem(uniformParams(m)); interpCache.set(m, s); }
   return s;
 };
+
+// The v parameter of every ring, the one decision the loft makes about how
+// far apart its rings are.
+//   "chord"   (default) cumulative mean point-to-point distance between
+//             consecutive rings, normalised to [0, 1] — the spline is told
+//             the spacing the rings really have.
+//   "uniform" q/(S-1) whatever the spacing — the form every export before
+//             2026-09-08 carried, kept so the recorded fold and overshoot
+//             figures reproduce, and as the baseline the tests measure
+//             against.
+// Two coincident rings would put two knots in one place and make the
+// collocation singular, so each step is floored at a thousandth of the mean
+// step; on any real ring set the floor never binds.
+export function ringParams(sections, vParam = "chord") {
+  const S = sections.length;
+  if (vParam === "uniform") return uniformParams(S - 1);
+  const d = [];
+  for (let q = 1; q < S; q++) {
+    const A = sections[q - 1].pts, B = sections[q].pts;
+    let s = 0;
+    for (let k = 0; k < A.length; k++)
+      s += Math.hypot(B[k][0] - A[k][0], B[k][1] - A[k][1], B[k][2] - A[k][2]) / A.length;
+    d.push(s);
+  }
+  const total = d.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return null;
+  const floor = 1e-3 * total / d.length;
+  const tp = [0];
+  let acc = 0;
+  for (const s of d) { acc += Math.max(s, floor); tp.push(acc); }
+  return tp.map((v) => v / acc);
+}
 
 // Evaluate a B-spline surface given its control net (net[i][j], i along u).
 export function evalBsplineSurf(net, uKnots, vKnots, u, v) {
@@ -5876,13 +5930,35 @@ const greville = (knots, n) =>
 // corners, plus two Coons caps. Returns control nets and knot vectors with
 // the sharing structure explicit: corner columns appear once and both
 // adjacent walls reference them.
-export function ductBrep(sections, { capMouthPts = null } = {}) {
+//
+// ALONG THE PATH THE LOFT IS PARAMETERISED BY CHORD LENGTH (`vParam`, see
+// `ringParams`). Until 2026-09-08 it was uniform: every ring was assumed the
+// same distance from the next and the spacing was never measured. Where the
+// rings are evenly spaced that is right; where they are not, the cubic is
+// told a short gap is a full one, delivers a full pitch of curvature into a
+// fraction of the distance, and overshoots BACKWARDS past the ring — the wall
+// then pokes through the cap meant to close it, and no residual, edge-pairing
+// or integrity check can see it, because none of them tests a surface against
+// itself. Three recorded symptoms had that one cause: the cutter extension
+// folding at 1 mm (0.157 mm of reversal at 64 stations, 0.420 at 0.5 mm), a
+// non-dividing shell station count, and the station snapping. Measured on the
+// shipped horn with chord-length parameters, all 18 ducts: the reversal is
+// 0.000 mm at every extension tried, the rings are still interpolated to
+// 1e-13, and on a regular 64-station export the surface moves at most
+// 0.26 mm, all of it inside u < 0.2 where the bow makes the ring steps
+// uneven (1.4x between neighbours), and 0 elsewhere. What it does NOT buy is
+// resolution: rings that were skipped are still not on the surface, so the
+// shell's divisor snap stays.
+export function ductBrep(sections, { capMouthPts = null, vParam = "chord" } = {}) {
   const S = sections.length;            // stations, incl. both ends
   const N = sections[0].pts.length;     // points around the ring
   if (N % 4 !== 0) return null;
   const n = N / 4;                      // points per side, corner to corner-1
   const mU = n, mV = S - 1;
-  const sysU = interpSystemCached(mU), sysV = interpSystemCached(mV);
+  const vParams = ringParams(sections, vParam);
+  if (!vParams) return null;
+  const sysU = interpSystemCached(mU);
+  const sysV = vParam === "uniform" ? interpSystemCached(mV) : interpSystem(vParams);
   if (!sysU.lu || !sysV.lu) return null;
   const nu = mU + 3, nv = mV + 3;
 
@@ -5952,6 +6028,7 @@ export function ductBrep(sections, { capMouthPts = null } = {}) {
   return {
     n, S, nu, nv,
     uKnots: sysU.knots, vKnots: sysV.knots,
+    vParam, vParams,                     // ring q sits at v = vParams[q]
     walls, cornerCols,
     capThroat: coonsCap(0),
     capMouth: capMouthPts ? gridCap(capMouthPts, nv - 1) : coonsCap(nv - 1),
@@ -5960,14 +6037,16 @@ export function ductBrep(sections, { capMouthPts = null } = {}) {
 
 // Largest distance between the interpolated wall surfaces and the sampled
 // ring points they were built from — the number that says the B-rep IS the
-// sampled geometry and not a smoothed cousin of it.
+// sampled geometry and not a smoothed cousin of it. Ring q is read at ITS
+// parameter, `vParams[q]`, not at q/(S-1): under chord-length those differ
+// wherever the rings are unevenly spaced.
 export function brepResidual(brep, sections) {
-  const { n, S, walls, uKnots, vKnots } = brep;
+  const { n, S, walls, uKnots, vKnots, vParams } = brep;
   let worst = 0;
   for (let s = 0; s < 4; s++)
     for (let q = 0; q < S; q++)
       for (let i = 0; i <= n; i++) {
-        const P = evalBsplineSurf(walls[s], uKnots, vKnots, i / n, q / (S - 1));
+        const P = evalBsplineSurf(walls[s], uKnots, vKnots, i / n, vParams[q]);
         const D = sections[q].pts[(s * n + i) % (4 * n)];
         const d = Math.hypot(P[0] - D[0], P[1] - D[1], P[2] - D[2]);
         if (d > worst) worst = d;
@@ -6144,7 +6223,7 @@ const stepStr = (v) => String(v ?? "")
   .replace(/\\/g, "\\\\")
   .replace(/'/g, "''");
 
-function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true }) {
+function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true, vParam = "chord" }) {
   const E = [];
   let nid = 0;
   const add = (txt) => { E.push(`#${++nid}=${txt};`); return nid; };
@@ -6205,7 +6284,7 @@ function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true }) 
 
   for (const spec of solidsSpec) {
     const sections = spec.sections;
-    const brep = ductBrep(sections, { capMouthPts: spec.capMouthPts || null });
+    const brep = ductBrep(sections, { capMouthPts: spec.capMouthPts || null, vParam });
     if (!brep) return null;
     const { nu, nv, uKnots, vKnots, walls, cornerCols, capThroat, capMouth } = brep;
     checks.ducts++;
@@ -6364,7 +6443,7 @@ function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true }) 
 }
 
 // The air: every duct as one solid. What this file has always emitted.
-export function buildSTEP(throat, map, { t = 0, only = null, params = null, name = "ginkgo_ducts" } = {}) {
+export function buildSTEP(throat, map, { t = 0, only = null, params = null, name = "ginkgo_ducts", vParam = "chord" } = {}) {
   if (!map) return null;
   const solidsSpec = [];
   for (const cellRec of throat.cells) {
@@ -6376,7 +6455,10 @@ export function buildSTEP(throat, map, { t = 0, only = null, params = null, name
     solidsSpec.push({ label: `duct ${cellRec.label}`, sections, capZ: 0 });
   }
   return stepEmit({
-    name, solidsSpec, params,
+    name, solidsSpec, vParam,
+    // the loft parameterisation is stamped with the settings, because the two
+    // forms write different surfaces through the same rings
+    params: params ? `${params} loft=${vParam}` : `loft=${vParam}`,
     desc: "ginkgo multicell horn ducts",
     fileDesc: "ginkgo multicell horn ducts, lofted B-spline solids",
   });
@@ -6422,21 +6504,22 @@ export function throatCellWidth(throat, map = null, { t = 0 } = {}) {
 
 // Does the lofted WALL run past its own throat cap plane?
 //
-// `extendSections` prepends ONE ring at distance `ext`, and `ductBrep`
-// interpolates with a UNIFORM parameterisation — so a short first gap followed
-// by a full station step is told the two are equal, and the cubic overshoots
-// backwards. The blank's wall then pokes through the flat cap that is supposed
-// to close it: a self-intersecting solid, which no residual, edge-pairing or
-// integrity check can see. Measured against the station step on a 6x3 at
-// 32 shell stations (step 11.5 mm), sweeping ext:
+// `extendSections` prepends ONE ring at distance `ext`, and under a UNIFORM
+// parameterisation (`vParam: "uniform"`, the form before 2026-09-08) a short
+// first gap followed by a full station step is told the two are equal, and
+// the cubic overshoots backwards. The blank's wall then pokes through the flat
+// cap that is supposed to close it: a self-intersecting solid, which no
+// residual, edge-pairing or integrity check can see. Measured against the
+// station step on a 6x3 at 32 shell stations (step 11.5 mm), sweeping ext:
 //   ext/step   0.09    0.17    0.26    0.43   0.69   0.96
 //   overshoot  0.94    0.40    0.033   0.000  0.000  0.000  mm
 // so the threshold is around 0.4 of a station step, and the shipped default
-// (ext 3 with the five-phase stagger, 3.0 to 7.8 mm) straddles it — the two
-// phase-0 cells sit at 0.26 and DO overshoot. Reported, not clamped: raising
-// `ext` or lowering `stations` both fix it, and which one the owner wants is
-// not this function's call.
-export function shellCapOvershoot(throat, map, { t = 0, wall = 3, stations = 32, ext = 3, samples = 24 } = {}) {
+// (ext 3 with the five-phase stagger, 3.0 to 7.8 mm) straddled it — the two
+// phase-0 cells sat at 0.26 and DID overshoot. Under the chord-length loft the
+// gap is measured and the overshoot is 0 by construction (measured 9e-16 mm
+// on the shipped kit); this now runs as the REGRESSION GUARD for that, and
+// still reports rather than clamps, so a return of the mechanism is named.
+export function shellCapOvershoot(throat, map, { t = 0, wall = 3, stations = 32, ext = 3, samples = 24, vParam = "chord" } = {}) {
   if (!map) return null;
   let worst = 0, at = null, minRatio = Infinity, stepSum = 0, nStep = 0;
   for (const cellRec of throat.cells) {
@@ -6456,12 +6539,16 @@ export function shellCapOvershoot(throat, map, { t = 0, wall = 3, stations = 32,
     const e = ext * (1 + 0.4 * cellPhase5(cellRec.label));
     minRatio = Math.min(minRatio, e / step);
     const sec = extendSections(blank, e, { throat: true, mouth: true });
-    const br = ductBrep(sec);
+    const br = ductBrep(sec, { vParam });
     if (!br) continue;
     const z0 = sec[0].pts[0][2];
     let zmin = Infinity;
+    // the window is the extension gap and the first real station step, read
+    // in the loft's own parameter — under chord-length that is a short span
+    // of v, under uniform it is about 0.06, the value this used to hard-code
+    const vEnd = br.vParams[Math.min(2, br.S - 1)];
     for (let j = 0; j <= samples; j++) {
-      const v = (0.06 * j) / samples;
+      const v = (vEnd * j) / samples;
       for (const w of br.walls) for (let i = 0; i < br.n; i++)
         zmin = Math.min(zmin, evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, v)[2]);
     }
@@ -6586,7 +6673,7 @@ export function buildShellSTEP(throat, map, {
   t = 0, wall = 3, ext = 3, cutterExt = 1, extend = true, stations = 32,
   extendThroat = null, extendMouth = null, trimThroat = null, trimMouth = null,
   only = null, xSide = 0, ySide = 0, params = null, folders = true,
-  name = "ginkgo_horn_shell",
+  name = "ginkgo_horn_shell", vParam = "chord",
 } = {}) {
   if (!map) return null;
   // THE TWO ENDS ARE SEPARABLE, and they are not the same problem. `extend`
@@ -6649,32 +6736,31 @@ export function buildShellSTEP(throat, map, {
     // The two fills are the same plane, so the subtraction has nothing to
     // reach past and an extension buys exactly nothing there.
     //
-    // WHAT IT COSTS IS A FOLDED WALL. `extendSections` prepends ONE ring and
-    // `ductBrep` interpolates with a UNIFORM parameterisation, so a short
-    // first gap followed by a full station step is told the two are equal and
-    // the cubic overshoots BACKWARDS through the cap it was meant to close —
-    // the mechanism already recorded for the blank, which bites the cutter far
-    // harder because the cutter runs at the MAP's station count, not the
-    // shell's. Measured at 6x3, 64 stations (duct step 4.87 mm), as the
-    // distance the wall travels back OUT while the parameter walks IN:
+    // WHAT A THROAT EXTENSION USED TO COST WAS A FOLDED WALL. `extendSections`
+    // prepends ONE ring, and until 2026-09-08 `ductBrep` interpolated with a
+    // UNIFORM parameterisation, so a short first gap followed by a full
+    // station step was told the two were equal and the cubic overshot
+    // BACKWARDS through the cap it was meant to close. Measured at 6x3, 64
+    // stations (duct step 4.87 mm), as the distance the wall travels back OUT
+    // while the parameter walks IN, uniform loft:
     //   ext         0.5     1.0     1.5     2.0     3.0  mm
     //   ext/step   0.101   0.202   0.302   0.403   0.605
     //   throat     0.418   0.154   0.000   0.000   0.000  mm
     //   mouth      0.428   0.161   0.002   0.000   0.000  mm
-    // So the threshold is the same ~0.4 of a station step as the blank's, and
-    // a 1 mm extension sits well inside it at both ends. Owner-reported from
-    // CAD: the cutter's side walls fold back on themselves before reaching the
-    // extended face, and putting the cutter IN PLANE with the blank at the
-    // throat took a subtraction from failing to succeeding.
+    // Owner-reported from CAD before the loft was fixed: the cutter's side
+    // walls folded back on themselves before reaching the extended face, and
+    // putting the cutter IN PLANE with the blank at the throat took a
+    // subtraction from failing to succeeding. The throat stays flush on the
+    // membrane argument above, which the loft change does not touch.
     //
     // AT THE MOUTH THE MEMBRANE IS REAL — the aperture is curved, so the
     // duct's Coons cap does sag behind it (0.018 mm at 90x40, 0.038 at 90x60)
-    // — so that end keeps an extension. It is sized FROM THE STATION STEP
-    // rather than fixed in mm, because the threshold is a ratio: a fixed
-    // 1 mm is 0.20 of a step at 64 export stations and 0.10 at 32, so any
-    // constant that clears the fold at one count folds at another.
-    // `cutterExt` is therefore the MINIMUM protrusion (the sag it must clear),
-    // and half a station step is the floor that keeps the loft monotone.
+    // — so that end keeps an extension, and `cutterExt` is the protrusion it
+    // gets. It used to be floored at half a station step because the fold
+    // threshold is a RATIO and a constant cannot satisfy one; the chord-length
+    // loft measures the gap it is given, so the floor now applies to the
+    // uniform baseline only (`vParam: "uniform"`). The step is still measured
+    // so the header can stamp the ratio.
     let stepSum = 0;
     for (let q = 1; q < duct.length; q++) {
       const A = duct[q - 1].pts, B = duct[q].pts;
@@ -6683,7 +6769,14 @@ export function buildShellSTEP(throat, map, {
         d += Math.hypot(B[k][0] - A[k][0], B[k][1] - A[k][1], B[k][2] - A[k][2]) / A.length;
       stepSum += d;
     }
-    const cutE = Math.max(cutterExt, 0.5 * (stepSum / Math.max(1, duct.length - 1)));
+    // UNDER THE CHORD-LENGTH LOFT THE FOLD IS GONE (measured 0.000 mm of
+    // reversal at 0.5 and 1 mm on the shipped horn, against 0.42 and 0.16
+    // uniform), so the extension is just the protrusion the cap sag needs —
+    // `cutterExt` itself. The half-step floor is kept for the uniform
+    // baseline only, where it is still the thing that keeps the loft monotone.
+    const cutE = vParam === "uniform"
+      ? Math.max(cutterExt, 0.5 * (stepSum / Math.max(1, duct.length - 1)))
+      : cutterExt;
     cutterExtUsed = Math.max(cutterExtUsed, cutE);
     solidsSpec.push({
       label: `duct cutter ${cellRec.label}`,
@@ -6716,8 +6809,8 @@ export function buildShellSTEP(throat, map, {
       : `union the ${n} 'shell blank' solids (extended past ${ends}), then ${cutBack}subtract the ${n} 'duct cutter' solids`)
     : `subtract each 'duct cutter' from the 'shell blank' of the same cell — ${n} independent subtractions, no unions`;
   const out = stepEmit({
-    name, solidsSpec, folders,
-    params: params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExtMouth=${+cutterExtUsed.toFixed(3)} cutterExtThroat=0 extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide}`,
+    name, solidsSpec, folders, vParam,
+    params: (params ? `ginkgo settings: ${params}` : `ginkgo shell settings: t=${t} wall=${wall} ext=${ext} cutterExtMouth=${+cutterExtUsed.toFixed(3)} cutterExtThroat=0 extendThroat=${eT} extendMouth=${eM} trimThroat=${tT} trimMouth=${tM} stations=${stations} xSide=${xSide} ySide=${ySide}`) + ` loft=${vParam}`,
     desc: "ginkgo multicell horn shell: one blank and one cutter per cell",
     fileDesc: `ginkgo multicell horn shell kit: ${recipe}${
       folders ? "; the solids are filed into folders by role, each named for its cell, all at the identity transform" : ""}`,
