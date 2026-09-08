@@ -13,6 +13,21 @@ happens otherwise: a construction chosen for construction reasons satisfied
 every number the tool reported while the passage the wave crosses contracted
 27% below its own throat.
 
+## Review branch 2026-09-07 — state, responsiveness and diagnostics
+
+Implemented exact design provenance, stale-result invalidation, cancellable
+worker calculations, cached export-resolution diagnostics, station interpolation
+and regression/interaction tests. See README for the calculation contract.
+
+**Accepted low-priority quirk:** the reviewed actual throat cell areas have an
+approximately **0.216% spread**. The owner accepts this discrepancy for now.
+Retain it as a measurement/solver precision follow-up; do not retune the layout
+solver or claim the actual cells are mathematically equal-area in this pass.
+
+**Still deferred:** CAD-kernel validity/boolean checks. The loft
+parameterisation shipped on 2026-09-08 (below); sampled diagnostic convergence
+still does not prove anything about the continuous surface in a kernel.
+
 ## Shipped 2026-09-05 — the mitre that swallowed its own samples
 
 Owner's report: "shell blank 2,1 in this file is broken in some way", with a
@@ -450,11 +465,18 @@ is marginal, which on the graded default it already is. Time sample counts in
 FRESH PROCESSES; in one process the first pays the JIT warmup and the order
 lies.
 
-### 1. Raise the PREVIEW station count
+### 1. Raise the PREVIEW station count — DONE 2026-09-08
+
+**The preview is 32.** It divides both the export count and the sample count,
+where 24 divided neither, and it is free (155 ms against 158). Nothing
+reported moves: every judged number comes from the checked map at the export
+count. The preview's under-read of a throat-bow overlap fell 5.05 -> 1.57 mm,
+so the deferred export-count measurement is still required. Full finding in
+CLAUDE.md. The original analysis follows.
 
 **The `samples` half landed 2026-09-03** (64 -> 512, and `stations` can no
-longer exceed `samples`). What is left is the preview count itself: the
-sliders and the 3-D view run on 24 stations while the exports and the
+longer exceed `samples`). What was left was the preview count itself: the
+sliders and the 3-D view ran on 24 stations while the exports and the
 clearance solve build at 64.
 
 **First, what does NOT depend on it**, measured at the defaults with the
@@ -487,46 +509,46 @@ readout already dodges this by building its own 64-station map, so what is
 still exposed is the 3-D preview — the picture the horn is judged by is a
 coarser horn than the one exported.
 
-### 2. Chord-length parameterisation in `ductBrep` — the root cause of three symptoms
+### 2. Chord-length parameterisation in `ductBrep` — SHIPPED 2026-09-08
 
-**This is the item to reach for next.** `ductBrep` interpolates its loft with a
-UNIFORM parameterisation: it assumes every station ring is the same distance
-from the next and never measures. Where the rings really are evenly spaced that
-is right. Where they are not, the spline is told a short gap is a full one, so
-it delivers a full pitch of curvature into a fraction of the distance —
-overshooting past the end ring and coming back. The wall then pokes through the
-cap meant to close it, and **no self-check in the file can see it**: residual,
-edge pairing and referential integrity all pass, because none of them tests a
-surface against itself.
+`ductBrep` now measures the distance between its rings (`ringParams`,
+`vParam: "chord"`, default) instead of assuming it uniform. The fold at the
+cutter extension is 0.000 mm at 0.5 and 1 mm (was 0.42 / 0.16), the blank's
+cap overshoot is 9e-16 (was 0.11), the rings are still interpolated to 2e-13,
+and the surfaces move at most 0.26 mm, all inside the bow window. The mouth
+cutter extension is back to the 1 mm the cap sag needs. `vParam: "uniform"`
+reproduces every pre-change surface and the recorded tables; every STEP stamps
+`loft=`. Full finding in CLAUDE.md.
 
-Three recorded symptoms, one bug:
+**What the measurement corrected**: the claim that this "subsumes the divisor
+rule" was wrong. A subsampled loft's departure from the rings it skips is
+resolution, not parameterisation (3.1 mm chord against 3.9 uniform on the
+32-of-48 case; 1.27 mm both ways on the 32-of-64 divisor WITH the bow). The
+snap stays.
 
-1. **The cutter extension** — a 1 mm prepend against 4.87 mm station steps
-   folded the wall 0.15 mm at the throat and 0.16 at the mouth (2026-09-04,
-   found in CAD). Worked around by sizing the mouth extension from the step.
-2. **A non-dividing shell station count** — 32 rings from a 48-ring map gives
-   gaps alternating 1 and 2, and the loft ran **4.6 mm** off its own rings.
-   Worked around by snapping the count to a divisor.
-3. **The station snapping** (the map defect below) — rings land on 21/22-sample
-   gaps and are told they are equal. (Note this is NOT what moves the fold
-   margin; see item 1.)
+### 2b. The shell station count through the bow — OPEN, owner's call
 
-The fix is to measure the real distance between consecutive rings and hand it
-to the spline. It **subsumes item 3 and the divisor rule**, and it frees the
-cutter's mouth extension to go back to the ~1 mm the cap-fill sag actually
-needs.
+The "halving is nearly free, 0.105 mm" figure that set the shell at 32
+stations predates the bow. With the shipped bow a 32-station blank is
+**1.27 mm off the 64-station geometry at u < 0.2**, where the 64-station
+cutter is exact, so the wall the boolean leaves is inferred not to be 3.000 mm
+through the bow. Not yet measured on a blank. The trade is that against the
+SSI-conditioning argument for fewer knots. Measure the wall after a two-cell
+subtraction in CAD at 32 and at 64 before deciding.
 
-Why it has not been done yet: it changes the interpolation on every surface in
-every STEP export by a small amount, so **every recorded STEP measurement in
-CLAUDE.md re-baselines**. Its own session, with its own verification pass.
+### 3. Interpolate the station position and frame between samples — DONE
 
-### 3. Interpolate the station position and frame between samples
+Shipped in the 2026-09-07 review branch (`stationSampling: "interpolated"`,
+the UI default). See the map defect below for the original diagnosis.
 
-Pairs with (2) — same root cause, and (2) is the more general fix. The
-`samples` raise already took the irregularity from 2.4x to 1.15x, so this is
-no longer urgent on its own. See the map defect below.
+## Station snapping — fixed in the 2026-09-07 review branch
 
-## A MAP DEFECT FOUND IN PASSING — station positions are SNAPPED, not interpolated
+The UI now selects `stationSampling: "interpolated"`. Positions and path
+distances interpolate linearly; frame directions interpolate and are
+re-orthogonalised. Tests preserve endpoints, dividing-count geometry, the Hypex
+area law and STEP replay. The model retains snapped mode by default so the
+historical measurements below remain reproducible. The following is the
+original diagnosis, not an outstanding request to implement this again.
 
 `mapThroatToMouth` samples each centreline at `samples` internal points and
 then places each station by **`idx = Math.round(u * M)`, taking

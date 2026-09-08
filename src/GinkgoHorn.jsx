@@ -1,4 +1,6 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import { designKey } from "./ginkgo-state.js";
+import { WorkerLane } from "./ginkgo-worker-client.js";
+import React, { useState, useMemo, useEffect, useRef, useId } from "react";
 import { C, SERIES } from "./palette.js";
 import * as G from "./hgrid-model.js";
 
@@ -127,6 +129,7 @@ const btn = (active, col) => ({
 });
 
 function NumInput({ label, value, onChange, unit, min, max, step: s = 1, accent, disabled }) {
+  const id = useId();
   const [local, setLocal] = useState(String(value));
   useEffect(() => { setLocal(String(value)); }, [value]);
   const commit = () => {
@@ -136,8 +139,8 @@ function NumInput({ label, value, onChange, unit, min, max, step: s = 1, accent,
   };
   return (
     <div style={{ marginBottom: 10, opacity: disabled ? 0.45 : 1 }}>
-      <label style={sLabel}>{label} {unit && <span style={{ color: C.inkMuted }}>({unit})</span>}</label>
-      <input type="number" value={local} min={min} max={max} step={s} disabled={disabled}
+      <label htmlFor={id} style={sLabel}>{label} {unit && <span style={{ color: C.inkMuted }}>({unit})</span>}</label>
+      <input id={id} type="number" value={local} min={min} max={max} step={s} disabled={disabled}
         onChange={(e) => setLocal(e.target.value)} onBlur={commit}
         onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
         style={{ ...sInput, ...(accent ? { borderColor: accent } : {}) }} />
@@ -402,7 +405,7 @@ function DuctPreview({ ducts, dim, paint, floor, contacts, ghost }) {
     const cv = canvasRef.current;
     if (!cv) return;
     let dragging = null;
-    const down = (e) => { dragging = [e.clientX, e.clientY]; e.preventDefault(); };
+    const down = (e) => { dragging = [e.clientX, e.clientY]; cv.setPointerCapture(e.pointerId); e.preventDefault(); };
     const move = (e) => {
       if (!dragging) return;
       view.current.yaw += (e.clientX - dragging[0]) * 0.008;
@@ -417,14 +420,16 @@ function DuctPreview({ ducts, dim, paint, floor, contacts, ghost }) {
       view.current.zoom = Math.max(0.3, Math.min(14, view.current.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
       requestDraw();
     };
-    cv.addEventListener("mousedown", down);
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    cv.addEventListener("pointerdown", down);
+    cv.addEventListener("pointermove", move);
+    cv.addEventListener("pointerup", up);
+    cv.addEventListener("pointercancel", up);
     cv.addEventListener("wheel", wheel, { passive: false });
     return () => {
-      cv.removeEventListener("mousedown", down);
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      cv.removeEventListener("pointerdown", down);
+      cv.removeEventListener("pointermove", move);
+      cv.removeEventListener("pointerup", up);
+      cv.removeEventListener("pointercancel", up);
       cv.removeEventListener("wheel", wheel);
     };
   }, []);
@@ -469,8 +474,8 @@ function DuctPreview({ ducts, dim, paint, floor, contacts, ghost }) {
           <button onClick={zoomWorst} style={btn(false, C.series5)}>frame the worst contact</button>
         )}
       </div>
-      <canvas ref={canvasRef}
-        style={{ width: "100%", height: 420, display: "block", borderRadius: 4, background: C.page, border: `1px solid ${C.border}`, cursor: "grab" }} />
+      <canvas ref={canvasRef} aria-label="Duct preview: drag to orbit, scroll to zoom"
+        style={{ width: "100%", height: 420, display: "block", borderRadius: 4, background: C.page, border: `1px solid ${C.border}`, cursor: "grab", touchAction: "none" }} />
     </div>
   );
 }
@@ -511,6 +516,13 @@ function Stage({ n, title, why, ghost, children }) {
 }
 
 export default function GinkgoHorn() {
+  const [lanes] = useState(() => ({ layout: new WorkerLane(), preview: new WorkerLane(), flare: new WorkerLane(),
+    diagnostics: new WorkerLane(), action: new WorkerLane() }));
+  useEffect(() => () => Object.values(lanes).forEach(l => l.dispose()), [lanes]);
+  const [calcError, setCalcError] = useState(null);
+  const [retry, setRetry] = useState(0);
+  const reportError = error => { if (error.name !== "AbortError") setCalcError(error.message); };
+
   // ── layout state ──
   // Which view the pinned pane shows, and whether the viewport is too narrow
   // for two panes at all — below the breakpoint the panes stack into one
@@ -593,7 +605,7 @@ export default function GinkgoHorn() {
   const mouthMode = "biradial";
   const [thetaH, setThetaH] = useState(90);
   const [thetaV, setThetaV] = useState(0);
-  // 555 x 245 mm, the owner's numbers, chosen for the PRINT rather than for
+  // 500 x 245 mm, the owner's current numbers (the earlier 555 mm fit calculation below is historical), chosen for the PRINT rather than for
   // any acoustic reading. Th_v is 0, so arcV is literally the mouth height,
   // and arcH at 90 deg gives a 499.68 mm chord — 249.8 mm per half if the
   // horn is split on the vertical centreline. Both of those clear a Bambu
@@ -662,7 +674,7 @@ export default function GinkgoHorn() {
   // looks and prints, not an oversight.
   const [lengthLobes, setLengthLobes] = useState(1);
   // REGION GRADE (owner's proposal): widen the bow window with the cell's
-  // distance from the axis, centre fixed. 0.15 by default (owner's number,
+  // distance from the axis, centre fixed. 0.20 by default (owner's number,
   // 2026-09-04). Amplitude for a given added length goes as sqrt(span), so
   // grading the span makes displacement grow outward while every cell still
   // lands on the same target length — a row sharing one outward direction
@@ -684,9 +696,8 @@ export default function GinkgoHorn() {
   // displacement moves the most air and where the owner will not accept one.
   // The wall spread it buys back does not price that. The lobe lock existed
   // only to fence the same blind spot on the lobe count, so it went with the
-  // solve. `solveBow` SURVIVES IN THE MODEL with its tests — it is the
-  // documented enumeration of the trade, and the thing to reach for if a
-  // metric ever exists that can see mid-path coherence.
+  // solve. The old enumeration and its tests were removed; its measurements
+  // survive in CLAUDE.md.
   // "flow" = every boundary point on its own trajectory, so neighbours share
   // their boundary and cannot overlap. "swept" = per-cell sections in
   // specified planes, which trades that for centreline freedom.
@@ -772,20 +783,18 @@ export default function GinkgoHorn() {
   // quarter is mirrored back. Both are reported in the export note.
   const [regX, setRegX] = useState(-1);
   const [regY, setRegY] = useState(-1);
-  // HOW THE SHELL IS DELIVERED. "solid" is one horn body plus one cutter per
-  // duct, so the CAD work is subtractions only — no unions at all. "bundle"
-  // is a blank per cell, the literal multicell form, and it needs the union
-  // that grazes: adjacent blanks overlap at both ends and stand apart
-  // mid-path, so every pair passes through exact tangential contact on the
-  // way. Solid is the default because that tangency is geometry, not a
-  // tolerance, and no kernel setting makes it well posed.
-  // The live mapping at 64 stations cost ~136 ms per slider tick (~7 fps on
-  // a drag); at 24 it is ~60 ms, and every readout that matters on a drag —
-  // path lengths, dL, fc — comes from the centreline sampling, which is a
-  // separate `samples` setting and does not move with this. The clearance
-  // and the 3-D preview follow the preview map, so they get cheaper too;
-  // the full-resolution geometry is built fresh when an export is pressed.
-  const PREVIEW_STATIONS = 24;
+  // Preview geometry is inexpensive; settled/export diagnostics run in a worker.
+  // 32, NOT 24 (2026-09-08), and the reason it is 32 rather than any other
+  // number is that it DIVIDES both the export count and the sample count, so
+  // every preview ring is exactly an export ring and nothing is quantised
+  // between them. Measured in fresh processes at the shipped defaults with the
+  // shipped bow, the preview map costs 158 / 155 / 210 / 243 ms at 24 / 32 /
+  // 48 / 64 stations — 32 is free — and it takes the tilt the preview shows
+  // from 1.8x the converged reading to 1.5x (43.4 -> 37.5 deg against 24.4 at
+  // the export count). NOTHING REPORTED MOVES WITH IT: every judged number
+  // comes from `checked`, which builds its own map at `stations`, so this
+  // count reaches only the 3-D view and the beat before the diagnostics land.
+  const PREVIEW_STATIONS = 32;
 
   // ── optimiser ──
   const [wAspect, setWAspect] = useState(0.6);
@@ -805,7 +814,7 @@ export default function GinkgoHorn() {
   // The solved per-cell displacement field that clears defect overlap and
   // thin slivers. A solver RESULT, not a setting: it was solved against one
   // geometry, so it is cleared the moment that geometry moves.
-  const [sepSolve, setSepSolve] = useState(null);
+  const [sepRecord, setSepSolve] = useState(null);
   const [sepBusy, setSepBusy] = useState(false);
   // 1.5 mm (owner's number, 2026-09-04). This one number is three things at
   // once: the thin-wall band, the throat rule's ceiling, and the gap the
@@ -838,46 +847,30 @@ export default function GinkgoHorn() {
   const pReq = request && request.length === cfg.nParams ? request : nominal;
   useEffect(() => { setRequest(null); }, [cfg]);
 
-  // The seed object is kept across solves so the conformal map's warm start
-  // survives; only the corner angle moves inside it.
-  const seedObj = useMemo(() => G.makeSeed(seed, R, pReq[cfg.alphaAt]), [seed, R, cfg]);
-  const lastP = useRef(null);
-
-  // The equal-area solve costs 0.1-1 s and used to run inside the render pass,
-  // which meant the browser could not paint anything — not even a "solving"
-  // mark — until it returned. So the inputs are gathered here and the build is
-  // deferred to a timeout: the previous grid stays on screen, dimmed, until the
-  // new one is ready. The cleanup also coalesces a slider drag, so only the
-  // last request in a burst is ever solved.
-  //
-  // alphaAt rides along because everything downstream reads the built layout,
-  // never the live inputs — see `shown` below.
+  // The worker owns mutable seed caches. The first small throat build supplies
+  // a usable initial screen; subsequent solves never run on the UI thread.
   const layoutInput = useMemo(() => ({
-    R, nc, nr, m: shapeOrder, symmetric,
-    params: pReq, seed, seedObj,
+    R, nc, nr, m: shapeOrder, symmetric, params: pReq, seed,
     t: thickness, c, nParams: cfg.nParams, alphaAt: cfg.alphaAt,
-  }), [R, nc, nr, shapeOrder, symmetric, pReq, seed, seedObj, thickness, c, cfg]);
-
-  const buildFrom = (inp) => {
-    const L = G.buildLayout({
-      ...inp,
-      pStart: lastP.current && lastP.current.length === inp.nParams ? lastP.current : null,
-    });
-    if (L.solve && L.solve.p) lastP.current = L.solve.p;
-    return L;
-  };
-
-  // The first build is synchronous: there is nothing to keep on screen yet, so
-  // deferring it would only show an empty frame. The input is kept WITH the
-  // layout it produced, because a deferred build means the two can disagree.
-  const [built, setBuilt] = useState(() => ({ in: layoutInput, out: buildFrom(layoutInput) }));
-  const stale = built.in !== layoutInput;
-
+  }), [R, nc, nr, shapeOrder, symmetric, pReq, seed, thickness, c, cfg]);
+  const layoutKey = designKey(layoutInput);
+  const [built, setBuilt] = useState(() => {
+    const out = G.buildLayout(layoutInput);
+    return { key: layoutKey, in: layoutInput, out: { throat: out.throat, solve: out.solve,
+      rectangular: out.rectangular,
+      singular: [[1, -1], [1, 1], [-1, 1], [-1, -1]].map(([u, v]) => out.seedObj.map(u, v)) } };
+  });
+  const stale = built.key !== layoutKey;
   useEffect(() => {
     if (!stale) return;
-    const id = setTimeout(() => setBuilt({ in: layoutInput, out: buildFrom(layoutInput) }), 30);
-    return () => clearTimeout(id);
-  }, [layoutInput, stale]);
+    let active = true;
+    const id = setTimeout(() => {
+      lanes.layout.run("layout", layoutKey, layoutInput).then(out => {
+        if (active) setBuilt({ key: layoutKey, in: layoutInput, out });
+      }).catch(reportError);
+    }, 80);
+    return () => { active = false; clearTimeout(id); lanes.layout.cancel(); };
+  }, [layoutKey, stale, retry]);
 
   const layout = built.out;
   // EVERYTHING that describes the grid on screen must read `shown`, not the
@@ -894,11 +887,7 @@ export default function GinkgoHorn() {
   const pOut = !stale && solve.p && solve.p.length === cfg.nParams ? solve.p : pReq;
   // Where the number of cells meeting is not four. For the H-grid these are the
   // four corners of the reference square, wherever the seed map puts them.
-  const singular = useMemo(() => {
-    if (layout.seedObj)
-      return [[1, -1], [1, 1], [-1, 1], [-1, -1]].map(([u, v]) => layout.seedObj.map(u, v));
-    return [];
-  }, [layout]);
+  const singular = layout.singular;
   const alphaEff = solve.p ? solve.p[shown.alphaAt] * R2D : 45;
 
   // The mouth's own chord extents, derived from the two arcs. Everything that
@@ -908,18 +897,26 @@ export default function GinkgoHorn() {
     thetaH, thetaV, arcH, arcV, depth, nc: shown.nc || 6, nr: shown.nr || 3,
   }), [thetaH, thetaV, arcH, arcV, depth, shown]);
   const mouthW = mouthGeo.width, mouthH = mouthGeo.height;
-  // a solver readout describes the geometry it was run against — clear it the
-  // moment that geometry moves, or a stale "depth X → Y Hz" sits beside inputs
-  // it no longer belongs to
-  // ...and the two straight runs now enter the depth solve, so a readout is
-  // stale the moment either moves — it is stamped with the runs it used, and
-  // the strip says so, but clearing on the mouth inputs stays the same rule
-  useEffect(() => { setDlSolve(null); }, [thetaH, thetaV, arcH, arcV, profileT]);
-  // a separation field was solved against ONE geometry — any input that moves
-  // the ducts it was clearing invalidates it
-  useEffect(() => { setSepSolve(null); },
-    [thetaH, thetaV, arcH, arcV, profileT, depth, nc, nr, exitDia, thickness, bulgeOn, bulgeAmp,
-      shapeMorph]);
+  // This key includes every geometric request and the solver's clearance/phase
+  // budget. Results are gated during render, before any effect can clear state.
+  const geometryState = { layout: layoutInput, achieved: solve.p,
+    exitAngle, depth, divergeLen, arriveLen, tightThroat, thetaH, thetaV, arcH, arcV,
+    profileT, profileArea, shapeMorph, lengthenOn, lengthDir, bowFrom, bowTo,
+    lengthLobes, bowGrade, bulgeOn, bulgeAmp, fTarget, sepFloor, stations };
+  const geometryKey = designKey(geometryState);
+  const { depth: depthIgnored, ...depthPremises } = geometryState;
+  const { tightThroat: tangentIgnored, ...tangentPremises } = geometryState;
+  const depthSolveKey = designKey(depthPremises);
+  const tangentSolveKey = designKey(tangentPremises);
+  const sepSolve = !stale && sepRecord?.key === geometryKey ? sepRecord : null;
+  useEffect(() => { setSepSolve(old => old?.key === geometryKey ? old : null); }, [geometryKey]);
+  const actionKey = designKey({ geometryKey, wAspect, wTwist, wCorrection, maxEval });
+  const currentAction = useRef(actionKey);
+  currentAction.current = actionKey;
+  useEffect(() => {
+    lanes.action.cancel(); setSepBusy(false); setRunning(false); busy.current = false;
+  }, [actionKey]);
+
   // THE DEPTH SOLVE HONOURS THE STRAIGHT RUNS, because they are part of the
   // path whose spread it is minimising. It used to zero them and reset the
   // sliders, on a repeatability argument — a solve should be a fixed
@@ -990,114 +987,69 @@ export default function GinkgoHorn() {
     lengthenOn, lengthDir, bowFrom, bowTo, lengthLobes, bowGrade,
     bulgeOn, bulgeAmp, sepSolve]);
 
-  // The clearance is skipped HERE and measured in the deferred effect below:
-  // it costs ~5x the rest of the mapping (measured ~100 ms against ~20), and
-  // inside this memo every tick of the depth or T slider paid for it.
-  const map = useMemo(() => G.mapThroatToMouth(throat, {
-    ...mapOpts, depth, profileT, keepGeometry: true, computeClearance: false,
-  }), [throat, mapOpts, depth, profileT]);
+  const previewInput = useMemo(() => ({ throat, options: {
+    ...mapOpts, depth, profileT, samples: 1024, stationSampling: "interpolated", keepGeometry: true, computeClearance: false,
+  } }), [throat, mapOpts, depth, profileT]);
+  const mapKey = designKey({ layout: shown, achieved: solve.p, options: previewInput.options });
+  const [mapped, setMapped] = useState(null);
+  const map = !stale && mapped?.key === mapKey ? mapped.value : null;
+  useEffect(() => {
+    if (stale) return;
+    let active = true;
+    const id = setTimeout(() => {
+      lanes.preview.run("map", mapKey, previewInput).then(value => {
+        if (active) setMapped({ key: mapKey, value });
+      }).catch(reportError);
+    }, 30);
+    return () => { active = false; clearTimeout(id); lanes.preview.cancel(); };
+  }, [mapKey, stale, retry]);
 
-  // THE MOUTH FLARE COLLAR, built on the preview map. The rim stations are
-  // the ducts' own mouth-ring boundary points, so their count does not
-  // depend on the station count; only the wall's exit angle is read from
-  // the last station step, and that moves under 0.6 deg between 24 and 256
-  // stations. The export rebuilds it on the export map. Measured ~50 ms at
-  // the defaults, so it lives in a memo like the map itself; the report is
-  // what stage 3 prints and the solids are what the viewport draws.
+  // 350 ms without an edit starts the expensive pass. It builds at export
+  // stations and doubles centreline samples until bend/passage readings settle.
+  // Its full map stays cached in the worker for STEP/STL export.
+  const diagnosticInput = { throat, options: { ...previewInput.options, stations }, floor: sepFloor };
+  const diagnosticKey = designKey({ mapKey, stations, floor: sepFloor });
+
+  // THE MOUTH FLARE COLLAR runs in its own worker lane, keyed to the map it
+  // continues. The preview map the worker returns has its aperture evaluators
+  // stripped (they cannot cross the worker boundary), so the collar is built
+  // in the worker beside a fresh map and comes back as plain rings and a
+  // plain report — the report is what stage 3 prints, the rings are what the
+  // viewport draws faint. Off (both radii 0) it costs nothing at all. The
+  // export rebuilds it on the checked map in the export lane.
   const flareCfg = useMemo(() => ({
     flareH, flareV, turn: flareTurn, lead: flareLead, lip: flareLip, wall: shellWall,
   }), [flareH, flareV, flareTurn, flareLead, flareLip, shellWall]);
-  const flare = useMemo(() => {
-    if (!map || !(flareH > 0 || flareV > 0)) return null;
-    return G.flareCollar(throat, map, { t: thickness, c: shown.c, n: 6, every: 3, ...flareCfg });
-  }, [throat, map, thickness, shown, flareCfg, flareH, flareV]);
-
-  // Same treatment as the equal-area solve: the mapping's own numbers track
-  // the sliders live, the clearance follows a beat later, and everything that
-  // reads it shows a solving mark meanwhile. The timeout also coalesces a
-  // drag, so only the last mapping in a burst is ever measured.
+  const flareOn = flareH > 0 || flareV > 0;
+  const flareKey = designKey({ mapKey, flareCfg });
+  const [flared, setFlared] = useState(null);
+  const flare = flareOn && map && flared?.key === flareKey ? flared.value : null;
+  useEffect(() => {
+    if (stale || !flareOn) return;
+    let active = true;
+    const id = setTimeout(() => {
+      lanes.flare.run("flare", flareKey, { ...previewInput, flare: flareCfg }).then(value => {
+        if (active) setFlared({ key: flareKey, value });
+      }).catch(reportError);
+    }, 60);
+    return () => { active = false; clearTimeout(id); lanes.flare.cancel(); };
+  }, [flareKey, stale, flareOn, retry]);
   const [clr, setClr] = useState(null);
   useEffect(() => {
-    if (!map || !map.rows.length || !map.rows[0].sched[0].pts) { setClr(null); return; }
+    if (!map) return;
+    let active = true;
     const id = setTimeout(() => {
-      // MEASURE THE GEOMETRY THAT GETS EXPORTED, not the preview's.
-      // The preview map is built at PREVIEW_STATIONS so the sliders stay
-      // live, and that count is far too coarse to see what a bow does near
-      // the throat: measured on the owner's own returned export, the SAME
-      // geometry reads -0.61 mm at 24 stations and -5.53 mm at 64, and the
-      // separation solve then reported +1.14 mm on a horn whose ducts pass
-      // 4.9 mm through each other in the STEP. So the clearance builds its
-      // own map at the EXPORT count. It is already deferred off the render
-      // pass, and the extra map costs ~90 ms against a ~300 ms measurement.
-      const rows = (stations !== PREVIEW_STATIONS
-        ? G.mapThroatToMouth(throat, {
-            ...mapOpts, depth, profileT, keepGeometry: true,
-            computeClearance: false, stations,
-          })
-        : map).rows;
-      setClr({
-        of: map, at: stations,
-        // `sepFloor` is the one minimum-gap number: it is the thin-wall band,
-        // the separation target, AND the throat knife-edge boundary — the run
-        // over which the ducts have not yet opened to it is not a defect.
-        // THE DIAGONAL NEIGHBOURS ARE IN THE PAIR SET, and they cost
-        // nothing on an unseparated horn (measured identical worst gap,
-        // station and thin-band count at the defaults, with the bow and at
-        // the dL-solved depth — an ordered grid always has an orthogonal
-        // pair closer than any diagonal one). What they catch is a
-        // SEPARATION FIELD sliding a duct into the neighbour no chain
-        // walks: the per-duct nudge leaves -5.52 mm on the diagonals while
-        // reading -3.28 mm on the orthogonal pairs. The solver is scored on
-        // the same set, so this readout and the stage-8 one cannot disagree.
-        // AND IT MEASURES THE INSET OUTLINES — the AIR the export carries,
-        // not the cell's gross share of the cross-section. The gap between
-        // two air columns IS the wall between them, which is the question a
-        // designer has; the gross outlines are the same curves less the
-        // divider, so they read t(1-s) pessimistic — 0.4 mm at the throat
-        // at the shipped divider, and most pessimistic exactly where the
-        // ducts run closest. Measured at the defaults: gross reports
-        // -0.053 mm of interpenetration where the exported air measures
-        // +0.321 mm of real wall.
-        // AND IT COMPARES THE SOLIDS, NOT THE STATIONS. A station is a
-        // fraction of each duct's OWN arc length, so ring q of one duct and
-        // ring q of its neighbour are at the same phase of travel and not at
-        // the same place — measured up to 40 mm apart axially on this horn.
-        // That is the right comparison for a wavefront and the wrong one for
-        // "is there material here", and the two separate exactly where the
-        // ducts stop running parallel, which is the bow region. Measured on
-        // the shipped bow, middle-row pair (3,1)-(4,1): +0.49 mm of wall
-        // by station against -0.43 mm of real interpenetration by solid,
-        // the latter confirmed to 7 um by an independent ray cast into the
-        // exported triangles. Costs about 3x and is already deferred.
-        // the ROWS are kept as well as the statistics, because the 3-D view
-        // paints from `vertexGap` and that is indexed by THIS map's stations.
-        // Resampling it onto the 24-station preview was the alternative and
-        // it is not viable: every defect on the shipped horn sits inside
-        // station 10 of 64, which is four preview rings, so the picture would
-        // be coarse exactly where it has to be exact.
-        rows,
-        // HOW CLOSE THE DIVIDER INSET IS TO SWALLOWING ITS OWN SAMPLES.
-        // It rides here rather than in the render pass because it costs a
-        // measured 14-21 ms — it re-runs the offset on every ring — and
-        // because it belongs to the geometry the exports build, exactly as
-        // the clearance does. Every reversal measured anywhere has been at
-        // station 0, but it is read over the whole path: restricting it to
-        // the throat would make it a proxy for the mechanism instead of the
-        // mechanism.
-        overrun: G.insetOverrun(throat, { rows }, { t: thickness }),
-        value: G.ductClearance(rows, {
-          jointAware: !!map.bulge, thinBand: sepFloor, throatFloor: sepFloor,
-          pairSteps: [[1, 0], [0, 1], [1, 1], [1, -1]],
-          outline: "inset", t: thickness, floor: sepFloor, compare: "solid",
-          perVertex: true, contacts: true,
-        }),
-      });
-    }, 30);
-    return () => clearTimeout(id);
-  }, [map, sepFloor, stations, throat, mapOpts, depth, profileT, thickness]);
-  const clearance = clr && clr.of === map && clr.at === stations ? clr.value : null;
-  const clearRows = clr && clr.of === map && clr.at === stations ? clr.rows : null;
-  const overrun = clr && clr.of === map && clr.at === stations ? clr.overrun : null;
+      lanes.diagnostics.run("diagnostics", diagnosticKey, diagnosticInput).then(value => {
+        if (active) setClr({ key: diagnosticKey, value });
+      }).catch(reportError);
+    }, 350);
+    return () => { active = false; clearTimeout(id); lanes.diagnostics.cancel(); };
+  }, [map, diagnosticKey, retry]);
+  const checked = map && clr?.key === diagnosticKey ? clr.value : null;
+  const clearance = checked?.value || null;
+  const clearRows = checked?.map.rows || null;
+  const overrun = checked?.overrun || null;
+  const qualityMap = checked?.map || map;
 
   // What path length would deliver the cutoff you asked for? m is solved from
   // the geometry, so fc comes out rather than going in — the only honest way to
@@ -1218,45 +1170,32 @@ export default function GinkgoHorn() {
   // The search space is now the 7-13 line parameters, alpha among them, so
   // Nelder-Mead on the whole vector is enough — no outer scan is needed, and
   // every candidate goes through the equal-area solve before f1 is looked at.
-  const runOptimiser = () => {
-    if (busy.current) return;
-    busy.current = true;
-    setRunning(true);
-    setTimeout(() => {
-      const t0 = Date.now();
-      let evals = 0, warm = solve.p ? solve.p.slice() : null;
-      const evalAt = (x) => {
-        const q = x.slice();
-        q[cfg.alphaAt] = Math.min(85 * D2R, Math.max(5 * D2R, q[cfg.alphaAt]));
-        // Cheaper quadrature and no continuation fallback while RANKING
-        // candidates; the winner is re-solved at full order by the pipeline
-        // before anything is drawn or exported, so nothing reported is ever a
-        // reduced-order number.
-        const sol = G.solveEqualArea(cfg, q, {
-          R, seed: seedObj, pStart: warm, t: thickness,
-          tol: 1e-9, maxIter: 40, maxGeom: 240, gl: 10, continuation: false,
-        });
-        evals++;
-        if (sol.converged) warm = sol.p;
-        const cells = G.lineGridCells(sol.geometry, { c, t: thickness, per: 8 });
-        const th = G.analyseThroat(cells, { c, R, dividerTotal: G.lineGridDividerLength(sol.geometry) });
-        const mp = wTwist > 0 ? G.mapThroatToMouth(th, {
-          c, nc, nr, R, rectangular: true, depth, mouthMode: "biradial", thetaH, thetaV, arcH, arcV,
-          exitHalfAngle: exitAngle, divergeLen, tight, fTarget, samples: 16, stations: 6,
-        }) : null;
-        return G.objective(th, mp, {
-          wAspect, wTwist, wCorrection,
-          correction: sol.correction, infeasible: !sol.converged,
-        }).J;
-      };
-      const res = G.nelderMead(evalAt, pReq.slice(), { maxEval, step: 0.06 });
-      const best = res.x.slice();
-      best[cfg.alphaAt] = Math.min(85 * D2R, Math.max(5 * D2R, best[cfg.alphaAt]));
-      setRequest(best);
-      setOptState({ J: res.f, evals, ms: Date.now() - t0 });
-      setRunning(false);
-      busy.current = false;
-    }, 30);
+  const runAction = async (type, payload) => {
+    const key = actionKey;
+    const result = await lanes.action.run(type, key, payload);
+    if (currentAction.current !== key) throw new DOMException("Inputs changed", "AbortError");
+    return result;
+  };
+  const runOptimiser = async () => {
+    if (busy.current || stale) return;
+    busy.current = true; setRunning(true);
+    try {
+      const r = await runAction("optimise", { input: layoutInput, options: previewInput.options,
+        weights: { wAspect, wTwist, wCorrection }, maxEval, pStart: solve.p });
+      setRequest(r.x); setOptState({ J: r.f, evals: r.evals, ms: r.ms });
+    } catch (error) { reportError(error); }
+    finally { setRunning(false); busy.current = false; }
+  };
+  const runSeparation = async mode => {
+    if (stale || sepBusy) return;
+    setSepBusy(true);
+    try {
+      const r = await runAction("separation", { throat,
+        options: { ...previewInput.options, separate: null, stations, samples: checked?.samples || 2048 },
+        config: { floor: sepFloor, mode, maxIter: 20, outline: "inset", compare: "solid" } });
+      setSepSolve({ ...r, key: geometryKey });
+    } catch (error) { reportError(error); }
+    finally { setSepBusy(false); }
   };
 
   // ── warnings ───────────────────────────────────────────────────────────────
@@ -1305,10 +1244,10 @@ export default function GinkgoHorn() {
     // runs back from the aperture: a shallow one is a lip, not a joint, and
     // the loft cannot represent one that does not span a station.
     // ...and it is judged against the EXPORT station spacing, not the preview's.
-    // The clearance is measured on the 24-station preview map, where one
-    // station is ~13 mm of path; the file ships at `stations`, where it is
-    // ~5 mm. Keying the warning to the preview made a perfectly exportable
-    // cope look untenable.
+    // The clearance used to be measured on the preview map, where one station
+    // is ~10 mm of path; the file ships at `stations`, where it is ~5 mm.
+    // Keying the warning to the preview made a perfectly exportable cope look
+    // untenable.
     if (map && map.bulge && clearance && clearance.joint && clearance.joint.engaged) {
       const stationMm = map.Lmin / stations;
       if (clearance.joint.depthMin < stationMm)
@@ -1358,53 +1297,44 @@ export default function GinkgoHorn() {
   }, [solve, throat, shown, thickness, fab, map, clearance, overrun, profileT, fTarget, sepFloor, flare]);
 
   // ── exports ────────────────────────────────────────────────────────────────
-  const stem = `ginkgo_${fmt(exitDia, 1)}mm_${shown.nc}x${shown.nr}_${throat.N}cells`;
+  const stem = `ginkgo_${fmt(shown.R * 2, 1)}mm_${shown.nc}x${shown.nr}_${throat.N}cells`;
 
-  // Exports run at the export station count, not the preview's. The map is
-  // rebuilt here, once, when a button is pressed — ~140 ms at 64 stations,
-  // paid at the click instead of on every slider tick.
-  const exportMap = () => (map && stations !== PREVIEW_STATIONS
-    ? G.mapThroatToMouth(throat, { ...mapOpts, depth, profileT, keepGeometry: true, computeClearance: false, stations })
-    : map);
   const [stepNote, setStepNote] = useState(null);
-
-  // EVERY EXPORT CARRIES THE SETTINGS THAT MADE IT, in the STEP header's
-  // FILE_DESCRIPTION. A file the owner sends back from CAD is otherwise not
-  // reproducible here — a whole session was spent inferring wall, ext and the
-  // extension phases from the geometry, and depth and the arcs could not be
-  // recovered at all. The writer escapes this, so it may contain anything.
-  const exportParams = () => {
-    const o = mapOpts;
-    const n = (v) => (typeof v === "number" ? +v.toFixed(4) : v);
-    const g = [
-      `nc=${o.nc}`, `nr=${o.nr}`, `m=${shapeOrder}`, `symmetric=${symmetric}`,
-      `R=${o.R}`, `t=${o.t}`, `seed=${seed}`,
-      `c=${n(o.c)}`, `exitHalfAngle=${o.exitHalfAngle}`,
-      `mouthMode=${o.mouthMode}`, `thetaH=${o.thetaH}`, `thetaV=${o.thetaV}`,
-      `arcH=${o.arcH}`, `arcV=${o.arcV}`, `depth=${n(depth)}`, `profileT=${n(profileT)}`,
-      `profileArea=${o.profileArea}`, `sectionMode=${o.sectionMode}`,
-      `shapeMorph=${map ? map.shapeMorphEff : o.shapeMorph}`,
-      `divergeLen=${o.divergeLen}`, `arriveLen=${o.arriveLen}`, `tight=${o.tight}`,
-      `mapStations=${stations}`,
-      // THE REGION GRADE BELONGS IN THE STAMP. It is a shipped slider that
-      // moves the geometry materially — measured 0.15 -> 0.20 costs 41% of
-      // the fold margin — and reproducing a returned export without it means
-      // assuming the default, which is exactly the guesswork the stamp exists
-      // to remove.
-      `lengthen=${o.lengthen ? `${o.lengthen.lobes}lobe/${o.lengthen.dir}/[${o.lengthen.uStart},${o.lengthen.uEnd}]/grade${n(o.lengthen.regionGrade ?? 0)}` : "off"}`,
-      `bulge=${o.bulge ? o.bulge.amp : "off"}`,
-      // the MODE and the peak amplitude go in the stamp too: a session was
-      // spent inferring an export's settings back out of its geometry, and a
-      // separation field is not recoverable from the solids at all
-      `separate=${o.separate ? `${o.separate.mode || "?"}/${o.separate.lobes}lobe/[${o.separate.uStart},${o.separate.uEnd}]${map && map.separate ? `/max${n(map.separate.ampMax)}mm` : ""}` : "off"}`,
-      `wall=${shellWall}`, `shellStations=${shellStations}`,
-      `throatEnd=plain`, `mouthEnd=${mouthEnd}`, `folders=${shellFolders}`,
-      `region=${regX || regY ? `x${regX}y${regY}` : "full"}`,
-      // the collar is a shipped knob that adds solids, so it is in the stamp
-      // from the day it landed — the region grade taught that lesson
-      `flare=${flareH > 0 || flareV > 0 ? `H${flareH}/V${flareV}/turn${flareTurn}/lead${flareLead}/lip${flareLip}` : "off"}`,
-    ];
-    return g.join(" ");
+  const [exportBusy, setExportBusy] = useState(false);
+  const exportKey = designKey({ layoutKey, diagnosticKey, shellWall, shellStations, mouthEnd,
+    shellFolders, regX, regY });
+  const currentExport = useRef(exportKey);
+  currentExport.current = exportKey;
+  const canExport = !!checked && !stale && !exportBusy;
+  const runExport = async format => {
+    if (!canExport) return;
+    const key = exportKey;
+    setExportBusy(true); setStepNote({ ok: true, msg: "Building the checked design…" });
+    const suffix = format === "stl" ? `_ducts${regTag}.stl`
+      : format === "shell" ? `_shell${regTag}.step` : format === "pair" ? "_twocell.step" : `${regTag}.step`;
+    const shell = { wall: shellWall, stations: shellStations, extendThroat: false, trimThroat: false,
+      extendMouth: endCfg(mouthEnd).extend, trimMouth: endCfg(mouthEnd).trim,
+      folders: shellFolders, xSide: regX, ySide: regY,
+      // the collar is shell geometry: it reaches buildShellSTEP through these
+      // settings and the design stamp through them too
+      flare: flareCfg, c: shown.c };
+    try {
+      const result = await lanes.diagnostics.run("export", diagnosticKey, {
+        ...diagnosticInput, format, name: stem, only: regSel ? regSel.labels : null, shell,
+        state: { layout: shown, achieved: solve.p, fabrication: { process, temperature },
+          export: { format, shell, region: { xSide: regX, ySide: regY } },
+          separation: sepSolve?.amps ? { amps: sepSolve.amps, uStart: sepSolve.uStart,
+            uEnd: sepSolve.uEnd, lobes: sepSolve.lobes, mode: sepSolve.mode } : null },
+      });
+      if (currentExport.current !== key) return;
+      setStepNote({ ok: result.ok, msg: result.msg });
+      if (result.ok) {
+        if (format === "stl") dlBin(stem + suffix, result.buffer, "model/stl");
+        else dl(stem + suffix, result.text, "application/step");
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") setStepNote({ ok: false, msg: error.message });
+    } finally { setExportBusy(false); }
   };
 
   // THE OTHER EXPORT FORMATS WERE REMOVED ON 2026-09-04 (owner's call): DXF
@@ -1470,7 +1400,7 @@ export default function GinkgoHorn() {
       // clearance and never counted as a duct in trouble.
       if (flare && flare.solids.length)
         for (const s of flare.solids)
-          ducts.push({ id: s.label, color: C.accentDim, faint: true, rings: s.sections.map((sec) => sec.pts) });
+          ducts.push({ id: s.label, color: C.accentDim, faint: true, rings: s.rings });
       setSolids3d({ of: map, mode: colorMode, rows: src, ducts });
     }, 80);
     return () => clearTimeout(id);
@@ -1854,7 +1784,7 @@ export default function GinkgoHorn() {
             </div>
 
             <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 4, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <button onClick={runOptimiser} disabled={running}
+              <button onClick={runOptimiser} disabled={running || sepBusy || stale}
                 style={{ ...btn(true, C.series1), fontSize: 11, padding: "6px 14px", opacity: running ? 0.5 : 1 }}>
                 {running ? "Optimising…" : "Maximise min f₁"}
               </button>
@@ -2053,12 +1983,14 @@ export default function GinkgoHorn() {
           <div style={{ width: 130 }}>
             <NumInput label="Axial depth" value={depth} onChange={setDepth} unit="mm" min={10} max={2000} step={5} accent={C.series4} />
           </div>
-          <button onClick={() => {
-            const r = G.solveDepthForMinDL(throat, solveRefOpts());
-            // stamp the runs it was solved FOR, so the answer carries its own
-            // premises now that it no longer forces them to zero
-            setDlSolve({ ...r, divergeLen, arriveLen });
-            if (r.ok) setDepth(Math.round(r.depth));
+          <button disabled={stale || running || sepBusy} onClick={async () => {
+            setRunning(true);
+            try {
+              const r = await runAction("depth", { throat, options: solveRefOpts() });
+              setDlSolve({ ...r, divergeLen, arriveLen, key: depthSolveKey });
+              if (r.ok) setDepth(Math.round(r.depth));
+            } catch (error) { reportError(error); }
+            finally { setRunning(false); }
           }} style={btn(false, C.series4)}>solve depth for minimum ΔL</button>
           <span style={{ fontFamily: C.mono, fontSize: 10, color: C.inkMuted }}>
             {depthEqualising ? `estimate ≈ ${fmt(depthEqualising, 0)} mm` : ""}
@@ -2071,7 +2003,7 @@ export default function GinkgoHorn() {
                   <span style={{ color: C.series4 }}>{fmt(dlSolve.depth, 0)} mm</span>
                   <span style={{ color: C.inkMuted }}> at ΔL {fmt(dlSolve.dL, 2)} mm{dlSolve.atBound ? " — at the search bound, not an interior optimum" : ""}</span>
                   <span style={{ color: C.inkMuted }}>
-                    {" · solved with divergence "}{fmt(dlSolve.divergeLen || 0, 1)}{" mm, arrival "}{fmt(dlSolve.arriveLen || 0, 1)}{" mm"}
+                    {dlSolve.key !== depthSolveKey && <span style={{ color: C.series5 }}> — input snapshot has changed; re-solve · </span>}{" · solved with divergence "}{fmt(dlSolve.divergeLen || 0, 1)}{" mm, arrival "}{fmt(dlSolve.arriveLen || 0, 1)}{" mm"}
                     {(dlSolve.divergeLen !== divergeLen || dlSolve.arriveLen !== arriveLen)
                       ? <span style={{ color: C.series5 }}>{" — the runs have moved since; re-solve"}</span> : null}
                   </span></>
@@ -2083,15 +2015,14 @@ export default function GinkgoHorn() {
             <NumInput label="Throat tangent" value={tightThroat} onChange={setTightThroat}
               unit="" min={0.12} max={1} step={0.01} accent={C.series2} />
           </div>
-          <button onClick={() => {
-            // `mapOpts` carries no depth — the mapping memo supplies it — and
-            // the depth solve does not notice because it overrides depth on
-            // every evaluation. This one has to pass it, or it silently solves
-            // the model's own 150 mm fallback: measured 0.122 at dL 68.7 mm
-            // against 0.281 at 12.0 for the horn actually on screen.
-            const r = G.solveTightForMinDL(throat, { ...solveRefOpts(), depth });
-            setTightSolve({ ...r, depth });
-            if (r.ok) setTightThroat(Math.round(r.tight * 100) / 100);
+          <button disabled={stale || running || sepBusy} onClick={async () => {
+            setRunning(true);
+            try {
+              const r = await runAction("tangent", { throat, options: { ...solveRefOpts(), depth } });
+              setTightSolve({ ...r, depth, key: tangentSolveKey });
+              if (r.ok) setTightThroat(Math.round(r.tight * 100) / 100);
+            } catch (error) { reportError(error); }
+            finally { setRunning(false); }
           }} style={btn(false, C.series2)}>solve tangent for minimum ΔL</button>
         </div>
         {tightSolve && (
@@ -2103,8 +2034,8 @@ export default function GinkgoHorn() {
                     {tightSolve.atBound ? " — at the search bound, not an interior optimum" : ""}
                     {" · solved at depth "}{fmt(tightSolve.depth, 0)}{" mm"}
                   </span>
-                  {tightSolve.depth !== depth
-                    ? <span style={{ color: C.series5 }}>{" — the depth has moved since; re-solve"}</span> : null}
+                  {tightSolve.key !== tangentSolveKey
+                    ? <span style={{ color: C.series5 }}>{" — input snapshot has changed; re-solve"}</span> : null}
                   {Math.abs(tightSolve.tight - 0.5) < 0.02
                     ? <span style={{ color: C.series4 }}>{" — which is the default: this depth is already the ΔL optimum"}</span> : null}
                 </>
@@ -2326,36 +2257,10 @@ export default function GinkgoHorn() {
             onChange={(e) => setSepFloor(Math.max(0.1, parseFloat(e.target.value) || 0.5))}
             style={{ ...sInput, width: 58, padding: "3px 5px", fontSize: 11 }} />
           <span style={{ fontSize: 10, color: C.inkMuted }}>mm</span>
-          <button disabled={sepBusy} onClick={() => {
-            setSepBusy(true);
-            setTimeout(() => {
-              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "uniform", outline: "inset", compare: "solid" });
-              setSepSolve(r);
-              setSepBusy(false);
-            }, 30);
-          }} style={{ ...btn(false, C.series4), opacity: sepBusy ? 0.4 : 1 }}>
-            {sepBusy ? "solving…" : "solve · quick spread"}</button>
-          <button disabled={sepBusy} onClick={() => {
-            setSepBusy(true);
-            setTimeout(() => {
-              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "nudge", maxIter: 20, outline: "inset", compare: "solid" });
-              setSepSolve(r);
-              setSepBusy(false);
-            }, 30);
-          }} style={{ ...btn(false, C.series3), opacity: sepBusy ? 0.4 : 1 }}>
-            {sepBusy ? "solving…" : "solve · per-duct nudge"}</button>
-          <button disabled={sepBusy} onClick={() => {
-            setSepBusy(true);
-            setTimeout(() => {
-              const r = G.solveSeparation(throat, { ...mapOpts, depth, profileT, separate: null, stations },
-                { floor: sepFloor, mode: "repel", maxIter: 20, outline: "inset", compare: "solid" });
-              setSepSolve(r);
-              setSepBusy(false);
-            }, 30);
-          }} style={{ ...btn(false, C.series6), opacity: sepBusy ? 0.4 : 1 }}>
-            {sepBusy ? "solving…" : "solve · mutual repulsion"}</button>
+          {[["uniform", "quick spread"], ["nudge", "per-duct nudge"], ["repel", "mutual repulsion"]].map(([mode, label]) => (
+            <button key={mode} disabled={sepBusy || running || stale || !map} onClick={() => runSeparation(mode)}
+              style={btn(false, C.series4)}>{sepBusy ? "solving…" : `solve · ${label}`}</button>
+          ))}
           {sepSolve && sepSolve.amps && (
             <button onClick={() => setSepSolve(null)} style={btn(false, C.series5)}>clear</button>
           )}
@@ -2389,7 +2294,7 @@ export default function GinkgoHorn() {
           </div>
         )}
         {sepSolve && (
-          <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
+          <div data-testid="separation-result" style={{ marginTop: 6, fontFamily: C.mono, fontSize: 10, lineHeight: 1.6 }}>
             {sepSolve.already
               ? <span style={{ color: C.series4 }}>nothing to solve — the worst gap is already {fmt(sepSolve.gapBefore, 2)} mm</span>
               : <>
@@ -2488,133 +2393,12 @@ export default function GinkgoHorn() {
         </div>
       </Stage>
 
-      <Stage n={9} title="Export" why="exports build at full resolution on click; the preview stays at 24 stations">
+      <Stage n={9} title="Export" why={`exports reuse the checked geometry; the preview stays at ${PREVIEW_STATIONS} stations`}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button style={expBtn} disabled={!map} onClick={() => {
-            const solids = G.ductSolids(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null });
-            if (solids) dlBin(`${stem}_ducts${regTag}.stl`, G.buildSTL(solids, stem), "model/stl");
-          }}>STL · cell ducts</button>
-          <button style={expBtn} disabled={!map} onClick={() => {
-            const r = G.buildSTEP(throat, exportMap(), { t: thickness, only: regSel ? regSel.labels : null, params: exportParams(), name: stem });
-            if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
-            const integ = G.stepIntegrity(r.text);
-            const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
-            setStepNote({
-              ok,
-              msg: `${r.checks.ducts} solids · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm · ${
-                ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
-            });
-            if (ok) dl(`${stem}${regTag}.step`, r.text, "application/step");
-          }}>STEP · B-spline solids</button>
-          <button style={expBtn} disabled={!map} onClick={() => {
-            // the blanks are an offset of the ducts' own rings, so this is
-            // fast, but the file is large enough to be worth a word first
-            setStepNote({ ok: true, msg: "building the shell — offsetting each duct outwards…" });
-            setTimeout(() => {
-            const em = exportMap();
-            // THE THROAT IS ALWAYS PLAIN. Its face is made by the loft's own
-            // end ring, which is planar in z = 0 by construction, and the
-            // kernel is asked for no cut there at all — which is exactly the
-            // operation (a plane split at z = 0) that has been measured
-            // failing on individual blanks. The extend/trim options for this
-            // end were removed on 2026-09-04: plain is what the owner has
-            // been exporting and what has worked. The price is the 27 pairs
-            // of coplanar overlapping throat caps coming back, and that is
-            // the accepted trade, not an oversight.
-            const cfg = {
-              t: thickness, wall: shellWall, stations: shellStations,
-              extendThroat: false, trimThroat: false,
-              extendMouth: endCfg(mouthEnd).extend, trimMouth: endCfg(mouthEnd).trim,
-              folders: shellFolders,
-            };
-            const r = G.buildShellSTEP(throat, em, {
-              ...cfg, xSide: regX, ySide: regY, params: exportParams(), name: `${stem}_shell`,
-              flare: flareCfg, c: shown.c,
-            });
-            if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
-            const integ = G.stepIntegrity(r.text);
-            const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
-            const co = G.shellCoincidence(throat, em, { t: thickness, wall: shellWall, stations: shellStations });
-            const sov = G.shellOverlap(throat, em, { t: thickness, wall: shellWall });
-            // The number `wall` has to be read against. At the throat the cells
-            // TILE, so each blank pushes `wall` into its neighbour across the
-            // whole shared face; once 2·wall passes a cell's width, the blanks
-            // on either side of that cell reach past each other and solids that
-            // share no edge at all share material.
-            // The throat cap overshoot is not measured any more: it is a
-            // property of the EXTENSION ring the uniform loft parameterisation
-            // mis-spaces, and a plain throat has no extension ring at all —
-            // the wall stops exactly on its own end ring, measured 0.
-            const cw = G.throatCellWidth(throat, em, { t: thickness });
-            // The divider's own bound, printed beside the wall's. A kit whose
-            // rings reverse used to ship blanks metres across; they are
-            // collapsed now, so this says the corners were clamped rather
-            // than that the file is broken.
-            const ov = G.insetOverrun(throat, em, { t: thickness });
-            const span = 2 * shellWall;
-            const reaches = cw && span > cw.min;
-            // A region export rests on a mirror, so the mirror is MEASURED
-            // rather than assumed — a world-axis bow breaks one of them.
-            const mir = r.region ? G.mirrorSymmetry(throat, em, { t: thickness }) : null;
-            const axes = r.region ? [regX && "x", regY && "y"].filter(Boolean) : [];
-            const mirWorst = mir ? Math.max(...axes.map((k) => mir[k].worst)) : 0;
-            const ends = [r.ends.throat && "throat", r.ends.mouth && "mouth"].filter(Boolean);
-            const recipe = (ends.length
-              ? `${r.cells} blanks + ${r.cells} cutters${r.trims ? ` + ${r.trims} trim${r.trims > 1 ? "s" : ""}` : ""} — union the blanks (extended past the ${ends.join(" and ")}${ends.length > 1 ? " faces" : " face"})${
-                r.trimNames.length ? `, subtract ${r.trimNames.join(" and ")}` : ""}, subtract the cutters`
-              : `${r.cells} blanks + ${r.cells} cutters — subtract each cutter from the blank of the same cell, no unions`)
-              + (r.flarePieces ? ` + ${r.flarePieces} flare piece${r.flarePieces > 1 ? "s" : ""} (root on the aperture; union onto the rim or print apart)` : "")
-              + (r.flare && !r.flare.ok ? ` · FLARE REFUSED: ${r.flare.why}` : "");
-            setStepNote({
-              ok,
-              msg: `${recipe} · ${r.tree.folders ? `${r.tree.folders} folders, ${r.tree.parts} named parts` : "one flat part"} · ${integ.entities} entities · surface-through-samples ${r.checks.residual.toExponential(1)} mm${
-                co ? ` · near-copy surface ${fmt(co.arc, 1)} mm` : ""}${
-                sov ? ` · blanks share material over ${fmt(sov.fracTouching * 100, 0)}% of the path` : ""}${
-                r.cutterExtMouth ? ` · cutters flush at the throat, ${fmt(r.cutterExtMouth, 2)} mm past the aperture (half a station step)` : ""}${
-                cw ? ` · throat cells ${fmt(cw.min, 1)}-${fmt(cw.max, 1)} mm wide against 2x wall ${fmt(span, 1)} mm${
-                  reaches ? ` — BLANKS REACH PAST THEIR NEIGHBOURS, wall must be under ${fmt(cw.min / 2, 2)} mm to stop it` : ""}` : ""}${
-                ov ? ` · divider inset reaches ${fmt(ov.shrinkMax, 2)}x the ring sampling${
-                  ov.reversed ? ` — OVERRUN, ${ov.reversed} segment(s) collapsed on ${ov.cells.join(" ")}` : " (limit 1)"}` : ""}${
-                r.region ? ` · ${axes.join(" and ")} mirror holds to ${mirWorst.toExponential(1)} mm${
-                  mirWorst > 1e-3 ? " — MIRROR BROKEN, this region is not the whole horn" : ""}${
-                  r.region.onPlane.length ? `, ${r.region.onPlane.length} cell(s) on the plane (${r.region.onPlane.join(" ")}) — do not duplicate them` : ""}` : ""} · ${
-                ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
-            });
-            if (ok) dl(`${stem}_shell${regTag}.step`, r.text, "application/step");
-            }, 30);
-          }}>STEP · horn shell</button>
-          <button style={expBtn} disabled={!map} onClick={() => {
-            // the smallest thing that can fail: one adjacent pair, same
-            // settings. If the union of two blanks fails, nothing about the
-            // other sixteen matters, and the repro is two solids instead of 38.
-            const em = exportMap();
-            // the first ORTHOGONALLY ADJACENT pair — two cells that do not
-            // share a grid line have none of the near-copy surface the test
-            // is for
-            let lab = null;
-            for (const c of throat.cells) {
-              const [col, rw] = c.label.split(",").map(Number);
-              for (const [dc, dr] of [[1, 0], [0, 1]]) {
-                const nb = `${col + dc},${rw + dr}`;
-                if (!lab && throat.cells.some((x) => x.label === nb)) lab = [c.label, nb];
-              }
-            }
-            const r = lab && G.buildShellSTEP(throat, em, {
-              t: thickness, wall: shellWall,
-              extendThroat: false, extendMouth: endCfg(mouthEnd).extend,
-              stations: shellStations, only: lab, folders: shellFolders,
-              params: exportParams(), name: `${stem}_twocell`,
-            });
-            if (!r) { setStepNote({ ok: false, msg: "no geometry to export" }); return; }
-            const integ = G.stepIntegrity(r.text);
-            const ok = integ.ok && r.checks.edgePairing && r.checks.residual < 1e-6;
-            setStepNote({
-              ok,
-              msg: `cells ${lab.join(" and ")}: ${r.cells} blanks + ${r.cells} cutters · ${integ.entities} entities · union the two blanks first — if that fails, the full kit cannot · ${
-                ok ? "self-checks pass" : "SELF-CHECK FAILED — file not written"}`,
-            });
-            if (ok) dl(`${stem}_twocell.step`, r.text, "application/step");
-          }}>STEP · two-cell test</button>
+          <button style={expBtn} disabled={!canExport} onClick={() => runExport("stl")}>STL · cell ducts</button>
+          <button style={expBtn} disabled={!canExport} onClick={() => runExport("ducts")}>STEP · B-spline solids</button>
+          <button style={expBtn} disabled={!canExport} onClick={() => runExport("shell")}>STEP · horn shell</button>
+          <button style={expBtn} disabled={!canExport} onClick={() => runExport("pair")}>STEP · two-cell test</button>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <span style={{ fontSize: 10, color: C.inkMuted, fontFamily: C.mono, width: 40 }}>mouth</span>
             {[["trim", "extend + trim"], ["extend", "extend only"], ["plain", "plain"]].map(([v, l]) => (
@@ -2694,16 +2478,16 @@ export default function GinkgoHorn() {
           {" "}<strong style={{ color: C.inkDim }}>The cutters are flush with the throat — not extended past it at all.</strong> An
           extension exists to punch through a cap the blank fills differently from the duct, and at the throat there is no such
           difference: both rings are planar in z = 0, so both Coons fills are that plane, measured to 0.0e+0 mm on all {throat.N} cells.
-          What an extension there does cost is a <em>folded wall</em> — the loft interpolates with a uniform parameterisation, so a short
-          first gap against a full station step makes the cubic overshoot backwards through the very cap it was closing. Measured at 64
-          stations (4.87 mm step), the wall runs 0.42 / 0.15 / 0.00 mm back at extensions of 0.5 / 1 / 1.5 mm — the same ~0.4-of-a-step
-          threshold the blank has. Flush also puts the cutter's throat face in plane with the blank's, which has taken a failing
-          subtraction to a succeeding one in CAD.
+          What an extension there used to cost was a <em>folded wall</em>: the loft interpolated with a uniform parameterisation, so a short
+          first gap against a full station step made the cubic overshoot backwards through the very cap it was closing — measured at 64
+          stations (4.87 mm step), 0.42 / 0.15 / 0.00 mm of reversal at extensions of 0.5 / 1 / 1.5 mm. <strong style={{ color: C.inkDim }}>The
+          loft is now parameterised by chord length</strong>: it measures the distance between its rings, and the same extensions measure
+          0.000 mm of reversal on every duct. Flush stays, on the membrane argument, and because it puts the cutter's throat face in plane
+          with the blank's, which has taken a failing subtraction to a succeeding one in CAD.
           {" "}<strong style={{ color: C.inkDim }}>At the mouth the membrane is real</strong>, because the aperture is curved and the
-          duct's cap does sag behind it (0.018 mm at 90×40, 0.038 at 90×60), so that end keeps an extension. It is sized from the station
-          step rather than fixed in millimetres, because the fold threshold is a ratio: 1 mm is 0.20 of a step at 64 export stations and
-          0.10 at 32, so any constant that is safe at one count folds at another. The note prints what was actually used.
-          The blank's own extension answers the same ratio at the shell's coarser count and stays at 3 mm.
+          duct's cap does sag behind it (0.018 mm at 90×40, 0.038 at 90×60), so that end keeps an extension — the 1 mm the sag needs, and
+          no longer floored at half a station step, since the fold that floor guarded against is gone. The note prints what was used and
+          which loft the file carries. The blank's own extension stays at 3 mm for the staggered end faces.
           {" "}The note reports how much <em>near-copy surface</em> the kit carries: two adjacent blanks offset the same shared grid line
           by the same amount, so millimetres of their surfaces are the same surface computed twice, landing under a micron apart —
           invisible, and below what a kernel can resolve. A per-parity wall jitter that removed it was withdrawn on CAD evidence that it
@@ -3001,12 +2785,12 @@ export default function GinkgoHorn() {
               the section stays square to the path, so this is the readout that
               says the horn is delivering the schedule it was solved for. */}
           {map && map.sectionMode === "swept" && (
-            <Metric label="Passage" value={map.fluxContractCells === 0 ? "opens throughout"
-              : `−${fmt(map.fluxContractMax * 100, 1)}%`}
-              sub={map.fluxContractCells === 0
-                ? `cross-section square to travel never narrows here · tilt ≤ ${fmt(map.sectionObliqMax, 1)}° — a tight bow can still hide under this sampling, read bend clearance too`
-                : `${map.fluxContractCells} of ${throat.N} ducts constrict · narrowest ${fmt(map.fluxVsThroatMin * 100, 0)}% of its own throat, at ${map.sectionObliqCell}`}
-              color={map.fluxContractCells === 0 ? C.series4 : C.series5} />
+            <Metric label="Passage" value={qualityMap.fluxContractCells === 0 ? "opens throughout"
+              : `−${fmt(qualityMap.fluxContractMax * 100, 1)}%`}
+              sub={qualityMap.fluxContractCells === 0
+                ? `cross-section square to travel never narrows here · tilt ≤ ${fmt(qualityMap.sectionObliqMax, 1)}° — a tight bow can still hide under this sampling, read bend clearance too`
+                : `${qualityMap.fluxContractCells} of ${throat.N} ducts constrict · narrowest ${fmt(qualityMap.fluxVsThroatMin * 100, 0)}% of its own throat, at ${qualityMap.sectionObliqCell}`}
+              color={qualityMap.fluxContractCells === 0 ? C.series4 : C.series5} />
           )}
           {map && map.fcDecomp && (
             <Metric label="f_c spread, decomposed" value={`${fmt(map.fcDecomp.full, 2)}%`}
@@ -3069,12 +2853,12 @@ export default function GinkgoHorn() {
                   centre of curvature the solid turns inside out, and nothing
                   else in the export can see it — a folded duct still meshes
                   closed and still passes every cap check. */}
-              {map.sectionMode === "swept" && isFinite(map.bendFoldMin) && (
-                <Metric label="Bend clearance" value={`${fmt(map.bendFoldMin, 1)} mm`}
-                  sub={map.bendFoldMin <= 0
-                    ? `${map.bendFoldCell} folds — the bend is tighter than the duct is wide`
-                    : `tightest bend clears its own section by this much (${map.bendFoldCell}) — an upper bound, it falls with sampling`}
-                  color={map.bendFoldMin <= 0 ? C.series5 : map.bendFoldMin < 2 ? C.series1 : C.series4} />
+              {map.sectionMode === "swept" && isFinite(qualityMap.bendFoldMin) && (
+                <Metric label="Bend clearance" value={`${fmt(qualityMap.bendFoldMin, 1)} mm`}
+                  sub={qualityMap.bendFoldMin <= 0
+                    ? `${qualityMap.bendFoldCell} folds — the bend is tighter than the duct is wide`
+                    : `tightest bend clears its own section by this much (${qualityMap.bendFoldCell}) — an upper bound, it falls with sampling`}
+                  color={qualityMap.bendFoldMin <= 0 ? C.series5 : qualityMap.bendFoldMin < 2 ? C.series1 : C.series4} />
               )}
               <Metric label="Max twist" value={`${fmt(map.twistMax, 1)}°`} sub="cross-section rotation, throat to mouth" />
               <Metric label="Max aim error" value={`${fmt(map.aimMax, 2)}°`} sub={`tolerance ≈ λ/(4d) = ${fmt(map.aimLimitDeg, 1)}°`}
@@ -3126,6 +2910,16 @@ export default function GinkgoHorn() {
           equal-area partition of a compression driver exit · per-cell ducts under an imposed Hypex expansion · biradial coverage mouth
         </span>
       </div>
+      <div role="status" data-testid="calculation-status" style={{ padding: "6px 14px", color: C.inkDim, fontSize: 11 }}>
+        {checked ? `Export checks: ${checked.map.stations} stations · ${checked.samples} samples · ${checked.change.stable ? "stable under refinement" : "NOT converged at sample limit"}`
+          : "Preview only — export checks pending"}
+        {checked && ` · bend change ${fmt(checked.change.foldMm, 3)} mm · passage change ${fmt(100 * checked.change.passage, 3)}%`}
+        {checked && " · sampled geometry; STEP surfaces still need CAD validation"}
+      </div>
+      {calcError && <div role="alert" style={{ padding: 10, color: C.series5 }}>
+        {calcError} <button onClick={() => { setCalcError(null); setRetry(v => v + 1); }}>Retry calculation</button>
+      </div>}
+      {(running || sepBusy) && <button onClick={() => { lanes.action.cancel(); setRunning(false); setSepBusy(false); busy.current = false; }}>Cancel solve</button>}
       <div style={narrow
         ? {}
         : { flex: 1, display: "grid", gridTemplateColumns: "minmax(430px, 53fr) minmax(430px, 47fr)", minHeight: 0 }}>

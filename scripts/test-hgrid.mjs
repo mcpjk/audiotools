@@ -1801,7 +1801,7 @@ head("Section planes (acoustic alignment)");
   // measured on the RECORDED 90x40 geometry, whose dL optimum is near depth
   // 425 and whose shallow end is 25x over the lambda/8 budget
   const curved = { ...common, exitHalfAngle: 8, thetaH: 90, thetaV: 40,
-    arcH: 480, arcV: 213, stations: 24, lengthen: null };
+    arcH: 480, arcV: 213, stations: 32, lengthen: null };
   const clr = (depth, align) =>
     M.ductClearance(M.mapThroatToMouth(Lay.throat,
       { ...curved, depth, sectionAlign: align }).rows).overlap;
@@ -2406,17 +2406,19 @@ head("Throat knife edge (the defect metric's other boundary)");
     keepGeometry: true, computeClearance: false, ...o,
   });
 
-  // WHY 48 STATIONS AND NOT THE PREVIEW'S 24. The near-throat dive is a sharp
-  // minimum near u = 0.021, and 24 stations puts its first interior station at
-  // u = 0.042 — past it. The reading there is a coin-flip on a few-micron
-  // number rather than a measurement of the 0.24 mm feature: it came out
+  // WHY 48 STATIONS, WHICH DOES NOT DIVIDE THE SAMPLE COUNT AND IS MEANT NOT
+  // TO. The near-throat dive is a sharp minimum near u = 0.021, and 48 is the
+  // coarsest grid with a station ON it (1/48 = 0.020833). A preview-count grid
+  // puts its first interior station at u = 0.042 (24) or 0.031 (32) — past the
+  // minimum — and the reading there is a coin-flip on a few-micron number
+  // rather than a measurement of the 0.24 mm feature: at 24 it came out
   // -0.0015 mm under the superseded Bernstein section planes and +0.010 mm
-  // under the tangent-aligned ones, so the same geometry flips from "defect"
+  // under the tangent-aligned ones, so the same geometry flipped from "defect"
   // to "knife edge" on a change that moved the gap profile by 12 um. At 48
-  // stations a station lands on the minimum and both constructions read it
-  // unambiguously (-0.241 and -0.230 mm). The 24-station behaviour is NOT
-  // swept under the rug — it is asserted as a known limit below, because it
-  // is what the live UI shows.
+  // both constructions read it unambiguously (-0.241 and -0.230 mm).
+  // So 48 is chosen for WHERE ITS STATIONS LAND, not for divisibility, and
+  // that is exactly why the block below can measure the quantisation: a count
+  // that divides the sample grid has no quantisation left to show.
 
   // 1. INERT BY DEFAULT. The rule may not move a single existing number
   //    unless it is asked for — every other clearance test in this file is
@@ -2516,11 +2518,26 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    MEASURED at the export count (an export came back with 4.9 mm of
   //    interpenetration while the readout said +1.14 mm), so this is belt and
   //    braces rather than the only guard.
+  //    THE PREVIEW COUNT IS 32 (2026-09-08) AND IT DIVIDES, which is a
+  //    property 24 never had: 32 divides both the export count and the sample
+  //    count, so every preview station sits exactly on a sample and exactly on
+  //    an export ring, and the quantisation the next block measures cannot
+  //    reach it. Asserted as the divisibility itself, not as a magnitude —
+  //    a magnitude here would be the lottery the next block is about.
+  const PREVIEW = 32, EXPORT = 64, SAMPLES = 1024;
+  checkTrue("the preview count divides the export count and the sample count",
+    EXPORT % PREVIEW === 0 && SAMPLES % PREVIEW === 0,
+    `${PREVIEW} into ${EXPORT} and ${SAMPLES}`);
   const preview = M.ductClearance(
+    M.mapThroatToMouth(th, dflt({ stations: PREVIEW })).rows, { throatFloor: 0.5 });
+  const old24 = M.ductClearance(
     M.mapThroatToMouth(th, dflt({ stations: 24 })).rows, { throatFloor: 0.5 });
-  checkTrue("the preview's 24 stations now DO sample the dive",
+  checkTrue("the preview's stations DO sample the dive",
     preview.throat.dip !== null && preview.minMid < 0,
-    `24 stations reports a ${preview.throat.dip.toFixed(4)} mm dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
+    `${PREVIEW} stations reports a ${preview.throat.dip.toFixed(4)} mm dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
+  checkTrue("...as the superseded 24 also did, once `samples` was raised",
+    old24.throat.dip !== null && old24.minMid < 0,
+    `24 stations reports minMid ${old24.minMid.toFixed(4)} mm`);
 
   //    AND THE MAGNITUDE AT 48 STATIONS IS NOT A MEASUREMENT — IT IS A
   //    LOTTERY ON WHERE THE SAMPLE GRID PUTS THE STATION. This assertion used
@@ -2576,16 +2593,28 @@ head("Throat knife edge (the defect metric's other boundary)");
     checkTrue("...and the same correction started past the throat costs nothing",
       Math.abs(pastIt - bare) < 0.1 && pastIt > -0.5,
       `worst gap ${pastIt.toFixed(3)} mm over [0.1, 0.5] against ${bare.toFixed(3)} bare`);
-    // and the resolution the UI reads at is what decides whether it is seen
-    const coarse = M.ductClearance(
+    // AND THE RESOLUTION THE UI READS AT IS WHAT DECIDES WHETHER IT IS SEEN.
+    // The preview count moved 24 -> 32 on 2026-09-08 and this assertion moved
+    // with it, because the number it names genuinely changed: measured on this
+    // geometry against the 64-station read, the under-read is 5.05 mm at 24
+    // and 1.57 mm at 32. So the raise cut it about threefold and it is no
+    // longer "an order of magnitude" — but it is still 1.6 mm of a 5.6 mm
+    // overlap, which is why the readout is STILL measured on its own map at
+    // the export count rather than on the preview. Both halves are asserted:
+    // the residual (the deferred measurement is still necessary) and the gain
+    // (the raise bought something), so neither can be dropped by memory.
+    const coarseAt = (stations) => M.ductClearance(
       M.mapThroatToMouth(th, dflt({
         exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245, depth: 321,
-        divergeLen: 3, bulge: { amp: 4 }, stations: 24,
+        divergeLen: 3, bulge: { amp: 4 }, stations,
         lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.25 },
       })).rows, { jointAware: true, throatFloor: 1.5 }).minMid;
-    checkTrue("the preview count under-reads that overlap by an order of magnitude",
-      coarse > atThroat + 3,
-      `24 stations reads ${coarse.toFixed(3)} mm where 64 reads ${atThroat.toFixed(3)} mm`);
+    const coarse = coarseAt(32), was24 = coarseAt(24);
+    checkTrue("the preview count still under-reads that overlap materially",
+      coarse > atThroat + 1, `32 stations reads ${coarse.toFixed(3)} mm where 64 reads ${atThroat.toFixed(3)} mm`);
+    checkTrue("...and raising it from 24 to 32 cut that under-read severalfold",
+      (coarse - atThroat) < 0.5 * (was24 - atThroat),
+      `under-read ${(was24 - atThroat).toFixed(2)} mm at 24 against ${(coarse - atThroat).toFixed(2)} at 32`);
   }
 
   // 5. A FLOOR THE HORN NEVER REACHES MUST NOT PASS VACUOUSLY. If the run
@@ -2597,8 +2626,11 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    still what guarantees it, and at a coarse station count it is what
   //    fires. Both cases are checked: the invariant always, the cap where it
   //    can still be reached.
-  for (const stations of [24, 4]) {
-    const mh = stations === 24 ? mD : M.mapThroatToMouth(th, dflt({ stations, profileT: 0 }));
+  // 48 is `dflt()`'s own count, which is what mD was built at — the loop used
+  // to say 24 here while reusing that same 48-station map, so its output named
+  // a resolution it had not measured.
+  for (const stations of [48, 4]) {
+    const mh = stations === 48 ? mD : M.mapThroatToMouth(th, dflt({ stations, profileT: 0 }));
     const huge = M.ductClearance(mh.rows, { throatFloor: 40 });
     checkTrue(`an unreachable floor never passes vacuously (${stations} stations)`,
       isFinite(huge.minMid) && huge.minMid < 40,
@@ -3488,19 +3520,22 @@ head("Horn shell export (blanks + cutters)");
     checkTrue("at the throat the duct cap and the blank cap are the SAME plane",
       zD < 1e-12 && zB < 1e-12, `duct ${zD.toExponential(1)} mm, blank ${zB.toExponential(1)} mm off z = 0`);
 
-    // (b) A short extension FOLDS the wall. `ductBrep` interpolates with a
-    //     UNIFORM parameterisation, so a short first gap against a full
-    //     station step makes the cubic overshoot backwards through the cap it
-    //     was meant to close. An overshoot is a REVERSAL, so it is measured as
-    //     the wall travelling back OUT while the parameter walks IN — no point
-    //     correspondence assumed, exact at the end ring.
-    const reversal = (e, end) => {
+    // (b) A short extension used to FOLD the wall. Under the UNIFORM
+    //     parameterisation a short first gap against a full station step
+    //     makes the cubic overshoot backwards through the cap it was meant to
+    //     close; the chord-length loft (the default since 2026-09-08) is told
+    //     the real gap and has nothing to overshoot. An overshoot is a
+    //     REVERSAL, so it is measured as the wall travelling back OUT while
+    //     the parameter walks IN — no point correspondence assumed, exact at
+    //     the end ring. Both forms are measured, so the fix is measured
+    //     against the defect rather than against itself.
+    const reversal = (e, end, vParam = "chord") => {
       let worst = 0;
       for (const cc of th.cells) {
         const rr = map.rows.find((r) => r.id === cc.id);
         const dd = M.ductSections(cc, rr, { t });
         const sec = M.extendSections(dd, e, { throat: end === "throat", mouth: end === "mouth" });
-        const br = M.ductBrep(sec);
+        const br = M.ductBrep(sec, { vParam });
         if (!br) continue;
         const j0 = end === "throat" ? 0 : sec.length - 1;
         const j1 = end === "throat" ? 1 : sec.length - 2;
@@ -3538,22 +3573,36 @@ head("Horn shell export (blanks + cutters)");
       stepSum += tot / (dd.length - 1); nCell++;
     }
     const dStep = stepSum / nCell;
-    const foldShort = reversal(1, "throat"), foldOk = reversal(0.5 * dStep + 0.5, "throat");
-    checkTrue("a 1 mm throat extension FOLDS the cutter wall back through its cap",
+    const foldShort = reversal(1, "throat", "uniform"), foldOk = reversal(0.5 * dStep + 0.5, "throat", "uniform");
+    checkTrue("UNIFORM loft: a 1 mm throat extension FOLDS the cutter wall back through its cap",
       foldShort > 0.05, `${foldShort.toFixed(4)} mm of reversal at ${(1 / dStep).toFixed(2)} of a ${dStep.toFixed(2)} mm step`);
-    checkTrue("and past ~0.4 of a station step it does not", foldOk < 1e-6, `${foldOk.toExponential(1)} mm`);
-    checkTrue("the same fold happens at the MOUTH end, which is why that extension is sized from the step",
-      reversal(1, "mouth") > 0.05 && reversal(0.5 * dStep + 0.5, "mouth") < 1e-6,
-      `${reversal(1, "mouth").toFixed(4)} mm at 1 mm`);
+    checkTrue("UNIFORM loft: past ~0.4 of a station step it does not", foldOk < 1e-6, `${foldOk.toExponential(1)} mm`);
+    checkTrue("UNIFORM loft: the same fold happens at the MOUTH end",
+      reversal(1, "mouth", "uniform") > 0.05 && reversal(0.5 * dStep + 0.5, "mouth", "uniform") < 1e-6,
+      `${reversal(1, "mouth", "uniform").toFixed(4)} mm at 1 mm`);
+    // the chord-length loft is told the real gap, so a 1 mm — or 0.5 mm —
+    // extension against a 4.9 mm step is simply a short first span
+    const chordT = Math.max(reversal(1, "throat"), reversal(0.5, "throat"));
+    const chordM = Math.max(reversal(1, "mouth"), reversal(0.5, "mouth"));
+    checkTrue("CHORD loft: 1 mm and 0.5 mm throat extensions fold nothing",
+      chordT < 1e-9, `${chordT.toExponential(1)} mm of reversal against ${foldShort.toFixed(4)} uniform`);
+    checkTrue("CHORD loft: nor at the mouth", chordM < 1e-9, `${chordM.toExponential(1)} mm`);
 
     // (c) so the shipped cutter has NO throat extension and its throat cap is
     //     the loft's own end ring, planar in z = 0 — in plane with the blank's
     const kit = M.buildShellSTEP(th, map, { t, wall, extend: false, stations: null, name: "cutext" });
     checkTrue("the shipped cutter is not extended at the throat, and says so",
       /cutterExtThroat=0/.test(kit.text) && /ext=3\b/.test(kit.text), "");
-    checkTrue("its mouth extension is at least half a station step, not a fixed 1 mm",
-      kit.cutterExtMouth >= 0.5 * dStep - 1e-9 && kit.cutterExtMouth >= 1,
-      `${kit.cutterExtMouth.toFixed(3)} mm against half a ${dStep.toFixed(2)} mm step`);
+    // the half-step floor on the mouth extension existed for the uniform
+    // fold; under the chord-length loft the extension is the protrusion the
+    // cap sag needs and nothing more, and the file says which loft it carries
+    checkTrue("CHORD kit: the mouth extension is the 1 mm the cap sag needs, not half a step",
+      Math.abs(kit.cutterExtMouth - 1) < 1e-12 && /loft=chord/.test(kit.text),
+      `${kit.cutterExtMouth.toFixed(3)} mm, step ${dStep.toFixed(2)} mm`);
+    const kitU = M.buildShellSTEP(th, map, { t, wall, extend: false, stations: null, name: "cutextU", vParam: "uniform" });
+    checkTrue("UNIFORM kit: the extension keeps its half-step floor, and is stamped uniform",
+      kitU.cutterExtMouth >= 0.5 * dStep - 1e-9 && kitU.cutterExtMouth >= 1 && /loft=uniform/.test(kitU.text),
+      `${kitU.cutterExtMouth.toFixed(3)} mm against half a ${dStep.toFixed(2)} mm step`);
     // and the un-extended throat cap is exactly the throat plane
     const noExt = M.extendSections(M.ductSections(th.cells[0], map.rows.find((r) => r.id === th.cells[0].id), { t }), 2, { throat: false, mouth: true });
     checkTrue("an unextended throat ring stays exactly in z = 0",
@@ -3837,9 +3886,9 @@ head("Aperture surface, per-cell shell, orientation");
     check("no two orthogonally adjacent cells share an extension phase", phaseSame, 0, 0, "pairs");
 
     // (c) THE STATION COUNT. Fewer knots is a better-conditioned boolean, and
-    // the count is snapped to a DIVISOR because the loft interpolates with a
-    // uniform parameterisation — unevenly spaced rings are told they are
-    // evenly spaced and the surface leaves them.
+    // the count is snapped to a DIVISOR so every skipped ring gets the same
+    // resolution (the uniform-loft reason for the snap is gone; see the
+    // chord-length section at the end of this file for the measurement).
     const cell0 = th.cells[0], row0 = map.rows.find((r) => r.id === cell0.id);
     const full = M.shellSections(cell0, row0, { t, wall, snapMouth: false });
     const Q = full.length - 1;
@@ -3854,7 +3903,7 @@ head("Aperture surface, per-cell shell, orientation");
       for (let j = 0; j < co.length; j++)
         for (let w = 0; w < 4; w++)
           for (let i = 0; i <= br.n; i += 4) {
-            const P = M.evalBsplineSurf(br.walls[w], br.uKnots, br.vKnots, i / br.n, j / (co.length - 1));
+            const P = M.evalBsplineSurf(br.walls[w], br.uKnots, br.vKnots, i / br.n, br.vParams[j]);
             const T = co[j].pts[(w * br.n + i) % (4 * br.n)];
             dev = Math.max(dev, Math.hypot(P[0] - T[0], P[1] - T[1], P[2] - T[2]));
           }
@@ -3942,36 +3991,46 @@ head("Aperture surface, per-cell shell, orientation");
       `trims [${bad.trimNames.join(", ")}]`);
 
     // the geometry that motivates the option: does the WALL pass its own cap?
-    const past = (eThroat) => {
+    const past = (eThroat, vParam = "chord") => {
       let worst = 0;
       for (const c of th.cells) {
         const row = map.rows.find((r) => r.id === c.id);
         const b = M.shellSections(c, row, { t, wall, surf: map.mouthSurf, stations: 32, snapMouth: false });
         const e = ext * (1 + 0.4 * M.cellPhase5(c.label));
         const sec = M.extendSections(b, e, { throat: eThroat, mouth: true });
-        const br = M.ductBrep(sec);
+        const br = M.ductBrep(sec, { vParam });
         const z0 = sec[0].pts[0][2];
         let zmin = Infinity;
+        // the extension gap and the first station step, in the loft's own v
+        const vEnd = br.vParams[2];
         for (let j = 0; j <= 24; j++) for (const w of br.walls) for (let i = 0; i < br.n; i++)
-          zmin = Math.min(zmin, M.evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, (0.06 * j) / 24)[2]);
+          zmin = Math.min(zmin, M.evalBsplineSurf(w, br.uKnots, br.vKnots, i / br.n, (vEnd * j) / 24)[2]);
         worst = Math.max(worst, z0 - zmin);
       }
       return worst;
     };
-    // and the model reports it, with the ratio that explains it
-    const rep = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext });
-    checkTrue("shellCapOvershoot finds it and names the cell",
+    // the UNIFORM loft has the defect and the model reports it, with the
+    // ratio that explains it
+    const rep = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext, vParam: "uniform" });
+    checkTrue("UNIFORM loft: shellCapOvershoot finds it and names the cell",
       rep.worst > 1e-3 && rep.at && rep.minRatio < 0.5 && rep.step > 1,
       `${rep.worst.toFixed(4)} mm at ${rep.at}, ext/step ${rep.minRatio.toFixed(2)}, step ${rep.step.toFixed(1)} mm`);
     // raising the extension past the threshold removes it
-    const big = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext: 12 });
-    checkTrue("and a long enough extension removes it entirely",
+    const big = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext: 12, vParam: "uniform" });
+    checkTrue("UNIFORM loft: a long enough extension removes it entirely",
       big.worst <= 1e-9 && big.minRatio > 0.5, `${big.worst.toExponential(2)} mm at ext/step ${big.minRatio.toFixed(2)}`);
-    const withExt = past(true), noExt = past(false);
+    // and the CHORD loft — the default — has none at any extension, so the
+    // metric now runs as the regression guard for the mechanism
+    const repC = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext });
+    checkTrue("CHORD loft: the same extension overshoots nothing",
+      repC.worst <= 1e-9 && repC.minRatio < 0.5, `${repC.worst.toExponential(2)} mm at ext/step ${repC.minRatio.toFixed(2)}`);
+    const withExt = past(true, "uniform"), noExt = past(false), withExtC = past(true);
     checkTrue("a plain throat: the wall stops exactly at its own end ring",
       noExt <= 1e-9, `${noExt.toExponential(2)} mm past`);
-    checkTrue("and an extended one runs past its cap plane, measurably",
-      withExt > 1e-3, `${withExt.toFixed(4)} mm past — the uniform-parameterisation loft over a short first gap`);
+    checkTrue("UNIFORM loft: an extended one runs past its cap plane, measurably",
+      withExt > 1e-3, `${withExt.toFixed(4)} mm past — a uniform loft over a short first gap`);
+    checkTrue("CHORD loft: the extended one stops at its cap too",
+      withExtC <= 1e-9, `${withExtC.toExponential(2)} mm past`);
     // the plain throat ring is exactly planar in z = 0, which is the point
     let flat = 0;
     for (const c of th.cells) {
@@ -4452,11 +4511,14 @@ head("Bow direction across the row, and the station-free clearance");
     checkTrue("...while the solid read finds real interpenetration", so.minMid < -0.3,
       `${so.minMid.toFixed(3)} mm at station ${so.minMidAt}`);
     const nm = (id) => { const r = cro.rows.find((x) => x.id === id); return `${r.i},${r.j}`; };
-    const w = so.pairWorst.slice().sort((a, b) => a.gap - b.gap)[0];
-    checkTrue("...on a MIDDLE-ROW pair, which the station read ranked fifth",
-      [nm(w.a), nm(w.b)].sort().join("-") === "3,1-4,1",
-      `${nm(w.a)}-${nm(w.b)} at ${w.gap.toFixed(3)} mm, station read ` +
-      `${st.pairWorst.find((p) => p.a === w.a && p.b === w.b).gap.toFixed(3)} mm`);
+    // Both mirrors are equally bad. Floating-point noise can put either one
+    // first, so test the physical claim on BOTH rather than an unstable sort.
+    const mirrored = ["1,1-2,1", "3,1-4,1"].map(name =>
+      so.pairWorst.find(p => [nm(p.a), nm(p.b)].sort().join("-") === name));
+    checkTrue("...on both mirrored MIDDLE-ROW pairs, missed by the station read",
+      mirrored.every(p => p && Math.abs(p.gap - so.minMid) < 1e-8
+        && p.gap < -0.3 && st.pairWorst.find(q => q.a === p.a && q.b === p.b).gap > 0),
+      mirrored.map(p => `${nm(p.a)}-${nm(p.b)}: ${p.gap.toFixed(6)} mm`).join("; "));
   }
 
   // ── 5. AN INDEPENDENT CHECK ON THE SOLID READ ────────────────────────────
@@ -4664,7 +4726,7 @@ head("Bow direction across the row, and the station-free clearance");
   {
     // at the PREVIEW station count, because this asserts the wrapper's
     // contract rather than a figure, and a solid re-read costs about 3x
-    const r = M.solveSeparation(th, dflt({ lengthen: BOW("crossRow"), stations: 24 }),
+    const r = M.solveSeparation(th, dflt({ lengthen: BOW("crossRow"), stations: 32 }),
       { floor: FLOOR, mode: "repel", maxIter: 2, outline: "inset", compare: "solid" });
     checkTrue("the solve reports the honest reading whatever it returns",
       r.gapSolidBefore != null && r.gapSolidAfter != null,
@@ -5026,7 +5088,7 @@ head("The depth solve and the two straight runs");
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
     t, profileArea: "open", fTarget: 20000, profileT: 0.7,
     tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
-    sectionMode: "swept", stations: 24, samples: 128,
+    sectionMode: "swept", stations: 32, samples: 128,
     keepGeometry: false, computeClearance: false, lengthen: null, ...o,
   });
   const solve = (dv, ar) => M.solveDepthForMinDL(th, O({ divergeLen: dv, arriveLen: ar }), {});
@@ -5083,7 +5145,7 @@ head("The throat-tangent solve, and where it is worth anything");
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
     t, profileArea: "open", fTarget: 20000, profileT: 0.7,
     tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
-    sectionMode: "swept", stations: 24, samples: 512,
+    sectionMode: "swept", stations: 32, samples: 512,
     keepGeometry: false, computeClearance: false, lengthen: null, ...o,
   });
   const dLat = (tt, o = {}) => M.mapThroatToMouth(th, O({ tightThroat: tt, ...o })).dL;
@@ -5429,6 +5491,143 @@ head("The mouth flare collar — a surface stated as geometry");
   const f60 = M.rimExitField(th, M.mapThroatToMouth(th, O({ thetaV: 60 })), { t });
   checkTrue("theta_v 60 reverses the axis ordering of the exit angle", f60.exit.V[1] < f60.exit.H[0],
     `V ${(f60.exit.V[1] * R2D).toFixed(2)} < H ${(f60.exit.H[0] * R2D).toFixed(2)} deg`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE LOFT IS PARAMETERISED BY CHORD LENGTH (2026-09-08)
+// ═══════════════════════════════════════════════════════════════════════════
+// `ductBrep` used to interpolate its rings on a UNIFORM knot vector, so it
+// never knew how far apart they were. The chord-length form measures the mean
+// ring-to-ring distance and puts the knots there. Everything here is measured
+// against the uniform form, which is kept as `vParam: "uniform"`, so the fix
+// is judged against the defect and not against itself.
+{
+  head("chord-length loft: what moves, what does not, and what it does not fix");
+  const t = 0.4, ST = 64;
+  const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c });
+  const th = Lay.throat;
+  const O = (o = {}) => ({
+    c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
+    mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
+    t, profileArea: "open", fTarget: 20000, profileT: 0.7,
+    tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
+    sectionMode: "swept", shapeMorph: "radius", samples: 1024, stationSampling: "interpolated",
+    keepGeometry: true, computeClearance: false, stations: ST,
+    lengthen: { lobes: 1, dir: "crossRow", uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 }, ...o,
+  });
+  const map = M.mapThroatToMouth(th, O());
+  const rowOf = (m, cc) => m.rows.find((r) => r.id === cc.id);
+
+  // ── 1. BOTH FORMS INTERPOLATE THE RINGS, AND THE PARAMETERS ARE HONEST ──
+  let resU = 0, resC = 0, tpDiff = 0, monotone = true, ends = true, uniformExact = true;
+  for (const cc of th.cells) {
+    const secs = M.ductSections(cc, rowOf(map, cc), { t });
+    const bU = M.ductBrep(secs, { vParam: "uniform" }), bC = M.ductBrep(secs);
+    resU = Math.max(resU, M.brepResidual(bU, secs));
+    resC = Math.max(resC, M.brepResidual(bC, secs));
+    const S = secs.length;
+    for (let q = 0; q < S; q++) {
+      if (Math.abs(bU.vParams[q] - q / (S - 1)) > 1e-15) uniformExact = false;
+      tpDiff = Math.max(tpDiff, Math.abs(bC.vParams[q] - q / (S - 1)));
+      if (q && bC.vParams[q] <= bC.vParams[q - 1]) monotone = false;
+    }
+    if (bC.vParams[0] !== 0 || Math.abs(bC.vParams[S - 1] - 1) > 1e-15) ends = false;
+  }
+  check("uniform loft: surface through every ring", resU, 0, 1e-9, "mm");
+  check("chord loft: surface through every ring, read at each ring's OWN parameter", resC, 0, 1e-9, "mm");
+  checkTrue("the uniform parameters are exactly q/(S-1), and the chord ones are not",
+    uniformExact && tpDiff > 0.01, `chord parameters depart from uniform by up to ${tpDiff.toFixed(4)}`);
+  checkTrue("chord parameters run 0 -> 1, strictly increasing", monotone && ends, "");
+
+  // ── 2. HOW FAR THE SURFACES MOVE, AND WHERE ───────────────────────────
+  // The re-baselining cost of the change: nearest distance from the uniform
+  // loft, sampled between rings, to the chord loft along the same material
+  // line. Where the rings are evenly spaced the two are the same surface;
+  // where the bow makes consecutive steps differ by 1.4x they are not.
+  const nearestAlong = (br, s, u, X, v0, v1) => {
+    const f = (v) => { const P = M.evalBsplineSurf(br.walls[s], br.uKnots, br.vKnots, u, v); return Math.hypot(P[0] - X[0], P[1] - X[1], P[2] - X[2]); };
+    let best = Infinity, bv = 0;
+    for (let j = 0; j <= 48; j++) { const v = v0 + (v1 - v0) * j / 48; const d = f(v); if (d < best) { best = d; bv = v; } }
+    let h = (v1 - v0) / 48;
+    for (let it = 0; it < 30; it++) { h /= 2; for (const v of [bv - h, bv + h]) { if (v < 0 || v > 1) continue; const d = f(v); if (d < best) { best = d; bv = v; } } }
+    return best;
+  };
+  let moveIn = 0, moveOut = 0, moveAt = null;
+  for (const label of ["3,2", "1,1"]) {
+    const cc = th.cells.find((x) => x.label === label);
+    const secs = M.ductSections(cc, rowOf(map, cc), { t });
+    const bU = M.ductBrep(secs, { vParam: "uniform" }), bC = M.ductBrep(secs);
+    for (let s = 0; s < 4; s++) for (let i = 0; i <= bU.n; i += 4) {
+      for (let q = 0; q < bU.S - 1; q++) for (let j = 1; j < 4; j++) {
+        const v = (q + j / 4) / (bU.S - 1);
+        const X = M.evalBsplineSurf(bU.walls[s], bU.uKnots, bU.vKnots, i / bU.n, v);
+        const d = nearestAlong(bC, s, i / bC.n, X, bC.vParams[Math.max(0, q - 1)], bC.vParams[Math.min(bC.S - 1, q + 2)]);
+        if (v < 0.25) { if (d > moveIn) { moveIn = d; moveAt = `${label} u ${v.toFixed(3)}`; } }
+        else moveOut = Math.max(moveOut, d);
+      }
+    }
+  }
+  checkTrue("the surfaces move under 0.35 mm, and the worst is inside the bow window",
+    moveIn < 0.35 && moveIn > 0.05, `${moveIn.toFixed(4)} mm at ${moveAt}`);
+  checkTrue("and outside the bow window they are the same surface to 0.01 mm",
+    moveOut < 0.01, `${moveOut.toFixed(4)} mm worst for u >= 0.25`);
+
+  // ── 3. THE STEP FILE CARRIES THE NON-UNIFORM KNOTS AND SAYS SO ──────────
+  const step = M.buildSTEP(th, map, { t, only: ["3,2"], name: "chordknots" });
+  const stepU = M.buildSTEP(th, map, { t, only: ["3,2"], name: "uniknots", vParam: "uniform" });
+  const wallKnots = (text) => {
+    // the first surface whose two multiplicity lists differ in length is a wall
+    const re = /B_SPLINE_SURFACE_WITH_KNOTS\('',3,3,\(.*?\),\.UNSPECIFIED\.,\.F\.,\.F\.,\.F\.,\(([^)]*)\),\(([^)]*)\),\(([^)]*)\),\(([^)]*)\)/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const mu = m[1].split(",").map(Number), mv = m[2].split(",").map(Number);
+      if (mu.length !== mv.length) return { mv, kv: m[4].split(",").map(Number) };
+    }
+    return null;
+  };
+  const kC = wallKnots(step.text), kU = wallKnots(stepU.text);
+  const knotsOk = (k, nv) => k && k.mv[0] === 4 && k.mv[k.mv.length - 1] === 4 && k.mv.reduce((a, b) => a + b, 0) === nv + 4
+    && k.kv.every((v, i) => !i || v > k.kv[i - 1]);
+  const nv = (ST + 1) + 2;                 // S rings -> S + 2 control points in v
+  checkTrue("a chord-lofted wall writes a clamped, strictly increasing v knot vector of the right length",
+    knotsOk(kC, nv), kC ? `${kC.kv.length} distinct knots, multiplicities sum ${kC.mv.reduce((a, b) => a + b, 0)}` : "no wall found");
+  const devU = kU ? Math.max(...kU.kv.map((v, i) => Math.abs(v - i / (kU.kv.length - 1)))) : Infinity;
+  const devC = kC ? Math.max(...kC.kv.map((v, i) => Math.abs(v - i / (kC.kv.length - 1)))) : 0;
+  checkTrue("the written knots are uniform under \"uniform\" and not under \"chord\"",
+    devU < 1e-9 && devC > 1e-3, `uniform deviates ${devU.toExponential(1)}, chord ${devC.toFixed(4)}`);
+  checkTrue("both files pass integrity and stamp the loft they carry",
+    M.stepIntegrity(step.text).ok && M.stepIntegrity(stepU.text).ok && /loft=chord/.test(step.text) && /loft=uniform/.test(stepU.text), "");
+
+  // ── 4. WHAT IT DOES NOT FIX: A SUBSAMPLE IS STILL UNDER-RESOLVED ────────
+  // The shell's divisor snap was justified by the uniform loft running 4.6 mm
+  // off a non-dividing subsample. Measured against the rings the subsample
+  // SKIPS, the chord loft is closer but still millimetres off — so the snap
+  // stays, on resolution grounds, and the change is not oversold.
+  const map48 = M.mapThroatToMouth(th, O({ stations: 48 }));
+  const cc32 = th.cells.find((x) => x.label === "3,2");
+  const full = M.ductSections(cc32, rowOf(map48, cc32), { t });
+  const idx = [];
+  for (let q = 0; q <= 48; q += (idx.length % 2 ? 2 : 1)) idx.push(q);
+  if (idx[idx.length - 1] !== 48) idx.push(48);
+  const sub = idx.map((q) => full[q]);
+  const skipped = []; for (let q = 0; q <= 48; q++) if (!idx.includes(q)) skipped.push(q);
+  const offBy = (vParam) => {
+    const br = M.ductBrep(sub, { vParam });
+    let worst = 0;
+    for (const q of skipped) {
+      const k = idx.findIndex((x) => x > q);
+      for (let s = 0; s < 4; s++) for (let i = 0; i <= br.n; i += 4) {
+        const X = full[q].pts[(s * br.n + i) % (4 * br.n)];
+        worst = Math.max(worst, nearestAlong(br, s, i / br.n, X, br.vParams[k - 1], br.vParams[k]));
+      }
+    }
+    return worst;
+  };
+  const offU = offBy("uniform"), offC = offBy("chord");
+  checkTrue("32 of 48 with gaps 1,2: the chord loft is closer to the skipped rings than the uniform one",
+    offC < offU, `chord ${offC.toFixed(3)} mm, uniform ${offU.toFixed(3)} mm`);
+  checkTrue("...and still millimetres off them, so the divisor snap stays on RESOLUTION grounds",
+    offC > 1, `${offC.toFixed(3)} mm — this is the skipped rings not being on the surface, not the parameterisation`);
 }
 
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);

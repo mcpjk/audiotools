@@ -34,8 +34,12 @@ src/
   AnnularFLHCalculator.jsx
   DirectivityMatch.jsx
   ApertureWavefield.jsx
-  GinkgoHorn.jsx            the one tool split in two — see below
+  GinkgoHorn.jsx            UI and canvas; calculation jobs run in Web Workers
   hgrid-model.js            its geometry, solver and acoustics; no React, no colour
+  ginkgo-worker.js           worker entry; compute jobs and export cache in ginkgo-compute.js
+  ginkgo-worker-client.js    cancellation and stale-reply protection
+  ginkgo-state.js            exact design keys and versioned STEP metadata
+  ginkgo-replay.js           reconstruct achieved geometry from that metadata
   palette.js                shared theme tokens, imported by every tool
   horn-main.jsx             three-line mount script
   flh-main.jsx
@@ -154,3 +158,32 @@ record produces a "server not found" error, not a Worker error.
 A subdomain rather than the apex, so the tools deploy independently of whatever
 serves kiiworkshop.com itself. Note that Workers custom domains only attach to
 zones on Cloudflare's nameservers; an external CNAME cannot point at a Worker.
+
+### Ginkgo calculation and export checks
+
+Layout changes and long solves run in cancellable workers. A lightweight preview
+updates during editing; after 350 ms without an edit, diagnostic calculations use
+the export station count and refine centreline samples from 1024 to at least 2048
+(up to 8192). The UI reports whether fold margin, passage contraction and section
+tilt stabilise. Clearance and exports reuse the checked map. These are sampled
+duct checks, not validation of the continuous STEP loft in a CAD kernel.
+
+Exact canonical design keys include all geometry inputs and achieved grid
+coefficients. Changes invalidate dependent separation solutions and pending
+exports. STEP files carry `GINKGO_DESIGN_V1` JSON with requested layout, achieved
+coefficients, mapping and fabrication/export settings, effective resolution and
+a SHA-256 revision of the geometry source. `readDesignStamp` and `replayDesign`
+reconstruct the achieved geometry without rerunning the layout solver; use the
+matching model revision for historical files. STL remains a mesh-only format.
+
+The UI uses interpolated station positions, path distances and re-orthogonalised
+frames. The model's default snapped mode remains available for historical
+measurements. The STEP loft (`ductBrep`) is parameterised by chord length
+between rings; `vParam: "uniform"` reproduces the pre-2026-09-08 surfaces, and
+every STEP file stamps `loft=` in its settings string.
+
+`npm run build` runs palette, numerical and worker/provenance regression checks.
+`npm run test:ui` runs Playwright interaction tests against the built site
+(install Chromium with `npx playwright install chromium` first). CI runs both,
+including page rendering, stale-layout export prevention, separation invalidation,
+solve cancellation and downloaded STEP settings.
