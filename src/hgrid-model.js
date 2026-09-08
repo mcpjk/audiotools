@@ -640,6 +640,16 @@ function rmfTransport(pts, tans, r0) {
   return out;
 }
 
+// Interpolate a sampled scalar or vector without moving exact sample points.
+// The endpoints are returned by identity, preserving mating faces exactly.
+export function interpolateSample(values, u) {
+  const x = Math.max(0, Math.min(1, u)) * (values.length - 1);
+  const i = Math.floor(x), f = x - i;
+  if (f === 0) return values[i];
+  const a = values[i], b = values[i + 1];
+  return Array.isArray(a) ? a.map((v, k) => v + (b[k] - v) * f) : a + (b - a) * f;
+}
+
 export function mapThroatToMouth(throat, opts) {
   const {
     c = 343, mouthW = 200, mouthH = 100, apex = 120, depth = 150, flatten = 1,
@@ -676,6 +686,10 @@ export function mapThroatToMouth(throat, opts) {
     // (0.000 / 15.606 / 24.38 at all three), which is the same result the
     // 64 -> 512 raise found.
     stations = 24, samples = 1024, keepGeometry = false,
+    // The UI interpolates station centres, tangents, transported axes and the
+    // expansion clock together. Snapping remains only to reproduce historical
+    // model tests and archived measurements. This is not a new loft rule.
+    stationSampling = "snapped",
     // The signed clearance costs ~5x the rest of the mapping put together, so
     // a caller that wants a responsive readout can skip it here and run
     // ductClearance(rows) on its own schedule. Defaults ON: skipping a safety
@@ -1116,6 +1130,12 @@ export function mapThroatToMouth(throat, opts) {
     // contraction reading. The guard makes that unreachable rather than
     // documented.
     const M = Math.max(samples, stations), pts = [], tans = [];
+    const sampleAt = (values, u) => stationSampling === "interpolated"
+      ? interpolateSample(values, u) : values[Math.round(Math.max(0, Math.min(1, u)) * M)];
+    const directionAt = (values, u) => {
+      const v = sampleAt(values, u);
+      return stationSampling === "interpolated" && (u * M) % 1 !== 0 ? un3(v) : v;
+    };
     for (let q = 0; q <= M; q++) {
       const s = q / M;
       pts.push(centreTraj(s));
@@ -1610,8 +1630,8 @@ export function mapThroatToMouth(throat, opts) {
         residMouthDeg: resid(n1, a1, phi1, want1),
       };
       const frameAt = (u, idx) => {
-        const T = tans[idx], n = normalAt(u, T);
-        const aRaw = axisAt(n, frames[idx]);
+        const T = directionAt(tans, u), n = normalAt(u, T);
+        const aRaw = axisAt(n, directionAt(frames, u));
         // smoothstep so the twist rate is zero at both ends rather than
         // stepping on at the throat, where the mating face has to stay put
         const g = u * u * (3 - 2 * u);
@@ -1631,7 +1651,7 @@ export function mapThroatToMouth(throat, opts) {
       const lo1 = mouthWorld.map((P) => toLocal(P, pts[M], F1));
       // the outline at blend fraction h, in the section frame at station u
       const ringAt = (h, u, idx) => {
-        const F = frameAt(u, idx), C = pts[idx];
+        const F = frameAt(u, idx), C = sampleAt(pts, u);
         return lo0.map((A, k) => {
           const B = lo1[k];
           const x = A[0] + (B[0] - A[0]) * h;
@@ -1693,7 +1713,7 @@ export function mapThroatToMouth(throat, opts) {
         // a cell with no expansion to speak of has no clock to run on; fall
         // back to arc length and REPORT it rather than dividing by nothing
         if (plan.m > 0 && rL > 1 + 1e-12) {
-          hOf = (u) => (hypexR(sArr[Math.round(u * M)], 1, plan.m, profileT) ** p - 1) / (rL - 1);
+          hOf = (u) => (hypexR(sampleAt(sArr, u), 1, plan.m, profileT) ** p - 1) / (rL - 1);
           morphUsed = shapeMorph;
         }
       }
@@ -1760,7 +1780,7 @@ export function mapThroatToMouth(throat, opts) {
       profK = new Array(stations + 1).fill(1);
       for (let q = 0; q <= stations; q++) {
         const u = q / stations;
-        const want = A0 * hypexR(sArr[Math.round(u * M)], 1, profM, profileT) ** 2;
+        const want = A0 * hypexR(sampleAt(sArr, u), 1, profM, profileT) ** 2;
         const dq = useOpen ? insetAt(u) : null;
         const gross = nrm3(vecArea(rings[q]));
         let k;
@@ -1896,7 +1916,7 @@ export function mapThroatToMouth(throat, opts) {
         kq = Math.max(kq, kappa[z]);
       if (kq > 1e-12) {
         let inner = -Infinity;
-        for (const pt of ring) inner = Math.max(inner, dot3(s3(pt, pts[idx]), nHat));
+        for (const pt of ring) inner = Math.max(inner, dot3(s3(pt, sampleAt(pts, q / stations)), nHat));
         const margin = 1 / kq - inner;
         if (margin < bendFold) { bendFold = margin; bendFoldAt = q / stations; }
       }
@@ -1940,7 +1960,7 @@ export function mapThroatToMouth(throat, opts) {
       // level set of the flow, not a perpendicular cut: the gap between them
       // is exactly how oblique the section is, and it is reported rather than
       // hidden by pretending the cut is square to the path.
-      const T = tans[idx];
+      const T = directionAt(tans, u);
       // WHERE THE SECTION ACTUALLY IS, as distinct from where the centreline
       // is. `origin` is the centreline point; the section's own centre drifts
       // from it — 0.775 mm in rect, 4.466 mm in arc — because the mean of the
@@ -1961,12 +1981,12 @@ export function mapThroatToMouth(throat, opts) {
       sched.push({
         s: u, area: Math.hypot(ax, ay, az),
         axial: Math.abs(ax * T[0] + ay * T[1] + az * T[2]),
-        z: pts[idx][2], sLen: sArr[idx],
+        z: sampleAt(pts, u)[2], sLen: sampleAt(sArr, u),
         cx, cy, cz, zc: cz, sc: scDev,
         // the flowed section, in world coordinates — kept only when something
         // is going to export or draw it
         pts: keepGeometry ? ring : null,
-        origin: keepGeometry ? pts[idx] : null,
+        origin: keepGeometry ? sampleAt(pts, u) : null,
         centroid: keepGeometry ? [cx, cy, cz] : null,
       });
     }
@@ -2194,7 +2214,7 @@ export function mapThroatToMouth(throat, opts) {
     aimMax: Math.max(...rows.map((r) => r.aimErrDeg)),
     // tangency tolerance ~ lambda / (4 d) with d the cell's mouth width
     aimLimitDeg: (lam / (4 * (mouthWEff / nc))) * R2D,
-    stations, sectionAt,
+    stations, stationSampling, sectionAt,
     // the UNION — what radiates, and what the loading limit must key on.
     // Under interior-edge symmetric bulges the union IS the tiled total, so
     // it is summed from the unbulged shares; summing bulged outlines would
