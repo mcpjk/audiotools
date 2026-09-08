@@ -178,9 +178,10 @@ matching model revision for historical files. STL remains a mesh-only format.
 
 The UI uses interpolated station positions, path distances and re-orthogonalised
 frames. The model's default snapped mode remains available for historical
-measurements. The STEP loft (`ductBrep`) is parameterised by chord length
-between rings; `vParam: "uniform"` reproduces the pre-2026-09-08 surfaces, and
-every STEP file stamps `loft=` in its settings string.
+measurements. The STEP loft (`ductBrep`) is parameterised uniformly along the
+path; `vParam: "chord"` is kept as a measured comparison baseline (it
+straightens the sacrificial extension and bulges the mouth — see CLAUDE.md),
+and every STEP file stamps `loft=` in its settings string.
 
 `npm run build` runs palette, numerical and worker/provenance regression checks.
 `npm run test:ui` runs Playwright interaction tests against the built site

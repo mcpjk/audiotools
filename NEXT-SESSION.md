@@ -509,22 +509,33 @@ readout already dodges this by building its own 64-station map, so what is
 still exposed is the 3-D preview — the picture the horn is judged by is a
 coarser horn than the one exported.
 
-### 2. Chord-length parameterisation in `ductBrep` — SHIPPED 2026-09-08
+### 2. The loft parameterisation — TRIED AND REVERTED 2026-09-08
 
-`ductBrep` now measures the distance between its rings (`ringParams`,
-`vParam: "chord"`, default) instead of assuming it uniform. The fold at the
-cutter extension is 0.000 mm at 0.5 and 1 mm (was 0.42 / 0.16), the blank's
-cap overshoot is 9e-16 (was 0.11), the rings are still interpolated to 2e-13,
-and the surfaces move at most 0.26 mm, all inside the bow window. The mouth
-cutter extension is back to the 1 mm the cap sag needs. `vParam: "uniform"`
-reproduces every pre-change surface and the recorded tables; every STEP stamps
-`loft=`. Full finding in CLAUDE.md.
+Chord length shipped and was reverted the same day: it is not more faithful
+(0.39 mm from a 256-station reference through the bow against uniform's 0.30),
+and it moves the mouth's tangent-break smearing out of the sacrificial
+extension and into the part (blank bulge 0.089 -> 0.907 mm), which the owner
+saw in CAD. The loft stays uniform and the half-step cutter extension floor is
+restored. `vParam: "chord"` is kept as the measured baseline. Full finding in
+CLAUDE.md, including why the ring residual could not rank the two.
 
-**What the measurement corrected**: the claim that this "subsumes the divisor
-rule" was wrong. A subsampled loft's departure from the rings it skips is
-resolution, not parameterisation (3.1 mm chord against 3.9 uniform on the
-32-of-48 case; 1.27 mm both ways on the 32-of-64 divisor WITH the bow). The
-snap stays.
+**What is left is the structural fix, and it is the real item here.** No
+parameterisation removes the trade — centripetal and every knot-ratio floor
+slide monotonically between the two, and a full floor reproduces uniform. The
+data has a G1 break at the mouth ring (flare, then a straight prism) and a
+global C2 cubic cannot carry one. **Give the mouth ring a knot of multiplicity
+3** so the surface is C0 there: the flare exact up to the mouth face, the
+extension exactly straight, nothing smeared either side. That changes the
+collocation solve (more control points, more equations) and the STEP writer's
+knot emission, so it wants its own session and its own verification — and the
+verification must include a lateral, between-rings measure, because the ring
+residual reads 2e-13 whatever the surface does between its data.
+
+**What the pass did correct**: the divisor snap was justified by the uniform
+loft alone, which was too narrow. A subsampled loft's departure from the rings
+it skips is mostly resolution (3.1 mm chord against 3.9 uniform on 32-of-48;
+1.27 mm both ways on the 32-of-64 divisor WITH the bow), so the snap stays
+under either loft.
 
 ### 2b. The shell station count through the bow — OPEN, owner's call
 
