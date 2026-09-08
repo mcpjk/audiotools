@@ -49,6 +49,16 @@ export function createCompute() {
       const r = diagnose(key, payload);
       return { ...r, map: mapView(r.map) };
     }
+    if (type === 'flare') {
+      // THE MOUTH FLARE COLLAR needs the aperture's evaluators, which the map
+      // view strips, so it is built here beside a fresh map and returned as
+      // plain rings and a plain report. ~50 ms on top of the map.
+      const map = G.mapThroatToMouth(payload.throat, payload.options);
+      const fc = G.flareCollar(payload.throat, map, {
+        ...payload.flare, t: payload.options.t, c: payload.options.c, n: 6, every: 3,
+      });
+      return fc ? { report: fc.report, solids: fc.solids.map(s => ({ label: s.label, rings: s.sections.map(sec => sec.pts) })) } : null;
+    }
     if (type === 'depth') return G.solveDepthForMinDL(payload.throat, payload.options);
     if (type === 'tangent') return G.solveTightForMinDL(payload.throat, payload.options);
     if (type === 'separation') return G.solveSeparation(payload.throat, payload.options, payload.config);
@@ -125,6 +135,8 @@ export function createCompute() {
         const recipe = r.mode === 'cells' ? 'subtract each cutter from its matching blank'
           : `union blanks, ${r.trimNames.length ? `subtract ${r.trimNames.join(' and ')}, ` : ''}subtract cutters`;
         note = `${r.cells} blanks + ${r.cells} cutters + ${r.trims || 0} trims — ${recipe}`
+          + (r.flarePieces ? ` + ${r.flarePieces} flare piece${r.flarePieces > 1 ? 's' : ''} (root on the aperture; union onto the rim or print apart)` : '')
+          + (r.flare && !r.flare.ok ? ` · FLARE REFUSED: ${r.flare.why}` : '')
           + ` · cutter extension ${fmt(r.cutterExtMouth, 2)} mm at mouth; flush throat`
           + ` · near-copy arc ${fmt(co.arc)} mm · blank overlap ${fmt(overlap.deepest)} mm`
           + ` · narrowest throat ${fmt(width.min, 2)} mm vs ${fmt(2 * shell.wall)} mm across two walls`

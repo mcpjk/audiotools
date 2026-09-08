@@ -624,37 +624,58 @@ Corollaries worth keeping:
   described. "Rewind to the thing that was closest" was the right call and
   should have come sooner.
 
-## Task E — mouth flare / rim roundover (owner proposal, ASSESSED — geometry deliberately not chosen yet)
+## Shipped 2026-09-08 — the mouth flare collar (was Task E)
 
-The owner asks (maybe) for a flare around the combined mouth aperture,
-against edge diffraction at the outer rim. **Assessment: the idea is
-valid — rim termination treatment is standard practice, and the mechanism
-is real — but its benefit is set almost entirely by the SIZE of the
-roundover relative to wavelength, and this tool computes no radiated
-field, so it can state geometry and the sizing rule, never verify the
-acoustic result. Validation is ABEC/BEM territory.**
+Owner's ask: a rounded flare round the mouth against reflection and
+diffraction; freestanding; size AND geometry user-adjustable; the turn
+measured from the wall; drawn in the viewport, not in detail. Built as
+`flareCollar` (stage 3, four quadrant pieces in their own folder of the
+shell kit), off by default and byte-identical off. The full finding, with
+every table, is the first bullet of CLAUDE.md's findings.
 
-- Mechanism: the rim is an abrupt impedance discontinuity. Part of the
-  wave reflects back down the horn (throat-impedance and response ripple)
-  and the edge re-radiates (diffraction) — pattern and response
-  irregularity concentrated where the mouth is small in wavelengths.
-  Rounding spreads the discontinuity over the roundover's arc.
-- Sizing rule of thumb: benefit starts roughly where the roundover radius
-  is ~λ/4 and grows from there — f ≳ c/(4r). r = 20 mm helps above
-  ~4.3 kHz, 50 mm above ~1.7 kHz, 200 mm above ~430 Hz. A cosmetic radius
-  does nothing at the frequencies where this horn's ripple lives; a
-  useful one at low frequency is a large piece of geometry. (Literature
-  to consult, not verified here: Kolbrek & Dunker's mouth-termination
-  chapter; Geddes' waveguide mouth radius; the Le Cléac'h 180° roll-back.)
-- **The cheapest correct path already exists as of this session**: the
-  shell kit's boolean result carries the mouth's outer rim as a real
-  B-rep edge, and a CAD fillet on that edge IS the roundover — sizable,
-  variable, no tool geometry needed. Build in-tool flare geometry only if
-  the owner wants it parametric in the tool or bigger than a fillet can
-  express (an exponential lip, a 180° roll-back) — that would be a rim
-  extension surface grown off the blank rim sides, a bounded build.
-- Also worth deciding first: freestanding vs in-baffle mounting changes
-  the rim termination as much as a small roundover does.
+- **The rim was already one smooth surface** — exact on the aperture to
+  5.7e-14 mm, faces tangent across every cell seam to 2.15 deg (2.91 across
+  fourteen geometries) — so ONE collar continues the wall and inherits that
+  kink. Per-cell flaring was rejected on construction (a zero-width face
+  along every shared side, plus adjacent-blank unions).
+- **The exit angle is READ at every rim station** (10.5-12.7 deg sides,
+  17.6-19.2 top/bottom here; 6.9-26.9 across the family, reversing its axis
+  ordering at theta_v 60), never assumed. It is also a readout of how far the
+  horn is from terminated, and the stage prints it.
+- **A CAD fillet on the kit is not a roundover**: the mouth face is 2.74 mm
+  wide at the rim, so it is bounded at that radius — effective above 20 kHz.
+  The earlier version of this task offered it as the cheapest path; that
+  was wrong, and the export note now says so.
+- **Knobs**: `flareH`/`flareV` (mm), `turn` (deg from the wall), `lead`
+  (curvature ramp, 0 = arc), `lip` (mm). Radius under 1.5 wall is REFUSED
+  with a reason. A curvature taper (elliptical / tractrix) was deliberately
+  not shipped — nothing here can measure the difference.
+- **The readout is resolution-independent** (extents, volume, effective
+  aperture from a fine pass over every station); its first version read the
+  drawn rings and under-reported growth by 8 mm at the preview's coarseness.
+- **What it cannot say**: the acoustic effect. Geometry and two heuristic
+  frequencies only; validation is BEM.
+
+### Left on the queue by it
+
+- **The corner fan carries a pole** in the loft's inner face (all profiles
+  from one point), the same degeneracy a CAD vertex blend has. It passed the
+  writer's checks; whether a kernel booleans it cleanly is only observable
+  in CAD — read the first union result before polishing anything else.
+- **The collar's root is flush on the mouth face, not overlapping it.** A
+  union will meet the trimmed blanks on a shared surface, which is the
+  coplanar case that has failed before on the throat. If it fails, the fix
+  is a short backward overlap knob (the collar extended `wall` behind the
+  aperture, into the rim blank), not a different collar.
+- **The exit angle is read from the last station step**, so it moves under
+  0.6 deg with the station count. Fine for the collar; if it is ever wanted
+  as a design readout in its own right, read it from the map's own tangent.
+- **theta_v = 0 claims a planar vertical wavefront while the top/bottom walls
+  arrive 18 deg outward.** Not a bug in anything; a design observation the
+  flare work surfaced, worth a session of its own if vertical control
+  matters.
+- A curvature TAPER across the turn, if a measurement ever appears that can
+  rank it.
 
 ## Task C — per-cell bow choice (deferred by the owner)
 
