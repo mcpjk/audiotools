@@ -3529,7 +3529,7 @@ head("Horn shell export (blanks + cutters)");
     //     the parameter walks IN — no point correspondence assumed, exact at
     //     the end ring. Both forms are measured, so the fix is measured
     //     against the defect rather than against itself.
-    const reversal = (e, end, vParam = "chord") => {
+    const reversal = (e, end, vParam = "uniform") => {
       let worst = 0;
       for (const cc of th.cells) {
         const rr = map.rows.find((r) => r.id === cc.id);
@@ -3573,36 +3573,28 @@ head("Horn shell export (blanks + cutters)");
       stepSum += tot / (dd.length - 1); nCell++;
     }
     const dStep = stepSum / nCell;
-    const foldShort = reversal(1, "throat", "uniform"), foldOk = reversal(0.5 * dStep + 0.5, "throat", "uniform");
-    checkTrue("UNIFORM loft: a 1 mm throat extension FOLDS the cutter wall back through its cap",
+    const foldShort = reversal(1, "throat"), foldOk = reversal(0.5 * dStep + 0.5, "throat");
+    checkTrue("a 1 mm throat extension FOLDS the cutter wall back through its cap",
       foldShort > 0.05, `${foldShort.toFixed(4)} mm of reversal at ${(1 / dStep).toFixed(2)} of a ${dStep.toFixed(2)} mm step`);
-    checkTrue("UNIFORM loft: past ~0.4 of a station step it does not", foldOk < 1e-6, `${foldOk.toExponential(1)} mm`);
-    checkTrue("UNIFORM loft: the same fold happens at the MOUTH end",
-      reversal(1, "mouth", "uniform") > 0.05 && reversal(0.5 * dStep + 0.5, "mouth", "uniform") < 1e-6,
-      `${reversal(1, "mouth", "uniform").toFixed(4)} mm at 1 mm`);
-    // the chord-length loft is told the real gap, so a 1 mm — or 0.5 mm —
-    // extension against a 4.9 mm step is simply a short first span
-    const chordT = Math.max(reversal(1, "throat"), reversal(0.5, "throat"));
-    const chordM = Math.max(reversal(1, "mouth"), reversal(0.5, "mouth"));
-    checkTrue("CHORD loft: 1 mm and 0.5 mm throat extensions fold nothing",
-      chordT < 1e-9, `${chordT.toExponential(1)} mm of reversal against ${foldShort.toFixed(4)} uniform`);
-    checkTrue("CHORD loft: nor at the mouth", chordM < 1e-9, `${chordM.toExponential(1)} mm`);
+    checkTrue("and past ~0.4 of a station step it does not", foldOk < 1e-6, `${foldOk.toExponential(1)} mm`);
+    checkTrue("the same fold happens at the MOUTH end, which is why that extension is sized from the step",
+      reversal(1, "mouth") > 0.05 && reversal(0.5 * dStep + 0.5, "mouth") < 1e-6,
+      `${reversal(1, "mouth").toFixed(4)} mm at 1 mm`);
+    // THE CHORD LOFT REMOVES THIS FOLD AND IS STILL NOT THE ANSWER — it pays
+    // for it by smearing the mouth's tangent break into the last REAL span
+    // instead. Both directions are asserted so the trade cannot be forgotten.
+    const chordT = Math.max(reversal(1, "throat", "chord"), reversal(0.5, "throat", "chord"));
+    checkTrue("the chord loft does remove the reversal, which is why it was tried",
+      chordT < 1e-9, `${chordT.toExponential(1)} mm against ${foldShort.toFixed(4)} uniform`);
 
     // (c) so the shipped cutter has NO throat extension and its throat cap is
     //     the loft's own end ring, planar in z = 0 — in plane with the blank's
     const kit = M.buildShellSTEP(th, map, { t, wall, extend: false, stations: null, name: "cutext" });
     checkTrue("the shipped cutter is not extended at the throat, and says so",
       /cutterExtThroat=0/.test(kit.text) && /ext=3\b/.test(kit.text), "");
-    // the half-step floor on the mouth extension existed for the uniform
-    // fold; under the chord-length loft the extension is the protrusion the
-    // cap sag needs and nothing more, and the file says which loft it carries
-    checkTrue("CHORD kit: the mouth extension is the 1 mm the cap sag needs, not half a step",
-      Math.abs(kit.cutterExtMouth - 1) < 1e-12 && /loft=chord/.test(kit.text),
-      `${kit.cutterExtMouth.toFixed(3)} mm, step ${dStep.toFixed(2)} mm`);
-    const kitU = M.buildShellSTEP(th, map, { t, wall, extend: false, stations: null, name: "cutextU", vParam: "uniform" });
-    checkTrue("UNIFORM kit: the extension keeps its half-step floor, and is stamped uniform",
-      kitU.cutterExtMouth >= 0.5 * dStep - 1e-9 && kitU.cutterExtMouth >= 1 && /loft=uniform/.test(kitU.text),
-      `${kitU.cutterExtMouth.toFixed(3)} mm against half a ${dStep.toFixed(2)} mm step`);
+    checkTrue("its mouth extension is at least half a station step, not a fixed 1 mm",
+      kit.cutterExtMouth >= 0.5 * dStep - 1e-9 && kit.cutterExtMouth >= 1 && /loft=uniform/.test(kit.text),
+      `${kit.cutterExtMouth.toFixed(3)} mm against half a ${dStep.toFixed(2)} mm step`);
     // and the un-extended throat cap is exactly the throat plane
     const noExt = M.extendSections(M.ductSections(th.cells[0], map.rows.find((r) => r.id === th.cells[0].id), { t }), 2, { throat: false, mouth: true });
     checkTrue("an unextended throat ring stays exactly in z = 0",
@@ -3991,7 +3983,7 @@ head("Aperture surface, per-cell shell, orientation");
       `trims [${bad.trimNames.join(", ")}]`);
 
     // the geometry that motivates the option: does the WALL pass its own cap?
-    const past = (eThroat, vParam = "chord") => {
+    const past = (eThroat, vParam = "uniform") => {
       let worst = 0;
       for (const c of th.cells) {
         const row = map.rows.find((r) => r.id === c.id);
@@ -4009,28 +4001,20 @@ head("Aperture surface, per-cell shell, orientation");
       }
       return worst;
     };
-    // the UNIFORM loft has the defect and the model reports it, with the
-    // ratio that explains it
-    const rep = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext, vParam: "uniform" });
-    checkTrue("UNIFORM loft: shellCapOvershoot finds it and names the cell",
+    // and the model reports it, with the ratio that explains it
+    const rep = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext });
+    checkTrue("shellCapOvershoot finds it and names the cell",
       rep.worst > 1e-3 && rep.at && rep.minRatio < 0.5 && rep.step > 1,
       `${rep.worst.toFixed(4)} mm at ${rep.at}, ext/step ${rep.minRatio.toFixed(2)}, step ${rep.step.toFixed(1)} mm`);
     // raising the extension past the threshold removes it
-    const big = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext: 12, vParam: "uniform" });
-    checkTrue("UNIFORM loft: a long enough extension removes it entirely",
+    const big = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext: 12 });
+    checkTrue("and a long enough extension removes it entirely",
       big.worst <= 1e-9 && big.minRatio > 0.5, `${big.worst.toExponential(2)} mm at ext/step ${big.minRatio.toFixed(2)}`);
-    // and the CHORD loft — the default — has none at any extension, so the
-    // metric now runs as the regression guard for the mechanism
-    const repC = M.shellCapOvershoot(th, map, { t, wall, stations: 32, ext });
-    checkTrue("CHORD loft: the same extension overshoots nothing",
-      repC.worst <= 1e-9 && repC.minRatio < 0.5, `${repC.worst.toExponential(2)} mm at ext/step ${repC.minRatio.toFixed(2)}`);
-    const withExt = past(true, "uniform"), noExt = past(false), withExtC = past(true);
+    const withExt = past(true), noExt = past(false);
     checkTrue("a plain throat: the wall stops exactly at its own end ring",
       noExt <= 1e-9, `${noExt.toExponential(2)} mm past`);
-    checkTrue("UNIFORM loft: an extended one runs past its cap plane, measurably",
-      withExt > 1e-3, `${withExt.toFixed(4)} mm past — a uniform loft over a short first gap`);
-    checkTrue("CHORD loft: the extended one stops at its cap too",
-      withExtC <= 1e-9, `${withExtC.toExponential(2)} mm past`);
+    checkTrue("and an extended one runs past its cap plane, measurably",
+      withExt > 1e-3, `${withExt.toFixed(4)} mm past — the uniform-parameterisation loft over a short first gap`);
     // the plain throat ring is exactly planar in z = 0, which is the point
     let flat = 0;
     for (const c of th.cells) {
@@ -5494,140 +5478,165 @@ head("The mouth flare collar — a surface stated as geometry");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// THE LOFT IS PARAMETERISED BY CHORD LENGTH (2026-09-08)
+// THE LOFT PARAMETERISATION, AND WHY IT IS UNIFORM (2026-09-08, second pass)
 // ═══════════════════════════════════════════════════════════════════════════
-// `ductBrep` used to interpolate its rings on a UNIFORM knot vector, so it
-// never knew how far apart they were. The chord-length form measures the mean
-// ring-to-ring distance and puts the knots there. Everything here is measured
-// against the uniform form, which is kept as `vParam: "uniform"`, so the fix
-// is judged against the defect and not against itself.
+// `ductBrep` interpolates along the path on a UNIFORM knot vector. Chord-length
+// (`vParam: "chord"`) was shipped for half a day on the argument that telling
+// the spline the true ring spacing must be more faithful. It is not, and the
+// owner found the cost in CAD as a bulge at the mouth. Both halves are asserted
+// here so neither can be re-proposed from memory.
 {
-  head("chord-length loft: what moves, what does not, and what it does not fix");
-  const t = 0.4, ST = 64;
+  head("loft parameterisation: the trade at the mouth, and the premise that failed");
+  const t = 0.4;
   const Lay = M.buildLayout({ family: "hgrid", R, nc: 6, nr: 3, m: 3, t, c });
   const th = Lay.throat;
-  const O = (o = {}) => ({
+  const O = (st) => ({
     c, nc: 6, nr: 3, R, rectangular: true, exitHalfAngle: 16.55, depth: 300,
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
     t, profileArea: "open", fTarget: 20000, profileT: 0.7,
     tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
-    sectionMode: "swept", shapeMorph: "radius", samples: 1024, stationSampling: "interpolated",
-    keepGeometry: true, computeClearance: false, stations: ST,
-    lengthen: { lobes: 1, dir: "crossRow", uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 }, ...o,
+    sectionMode: "swept", shapeMorph: "radius", samples: 2048,
+    stationSampling: "interpolated", keepGeometry: true, computeClearance: false, stations: st,
+    lengthen: { lobes: 1, dir: "crossRow", uStart: 0.02, uEnd: 0.22, regionGrade: 0.2 },
   });
-  const map = M.mapThroatToMouth(th, O());
+  const map = M.mapThroatToMouth(th, O(64));
   const rowOf = (m, cc) => m.rows.find((r) => r.id === cc.id);
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const segDist = (P, A, B) => {
+    const d = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] || 1;
+    let u = ((P[0] - A[0]) * d[0] + (P[1] - A[1]) * d[1] + (P[2] - A[2]) * d[2]) / L2;
+    u = Math.max(0, Math.min(1, u));
+    return dist(P, [A[0] + u * d[0], A[1] + u * d[1], A[2] + u * d[2]]);
+  };
 
-  // ── 1. BOTH FORMS INTERPOLATE THE RINGS, AND THE PARAMETERS ARE HONEST ──
-  let resU = 0, resC = 0, tpDiff = 0, monotone = true, ends = true, uniformExact = true;
+  // ── 1. BOTH INTERPOLATE EVERY RING; THAT IS WHAT MADE THE BUG INVISIBLE ──
+  // The residual is the metric the chord change was verified on, and it cannot
+  // separate the two: a loft that bulges between its rings still passes through
+  // every one of them. Asserted as the NEGATIVE — this check is not evidence.
+  let resU = 0, resC = 0;
   for (const cc of th.cells) {
     const secs = M.ductSections(cc, rowOf(map, cc), { t });
-    const bU = M.ductBrep(secs, { vParam: "uniform" }), bC = M.ductBrep(secs);
-    resU = Math.max(resU, M.brepResidual(bU, secs));
-    resC = Math.max(resC, M.brepResidual(bC, secs));
-    const S = secs.length;
-    for (let q = 0; q < S; q++) {
-      if (Math.abs(bU.vParams[q] - q / (S - 1)) > 1e-15) uniformExact = false;
-      tpDiff = Math.max(tpDiff, Math.abs(bC.vParams[q] - q / (S - 1)));
-      if (q && bC.vParams[q] <= bC.vParams[q - 1]) monotone = false;
-    }
-    if (bC.vParams[0] !== 0 || Math.abs(bC.vParams[S - 1] - 1) > 1e-15) ends = false;
+    resU = Math.max(resU, M.brepResidual(M.ductBrep(secs, { vParam: "uniform" }), secs));
+    resC = Math.max(resC, M.brepResidual(M.ductBrep(secs, { vParam: "chord" }), secs));
   }
-  check("uniform loft: surface through every ring", resU, 0, 1e-9, "mm");
-  check("chord loft: surface through every ring, read at each ring's OWN parameter", resC, 0, 1e-9, "mm");
-  checkTrue("the uniform parameters are exactly q/(S-1), and the chord ones are not",
-    uniformExact && tpDiff > 0.01, `chord parameters depart from uniform by up to ${tpDiff.toFixed(4)}`);
-  checkTrue("chord parameters run 0 -> 1, strictly increasing", monotone && ends, "");
+  checkTrue("both parameterisations pass through every ring, so the residual cannot rank them",
+    resU < 1e-9 && resC < 1e-9, `uniform ${resU.toExponential(1)}, chord ${resC.toExponential(1)} mm`);
 
-  // ── 2. HOW FAR THE SURFACES MOVE, AND WHERE ───────────────────────────
-  // The re-baselining cost of the change: nearest distance from the uniform
-  // loft, sampled between rings, to the chord loft along the same material
-  // line. Where the rings are evenly spaced the two are the same surface;
-  // where the bow makes consecutive steps differ by 1.4x they are not.
-  const nearestAlong = (br, s, u, X, v0, v1) => {
-    const f = (v) => { const P = M.evalBsplineSurf(br.walls[s], br.uKnots, br.vKnots, u, v); return Math.hypot(P[0] - X[0], P[1] - X[1], P[2] - X[2]); };
+  // ── 2. THE PREMISE, TESTED AGAINST A REFINED REFERENCE ───────────────────
+  // The claim was that honest ring spacing makes a more faithful surface. The
+  // only way to check it is against rings the model can EVALUATE at a much
+  // finer count — never against either loft's own data. The search over v is
+  // parameter-free, because the two lofts put the same place at different v;
+  // a windowed search measures the parameterisation instead of the surface.
+  const fine = M.mapThroatToMouth(th, O(256));
+  const nearest = (br, s, i, T) => {
     let best = Infinity, bv = 0;
-    for (let j = 0; j <= 48; j++) { const v = v0 + (v1 - v0) * j / 48; const d = f(v); if (d < best) { best = d; bv = v; } }
-    let h = (v1 - v0) / 48;
-    for (let it = 0; it < 30; it++) { h /= 2; for (const v of [bv - h, bv + h]) { if (v < 0 || v > 1) continue; const d = f(v); if (d < best) { best = d; bv = v; } } }
+    for (let j = 0; j <= 160; j++) {
+      const d = dist(M.evalBsplineSurf(br.walls[s], br.uKnots, br.vKnots, i / br.n, j / 160), T);
+      if (d < best) { best = d; bv = j / 160; }
+    }
+    let h = 1 / 160;
+    for (let it = 0; it < 22; it++) {
+      h /= 2;
+      for (const v of [bv - h, bv + h]) {
+        if (v < 0 || v > 1) continue;
+        const d = dist(M.evalBsplineSurf(br.walls[s], br.uKnots, br.vKnots, i / br.n, v), T);
+        if (d < best) { best = d; bv = v; }
+      }
+    }
     return best;
   };
-  let moveIn = 0, moveOut = 0, moveAt = null;
+  let bowU = 0, bowC = 0;
   for (const label of ["3,2", "1,1"]) {
     const cc = th.cells.find((x) => x.label === label);
-    const secs = M.ductSections(cc, rowOf(map, cc), { t });
-    const bU = M.ductBrep(secs, { vParam: "uniform" }), bC = M.ductBrep(secs);
-    for (let s = 0; s < 4; s++) for (let i = 0; i <= bU.n; i += 4) {
-      for (let q = 0; q < bU.S - 1; q++) for (let j = 1; j < 4; j++) {
-        const v = (q + j / 4) / (bU.S - 1);
-        const X = M.evalBsplineSurf(bU.walls[s], bU.uKnots, bU.vKnots, i / bU.n, v);
-        const d = nearestAlong(bC, s, i / bC.n, X, bC.vParams[Math.max(0, q - 1)], bC.vParams[Math.min(bC.S - 1, q + 2)]);
-        if (v < 0.25) { if (d > moveIn) { moveIn = d; moveAt = `${label} u ${v.toFixed(3)}`; } }
-        else moveOut = Math.max(moveOut, d);
+    const cSec = M.ductSections(cc, rowOf(map, cc), { t });
+    const fSec = M.ductSections(cc, rowOf(fine, cc), { t });
+    const brU = M.ductBrep(cSec, { vParam: "uniform" }), brC = M.ductBrep(cSec, { vParam: "chord" });
+    const N = 4 * brU.n;
+    for (let q = 1; q < 64; q++) {            // the bow window, u < 0.25
+      if (q % 4 === 0) continue;              // a 64-station ring: both are exact there
+      for (let s = 0; s < 4; s++) for (let i = 0; i <= brU.n; i += 8) {
+        const T = fSec[q].pts[(s * brU.n + i) % N];
+        bowU = Math.max(bowU, nearest(brU, s, i, T));
+        bowC = Math.max(bowC, nearest(brC, s, i, T));
       }
     }
   }
-  checkTrue("the surfaces move under 0.35 mm, and the worst is inside the bow window",
-    moveIn < 0.35 && moveIn > 0.05, `${moveIn.toFixed(4)} mm at ${moveAt}`);
-  checkTrue("and outside the bow window they are the same surface to 0.01 mm",
-    moveOut < 0.01, `${moveOut.toFixed(4)} mm worst for u >= 0.25`);
+  checkTrue("THE PREMISE FAILS: uniform is CLOSER to the refined rings through the bow",
+    bowU < bowC, `uniform ${bowU.toFixed(4)} mm against chord ${bowC.toFixed(4)} mm`);
 
-  // ── 3. THE STEP FILE CARRIES THE NON-UNIFORM KNOTS AND SAYS SO ──────────
-  const step = M.buildSTEP(th, map, { t, only: ["3,2"], name: "chordknots" });
-  const stepU = M.buildSTEP(th, map, { t, only: ["3,2"], name: "uniknots", vParam: "uniform" });
-  const wallKnots = (text) => {
-    // the first surface whose two multiplicity lists differ in length is a wall
-    const re = /B_SPLINE_SURFACE_WITH_KNOTS\('',3,3,\(.*?\),\.UNSPECIFIED\.,\.F\.,\.F\.,\.F\.,\(([^)]*)\),\(([^)]*)\),\(([^)]*)\),\(([^)]*)\)/g;
-    let m;
-    while ((m = re.exec(text))) {
-      const mu = m[1].split(",").map(Number), mv = m[2].split(",").map(Number);
-      if (mu.length !== mv.length) return { mv, kv: m[4].split(",").map(Number) };
-    }
-    return null;
-  };
-  const kC = wallKnots(step.text), kU = wallKnots(stepU.text);
-  const knotsOk = (k, nv) => k && k.mv[0] === 4 && k.mv[k.mv.length - 1] === 4 && k.mv.reduce((a, b) => a + b, 0) === nv + 4
-    && k.kv.every((v, i) => !i || v > k.kv[i - 1]);
-  const nv = (ST + 1) + 2;                 // S rings -> S + 2 control points in v
-  checkTrue("a chord-lofted wall writes a clamped, strictly increasing v knot vector of the right length",
-    knotsOk(kC, nv), kC ? `${kC.kv.length} distinct knots, multiplicities sum ${kC.mv.reduce((a, b) => a + b, 0)}` : "no wall found");
-  const devU = kU ? Math.max(...kU.kv.map((v, i) => Math.abs(v - i / (kU.kv.length - 1)))) : Infinity;
-  const devC = kC ? Math.max(...kC.kv.map((v, i) => Math.abs(v - i / (kC.kv.length - 1)))) : 0;
-  checkTrue("the written knots are uniform under \"uniform\" and not under \"chord\"",
-    devU < 1e-9 && devC > 1e-3, `uniform deviates ${devU.toExponential(1)}, chord ${devC.toFixed(4)}`);
-  checkTrue("both files pass integrity and stamp the loft they carry",
-    M.stepIntegrity(step.text).ok && M.stepIntegrity(stepU.text).ok && /loft=chord/.test(step.text) && /loft=uniform/.test(stepU.text), "");
-
-  // ── 4. WHAT IT DOES NOT FIX: A SUBSAMPLE IS STILL UNDER-RESOLVED ────────
-  // The shell's divisor snap was justified by the uniform loft running 4.6 mm
-  // off a non-dividing subsample. Measured against the rings the subsample
-  // SKIPS, the chord loft is closer but still millimetres off — so the snap
-  // stays, on resolution grounds, and the change is not oversold.
-  const map48 = M.mapThroatToMouth(th, O({ stations: 48 }));
-  const cc32 = th.cells.find((x) => x.label === "3,2");
-  const full = M.ductSections(cc32, rowOf(map48, cc32), { t });
-  const idx = [];
-  for (let q = 0; q <= 48; q += (idx.length % 2 ? 2 : 1)) idx.push(q);
-  if (idx[idx.length - 1] !== 48) idx.push(48);
-  const sub = idx.map((q) => full[q]);
-  const skipped = []; for (let q = 0; q <= 48; q++) if (!idx.includes(q)) skipped.push(q);
-  const offBy = (vParam) => {
-    const br = M.ductBrep(sub, { vParam });
-    let worst = 0;
-    for (const q of skipped) {
-      const k = idx.findIndex((x) => x > q);
-      for (let s = 0; s < 4; s++) for (let i = 0; i <= br.n; i += 4) {
-        const X = full[q].pts[(s * br.n + i) % (4 * br.n)];
-        worst = Math.max(worst, nearestAlong(br, s, i / br.n, X, br.vParams[k - 1], br.vParams[k]));
+  // ── 3. WHAT CHORD DOES BUY: the extension fold ──────────────────────────
+  // `extendSections` translates the end ring rigidly, so between the last real
+  // ring and the extension every material line is a STRAIGHT segment — an exact
+  // reference, no tolerance. Under uniform the loft is told that short gap is a
+  // full station step and doubles back; under chord it does not.
+  const extMetrics = (sec, vParam) => {
+    const br = M.ductBrep(sec, { vParam });
+    const S = sec.length, N = 4 * br.n;
+    let lateral = 0, reversal = 0, lastSpan = 0;
+    for (let s = 0; s < 4; s++) for (let i = 0; i <= br.n; i += 2) {
+      const k = (s * br.n + i) % N;
+      const A = sec[S - 3].pts[k], B = sec[S - 2].pts[k], C = sec[S - 1].pts[k];
+      const d = [C[0] - B[0], C[1] - B[1], C[2] - B[2]];
+      const L = Math.hypot(d[0], d[1], d[2]) || 1;
+      const u = [d[0] / L, d[1] / L, d[2] / L];
+      let prev = null;
+      for (let j = 0; j <= 32; j++) {                       // the extension span
+        const v = br.vParams[S - 2] + (1 - br.vParams[S - 2]) * j / 32;
+        const P = M.evalBsplineSurf(br.walls[s], br.uKnots, br.vKnots, i / br.n, v);
+        const w = [P[0] - B[0], P[1] - B[1], P[2] - B[2]];
+        const al = w[0] * u[0] + w[1] * u[1] + w[2] * u[2];
+        lateral = Math.max(lateral, Math.hypot(w[0] - al * u[0], w[1] - al * u[1], w[2] - al * u[2]));
+        if (prev !== null && al < prev) reversal = Math.max(reversal, prev - al);
+        prev = al;
+      }
+      for (let j = 1; j < 32; j++) {                        // the last REAL span
+        const v = br.vParams[S - 3] + (br.vParams[S - 2] - br.vParams[S - 3]) * j / 32;
+        const P = M.evalBsplineSurf(br.walls[s], br.uKnots, br.vKnots, i / br.n, v);
+        lastSpan = Math.max(lastSpan, Math.min(segDist(P, A, B), segDist(P, B, C)));
       }
     }
-    return worst;
+    return { lateral, reversal, lastSpan };
   };
-  const offU = offBy("uniform"), offC = offBy("chord");
-  checkTrue("32 of 48 with gaps 1,2: the chord loft is closer to the skipped rings than the uniform one",
-    offC < offU, `chord ${offC.toFixed(3)} mm, uniform ${offU.toFixed(3)} mm`);
-  checkTrue("...and still millimetres off them, so the divisor snap stays on RESOLUTION grounds",
-    offC > 1, `${offC.toFixed(3)} mm — this is the skipped rings not being on the surface, not the parameterisation`);
+  const blankOf = (cc, ext) => M.extendSections(
+    M.shellSections(cc, rowOf(map, cc), { t, wall: 3, surf: map.mouthSurf, stations: 32, snapMouth: false }),
+    ext, { throat: true, mouth: true });
+  const agg = (ext, vParam) => {
+    const o = { lateral: 0, reversal: 0, lastSpan: 0 };
+    for (const cc of th.cells) {
+      const m = extMetrics(blankOf(cc, ext), vParam);
+      for (const k of Object.keys(o)) o[k] = Math.max(o[k], m[k]);
+    }
+    return o;
+  };
+  const bU = agg(3, "uniform"), bC = agg(3, "chord");
+  checkTrue("chord DOES straighten the extension, which is why it was tried",
+    bC.lateral < 0.2 * bU.lateral && bC.reversal < 1e-9,
+    `lateral ${bU.lateral.toFixed(3)} -> ${bC.lateral.toFixed(3)} mm, reversal ${bU.reversal.toFixed(4)} -> ${bC.reversal.toFixed(4)}`);
+
+  // ── 4. AND WHAT IT COSTS: the same error, moved INSIDE the part ──────────
+  // The extension is sacrificial — the mouth trim removes the blank's and the
+  // cutter's is subtracted — while the last real span is the skin at the mouth.
+  // The data has a TANGENT BREAK at the mouth ring (flare, then a straight
+  // prism) and a global C2 cubic cannot carry one, so it smears it to one side
+  // or the other. The parameterisation only chooses which side. Uniform puts it
+  // in the material that is thrown away; that is the whole reason it is shipped.
+  checkTrue("THE COST: chord moves that error into the last REAL span, severalfold",
+    bC.lastSpan > 4 * bU.lastSpan,
+    `bulge inside the part ${bU.lastSpan.toFixed(4)} mm uniform against ${bC.lastSpan.toFixed(4)} chord`);
+  checkTrue("...and neither one is free: each is worse where the other is better",
+    bU.lastSpan < bC.lastSpan && bU.lateral > bC.lateral,
+    `uniform ${bU.lastSpan.toFixed(3)}/${bU.lateral.toFixed(3)}, chord ${bC.lastSpan.toFixed(3)}/${bC.lateral.toFixed(3)} (in-part/sacrificial)`);
+
+  // ── 5. THE SHIPPED DEFAULT, ASSERTED AS SUCH ────────────────────────────
+  const step = M.buildSTEP(th, map, { t, only: ["3,2"], name: "loftdefault" });
+  checkTrue("the shipped loft is uniform, and every STEP says so",
+    /loft=uniform/.test(step.text) && M.stepIntegrity(step.text).ok, "");
+  const dflt = M.ringParams(M.ductSections(th.cells[0], rowOf(map, th.cells[0]), { t }));
+  const S0 = dflt.length - 1;
+  checkTrue("ringParams defaults to uniform, exactly q/(S-1)",
+    dflt.every((v, q) => Math.abs(v - q / S0) < 1e-15), `${dflt.length} rings`);
 }
 
 console.log(`\n${fail ? "FAILED" : "PASSED"} — ${pass} checks passed, ${fail} failed\n`);

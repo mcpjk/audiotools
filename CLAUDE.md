@@ -481,52 +481,76 @@ exists.
   — a roundover is a fast flare and does not load like a same-area horn.
   Validation is BEM.
 
-- **THE STEP LOFT IS PARAMETERISED BY CHORD LENGTH (2026-09-08), AND THE
-  UNIFORM FORM IT REPLACED WAS ONE BUG WITH THREE RECORDED SYMPTOMS.**
-  `ductBrep` interpolated its rings on a uniform knot vector, so it never knew
-  how far apart they were: a short gap followed by a full station step was
-  told the two were equal, the cubic delivered a full pitch of curvature into
-  a fraction of the distance and overshot BACKWARDS past the ring. The cutter
-  extension folding at 1 mm, the 32-of-48 shell subsample running off its
-  rings and the station snapping were all that. `ringParams` now measures the
-  mean ring-to-ring distance and `vParam: "chord"` (the default) puts the
-  knots there; `"uniform"` is kept as the baseline, and every STEP stamps
-  `loft=` in its settings string. Measured on the shipped horn, 64 stations,
-  all 18 ducts, reversal = the wall travelling back OUT while v walks IN:
-    extension              uniform     chord
-    mouth 1 mm             0.155 mm    0.000
-    mouth 0.5 mm           0.420 mm    0.000
-    throat 1 mm            0.157 mm    0.000
-    blank 3 mm, 32 st.     0.114 mm    9e-16   (shellCapOvershoot, shipped kit)
-  The uniform column reproduces the recorded 0.161 / 0.428 / 0.154 to 2%, so
-  the fix was measured against the defect rather than against itself. Ring
-  residual is unchanged at 2e-13.
-  **WHAT MOVES IS SMALL AND IT IS WHERE THE BOW IS.** Nearest distance from the
-  uniform loft to the chord loft along the same material line: **0.259 mm
-  worst, at cell 3,2, u = 0.07**, every value above 0.01 mm inside u < 0.2,
-  0.002 mm outside. The bow is what makes consecutive ring steps uneven —
-  1.4x between neighbours in the middle row, at every station count, in both
-  sampling modes — so that is the only place the two lofts disagree. Nothing
-  measured on RINGS moves at all: clearance, fold margin, dL, obliquity and
-  every ring assertion in the suite are upstream of the loft. Re-baselined:
-  the two fold tables and the cap-overshoot table, which now hold for
-  `"uniform"` only; `cutterExtMouth` is back to the 1 mm the cap sag needs,
-  with the half-step floor kept for the uniform baseline.
-  **WHAT IT DOES NOT FIX IS RESOLUTION, and the divisor snap stays for that
-  reason.** Departure of a subsampled loft from the rings it SKIPPED:
+- **THE STEP LOFT STAYS UNIFORM. CHORD LENGTH WAS SHIPPED ON 2026-09-08 AND
+  REVERTED THE SAME DAY, AND THE WAY IT PASSED VERIFICATION IS THE LESSON.**
+  `ductBrep` interpolates along the path on a uniform knot vector. The chord
+  change argued that a uniform vector assumes every ring is the same distance
+  from the next and never measures, so a short gap after a full station step is
+  told the two are equal and the cubic overshoots BACKWARDS — which is real,
+  and is what folds a short extension. It was verified on two metrics, the ring
+  residual and an axial reversal, and **neither can see a lateral bulge between
+  rings**: the residual is 2e-13 under BOTH parameterisations by construction,
+  because both interpolate every ring exactly. The owner found it in CAD as a
+  bulge at the mouth of the blanks, on a horn whose numbers all read clean.
+  Same trap as the section plane, in a new costume.
+  **(1) THE PREMISE WAS FALSE AND WAS NEVER TESTED.** "Honest spacing must be
+  more faithful" is an assumption about the surface BETWEEN rings, and the only
+  honest reference is rings the model can EVALUATE at a finer count. Measured
+  against a 256-station map, no extension ring involved, 64-station loft:
+    region              uniform    chord
+    bow, u < 0.25       0.301 mm   0.387 mm
+    mid path            0.0003     0.0003
+    mouth, u > 0.9      0.0294     0.0298
+  Uniform is CLOSER, everywhere. Uneven knot spans condition the interpolant
+  worse than measured spacing helps. **The comparison has to be
+  parameter-free**: the two lofts put the same physical place at different v,
+  so a windowed search around an assumed v measures the parameterisation and
+  returns nonsense (21 mm on the first attempt).
+  **(2) THE MOUTH CARRIES A TANGENT BREAK, AND NO PARAMETERISATION REMOVES
+  IT.** `extendSections` translates the end ring rigidly, so the data is the
+  duct's flare up to the mouth ring and then a straight prism — a G1 break. A
+  global C2 cubic cannot carry one; it smears it to one side of the mouth ring
+  or the other, and the parameterisation only chooses WHICH SIDE. Measured on
+  the shell blank at the shipped 3 mm extension, all 18 cells:
+    loft            bulge in the last REAL span    error in the extension
+    uniform                 0.089 mm                      0.733 mm
+    chord                   0.907 mm                      0.053 mm
+  On the duct cutter, 0.103/0.367 uniform against 0.507/0.012 chord.
+  Centripetal and knot-ratio floors of 0.25/0.5/0.75 slide monotonically
+  between the two, and a full ratio floor reproduces uniform EXACTLY, reversal
+  included. Lengthening the extension moves the same ratio and never closes the
+  gap. So this is one trade along one axis, not a tuning problem.
+  **(3) WHICH SIDE IS THE WHOLE POINT: THE EXTENSION IS SACRIFICIAL.** The
+  mouth trim removes the blank's extension and the cutter's is subtracted, so
+  an artifact there is thrown away. The last real span is the SKIN AT THE MOUTH
+  on a blank and the PASSAGE WALL on a cutter — inside the part, and on the
+  cutter it is acoustic surface. Uniform puts the error in the waste. That is
+  the whole reason it ships, and it was doing so by accident before anyone had
+  named the mechanism.
+  **THE FOLD KEEPS ITS OWN REMEDY**, which the chord commit had also removed:
+  the extension must exceed about 0.4 of a station step, enforced by the
+  half-step floor on `cutterExt` (2.4 mm at 64 export stations). Measured
+  reversal 0.020 mm at ext 1 mm against 0.000 at half a step. Dropping that
+  floor is what made the chord bulge worst — a shorter extension is a more
+  abrupt knot ratio (0.137 at ext 1 mm).
+  **WHAT WOULD ACTUALLY REMOVE THE TRADE** is letting the surface carry the
+  break: a knot of multiplicity 3 at the mouth ring, C0 there, so the flare is
+  exact up to the mouth face and the extension is exactly straight. That is the
+  correct CAD representation of "solid plus extension" and it is QUEUED, not
+  done. `vParam: "chord"` survives as the measured baseline and the suite
+  asserts the trade from both sides, so it cannot be re-proposed from memory.
+  **ONE THING FROM THAT PASS SURVIVES AND IS WORTH KEEPING**: the shell's
+  divisor snap was justified by the uniform loft alone, and that was too
+  narrow. Departure of a subsampled loft from the rings it SKIPS:
     32 of 48, gaps 1,2 (non-divisor)    uniform 3.89 mm    chord 3.10 mm
     32 of 64, every 2nd, shipped bow    uniform 1.27 mm    chord 1.27 mm
     32 of 64, every 2nd, no bow         uniform 0.18 mm    chord 0.18 mm
-  So NEXT-SESSION's claim that chord-length "subsumes the divisor rule" was
-  wrong: the parameterisation moves the non-divisor case by a fifth and the
-  rest is rings not being on the surface. And the recorded "halving is
-  nearly free, 0.105 mm" shell figure PREDATES THE BOW: with it, a 32-station
-  blank is 1.27 mm off the 64-station geometry through the bow window
-  (u < 0.2), which is where the cutter it will be subtracted from is exact.
-  **INFERRED, NOT YET MEASURED ON A BLANK**: the wall left by that boolean is
-  then not 3.000 mm through the bow. Whether the shell count moves to 64
-  (bow resolution) or stays at 32 (SSI conditioning, the reason it was
-  chosen) is the owner's call and is queued.
+  Mostly RESOLUTION, not parameterisation, so the snap would stay under either
+  loft. And the recorded "halving is nearly free, 0.105 mm" shell figure
+  PREDATES THE BOW: with it, a 32-station blank is 1.27 mm off the 64-station
+  geometry through the bow window, which is where the cutter it is subtracted
+  from is exact. **INFERRED, NOT MEASURED ON A BLANK**: the wall that boolean
+  leaves is then not 3.000 mm through the bow. Queued.
   **THE PREVIEW COUNT IS NOW 32 (2026-09-08), AND WHAT IT BUYS IS THAT IT
   DIVIDES.** Measured in fresh processes, the preview map costs 158 / 155 /
   210 / 243 ms at 24 / 32 / 48 / 64 stations, so 32 is free. 32 divides both
@@ -1169,9 +1193,7 @@ exists.
   parameterised loft overshoots BACKWARDS through its own cap plane. The two
   were one number and are no longer.
 
-- **(SUPERSEDED by the chord-length loft above, which removes the fold; kept
-  for the measurement, which `vParam: "uniform"` still reproduces.) A
-  FIXED-MILLIMETRE CUTTER EXTENSION CANNOT BE SAFE, BECAUSE THE FOLD
+- **A FIXED-MILLIMETRE CUTTER EXTENSION CANNOT BE SAFE, BECAUSE THE FOLD
   THRESHOLD IS A RATIO — and the 1 mm shipped on 2026-09-04 folded the wall
   at BOTH ends. The owner found it in CAD before it had shipped a part.**
   The reported symptom: "the side walls fold back on themselves before
@@ -2276,9 +2298,8 @@ exists.
   the geometry class. Note also 1,1-3,2 — two columns apart, no shared edge —
   overlapping 4.62 mm over 40 mm of path, which is the reaching above, measured
   on the shipped file rather than in the model.
-- **(SUPERSEDED by the chord-length loft; `shellCapOvershoot` now reads 9e-16
-  on the shipped kit and runs as the regression guard.) THE LOFTED WALL RUNS
-  PAST ITS OWN THROAT CAP PLANE, and that is a SELF-INTERSECTING SOLID no self-check in the file can see.** `extendSections`
+- **THE LOFTED WALL RUNS PAST ITS OWN THROAT CAP PLANE, and that is a
+  SELF-INTERSECTING SOLID no self-check in the file can see.** `extendSections`
   prepends ONE ring at distance `ext`, and `ductBrep` interpolates with a
   UNIFORM parameterisation, so a short first gap followed by a full station
   step is told the two are equal and the cubic overshoots BACKWARDS. The wall
@@ -3621,9 +3642,9 @@ identity, independent interpolation/area-law checks and STEP replay are covered
 by `scripts/test-ginkgo-state.mjs`. Layout and long jobs run in workers with exact
 input keys, cancellation and stale-reply rejection. Export checks refine samples
 at the export station count and cache the checked map; sampled convergence is
-not evidence of continuous STEP loft validity. The loft's parameterisation was
-fixed on 2026-09-08 (chord length; see the finding); kernel validity of the
-continuous surface is still only observable in CAD.
+not evidence of continuous STEP loft validity. A chord-length loft was shipped
+and reverted on 2026-09-08 — see the finding; the loft stays uniform, and
+kernel validity of the continuous surface is still only observable in CAD.
 
 The owner accepts the reviewed ~0.216% actual throat cell area spread as a
 low-priority quirk. No layout solver tolerance/policy change was made for it.
