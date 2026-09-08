@@ -395,12 +395,32 @@ exists.
   then not 3.000 mm through the bow. Whether the shell count moves to 64
   (bow resolution) or stays at 32 (SSI conditioning, the reason it was
   chosen) is the owner's call and is queued.
-  **THE PREVIEW COUNT IS A SEPARATE QUESTION AND 32 IS FREE.** Measured in
-  fresh processes, the preview map costs 158 / 155 / 210 / 243 ms at 24 / 32
-  / 48 / 64 stations, and 24 reads the section tilt 1.8x too high against
-  1.5x at 32. Under interpolated sampling 32 also makes the preview rings
-  exactly every second export ring. Not changed here; it changes no reported
-  number.
+  **THE PREVIEW COUNT IS NOW 32 (2026-09-08), AND WHAT IT BUYS IS THAT IT
+  DIVIDES.** Measured in fresh processes, the preview map costs 158 / 155 /
+  210 / 243 ms at 24 / 32 / 48 / 64 stations, so 32 is free. 32 divides both
+  the export count (64) and the sample count (1024) while 24 divides neither,
+  so every preview station now sits exactly on a sample AND on an export ring:
+  the quantisation lottery is unreachable at the preview count, rather than
+  merely small. The tilt the preview shows goes from 1.8x the converged
+  reading to 1.5x (43.4 -> 37.5 deg against 24.4 at the export count).
+  **NOTHING JUDGED MOVES WITH IT**: every reported number comes from the
+  checked map, which builds at `stations` in its own worker, so the preview
+  count reaches only the 3-D view and the beat before the diagnostics land.
+  **IT IS STILL NOT A SUBSTITUTE FOR THE DEFERRED MEASUREMENT, and the number
+  that says so moved.** On the returned-export geometry the preview's
+  under-read of a throat-bow overlap against the 64-station read goes
+  **5.05 mm at 24 to 1.57 mm at 32** — cut about threefold, and still 1.6 mm
+  of a 5.6 mm overlap. The suite asserts both halves, so neither the residual
+  nor the gain can be dropped from memory.
+  **WHAT WAS DELIBERATELY LEFT NON-DIVIDING**, because the count is the
+  measurement: `stations: 48` wherever the near-throat dive is read (1/48 =
+  0.020833 lands ON the minimum; a dividing grid steps over it), the
+  `[24, 32, 48]` cope-depth sweep (which asserts survival ACROSS counts), the
+  samples sweep at 48 (which measures the quantisation, and a dividing count
+  would have none to show), and the 32-of-48 subsample in the loft section.
+  `stations: 192` reads with `samples: 192`, so it divides its own grid. One
+  count was simply wrong and is fixed: a saturation guard printed
+  "(24 stations)" beside a map built at 48.
 
 - **(APERTURE WAVEFIELD) A −6 dB BEAMWIDTH TAKEN FROM THE PEAK IS NOT THE
   GEOMETRIC COVERAGE, AND ON A CURVED MOUTH IT READS NARROW BY 2-4 deg.** The

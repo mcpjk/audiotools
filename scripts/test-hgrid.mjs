@@ -1801,7 +1801,7 @@ head("Section planes (acoustic alignment)");
   // measured on the RECORDED 90x40 geometry, whose dL optimum is near depth
   // 425 and whose shallow end is 25x over the lambda/8 budget
   const curved = { ...common, exitHalfAngle: 8, thetaH: 90, thetaV: 40,
-    arcH: 480, arcV: 213, stations: 24, lengthen: null };
+    arcH: 480, arcV: 213, stations: 32, lengthen: null };
   const clr = (depth, align) =>
     M.ductClearance(M.mapThroatToMouth(Lay.throat,
       { ...curved, depth, sectionAlign: align }).rows).overlap;
@@ -2406,17 +2406,19 @@ head("Throat knife edge (the defect metric's other boundary)");
     keepGeometry: true, computeClearance: false, ...o,
   });
 
-  // WHY 48 STATIONS AND NOT THE PREVIEW'S 24. The near-throat dive is a sharp
-  // minimum near u = 0.021, and 24 stations puts its first interior station at
-  // u = 0.042 — past it. The reading there is a coin-flip on a few-micron
-  // number rather than a measurement of the 0.24 mm feature: it came out
+  // WHY 48 STATIONS, WHICH DOES NOT DIVIDE THE SAMPLE COUNT AND IS MEANT NOT
+  // TO. The near-throat dive is a sharp minimum near u = 0.021, and 48 is the
+  // coarsest grid with a station ON it (1/48 = 0.020833). A preview-count grid
+  // puts its first interior station at u = 0.042 (24) or 0.031 (32) — past the
+  // minimum — and the reading there is a coin-flip on a few-micron number
+  // rather than a measurement of the 0.24 mm feature: at 24 it came out
   // -0.0015 mm under the superseded Bernstein section planes and +0.010 mm
-  // under the tangent-aligned ones, so the same geometry flips from "defect"
+  // under the tangent-aligned ones, so the same geometry flipped from "defect"
   // to "knife edge" on a change that moved the gap profile by 12 um. At 48
-  // stations a station lands on the minimum and both constructions read it
-  // unambiguously (-0.241 and -0.230 mm). The 24-station behaviour is NOT
-  // swept under the rug — it is asserted as a known limit below, because it
-  // is what the live UI shows.
+  // both constructions read it unambiguously (-0.241 and -0.230 mm).
+  // So 48 is chosen for WHERE ITS STATIONS LAND, not for divisibility, and
+  // that is exactly why the block below can measure the quantisation: a count
+  // that divides the sample grid has no quantisation left to show.
 
   // 1. INERT BY DEFAULT. The rule may not move a single existing number
   //    unless it is asked for — every other clearance test in this file is
@@ -2516,11 +2518,26 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    MEASURED at the export count (an export came back with 4.9 mm of
   //    interpenetration while the readout said +1.14 mm), so this is belt and
   //    braces rather than the only guard.
+  //    THE PREVIEW COUNT IS 32 (2026-09-08) AND IT DIVIDES, which is a
+  //    property 24 never had: 32 divides both the export count and the sample
+  //    count, so every preview station sits exactly on a sample and exactly on
+  //    an export ring, and the quantisation the next block measures cannot
+  //    reach it. Asserted as the divisibility itself, not as a magnitude —
+  //    a magnitude here would be the lottery the next block is about.
+  const PREVIEW = 32, EXPORT = 64, SAMPLES = 1024;
+  checkTrue("the preview count divides the export count and the sample count",
+    EXPORT % PREVIEW === 0 && SAMPLES % PREVIEW === 0,
+    `${PREVIEW} into ${EXPORT} and ${SAMPLES}`);
   const preview = M.ductClearance(
+    M.mapThroatToMouth(th, dflt({ stations: PREVIEW })).rows, { throatFloor: 0.5 });
+  const old24 = M.ductClearance(
     M.mapThroatToMouth(th, dflt({ stations: 24 })).rows, { throatFloor: 0.5 });
-  checkTrue("the preview's 24 stations now DO sample the dive",
+  checkTrue("the preview's stations DO sample the dive",
     preview.throat.dip !== null && preview.minMid < 0,
-    `24 stations reports a ${preview.throat.dip.toFixed(4)} mm dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
+    `${PREVIEW} stations reports a ${preview.throat.dip.toFixed(4)} mm dip and minMid ${preview.minMid.toFixed(4)} mm, where 48 reports ${post[1].on.minMid.toFixed(4)} mm`);
+  checkTrue("...as the superseded 24 also did, once `samples` was raised",
+    old24.throat.dip !== null && old24.minMid < 0,
+    `24 stations reports minMid ${old24.minMid.toFixed(4)} mm`);
 
   //    AND THE MAGNITUDE AT 48 STATIONS IS NOT A MEASUREMENT — IT IS A
   //    LOTTERY ON WHERE THE SAMPLE GRID PUTS THE STATION. This assertion used
@@ -2576,16 +2593,28 @@ head("Throat knife edge (the defect metric's other boundary)");
     checkTrue("...and the same correction started past the throat costs nothing",
       Math.abs(pastIt - bare) < 0.1 && pastIt > -0.5,
       `worst gap ${pastIt.toFixed(3)} mm over [0.1, 0.5] against ${bare.toFixed(3)} bare`);
-    // and the resolution the UI reads at is what decides whether it is seen
-    const coarse = M.ductClearance(
+    // AND THE RESOLUTION THE UI READS AT IS WHAT DECIDES WHETHER IT IS SEEN.
+    // The preview count moved 24 -> 32 on 2026-09-08 and this assertion moved
+    // with it, because the number it names genuinely changed: measured on this
+    // geometry against the 64-station read, the under-read is 5.05 mm at 24
+    // and 1.57 mm at 32. So the raise cut it about threefold and it is no
+    // longer "an order of magnitude" — but it is still 1.6 mm of a 5.6 mm
+    // overlap, which is why the readout is STILL measured on its own map at
+    // the export count rather than on the preview. Both halves are asserted:
+    // the residual (the deferred measurement is still necessary) and the gain
+    // (the raise bought something), so neither can be dropped by memory.
+    const coarseAt = (stations) => M.ductClearance(
       M.mapThroatToMouth(th, dflt({
         exitHalfAngle: 16.55, thetaV: 0, arcH: 500, arcV: 245, depth: 321,
-        divergeLen: 3, bulge: { amp: 4 }, stations: 24,
+        divergeLen: 3, bulge: { amp: 4 }, stations,
         lengthen: { lobes: 1, dir: "radial", uStart: 0, uEnd: 0.25 },
       })).rows, { jointAware: true, throatFloor: 1.5 }).minMid;
-    checkTrue("the preview count under-reads that overlap by an order of magnitude",
-      coarse > atThroat + 3,
-      `24 stations reads ${coarse.toFixed(3)} mm where 64 reads ${atThroat.toFixed(3)} mm`);
+    const coarse = coarseAt(32), was24 = coarseAt(24);
+    checkTrue("the preview count still under-reads that overlap materially",
+      coarse > atThroat + 1, `32 stations reads ${coarse.toFixed(3)} mm where 64 reads ${atThroat.toFixed(3)} mm`);
+    checkTrue("...and raising it from 24 to 32 cut that under-read severalfold",
+      (coarse - atThroat) < 0.5 * (was24 - atThroat),
+      `under-read ${(was24 - atThroat).toFixed(2)} mm at 24 against ${(coarse - atThroat).toFixed(2)} at 32`);
   }
 
   // 5. A FLOOR THE HORN NEVER REACHES MUST NOT PASS VACUOUSLY. If the run
@@ -2597,8 +2626,11 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    still what guarantees it, and at a coarse station count it is what
   //    fires. Both cases are checked: the invariant always, the cap where it
   //    can still be reached.
-  for (const stations of [24, 4]) {
-    const mh = stations === 24 ? mD : M.mapThroatToMouth(th, dflt({ stations, profileT: 0 }));
+  // 48 is `dflt()`'s own count, which is what mD was built at — the loop used
+  // to say 24 here while reusing that same 48-station map, so its output named
+  // a resolution it had not measured.
+  for (const stations of [48, 4]) {
+    const mh = stations === 48 ? mD : M.mapThroatToMouth(th, dflt({ stations, profileT: 0 }));
     const huge = M.ductClearance(mh.rows, { throatFloor: 40 });
     checkTrue(`an unreachable floor never passes vacuously (${stations} stations)`,
       isFinite(huge.minMid) && huge.minMid < 40,
@@ -4694,7 +4726,7 @@ head("Bow direction across the row, and the station-free clearance");
   {
     // at the PREVIEW station count, because this asserts the wrapper's
     // contract rather than a figure, and a solid re-read costs about 3x
-    const r = M.solveSeparation(th, dflt({ lengthen: BOW("crossRow"), stations: 24 }),
+    const r = M.solveSeparation(th, dflt({ lengthen: BOW("crossRow"), stations: 32 }),
       { floor: FLOOR, mode: "repel", maxIter: 2, outline: "inset", compare: "solid" });
     checkTrue("the solve reports the honest reading whatever it returns",
       r.gapSolidBefore != null && r.gapSolidAfter != null,
@@ -5056,7 +5088,7 @@ head("The depth solve and the two straight runs");
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
     t, profileArea: "open", fTarget: 20000, profileT: 0.7,
     tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
-    sectionMode: "swept", stations: 24, samples: 128,
+    sectionMode: "swept", stations: 32, samples: 128,
     keepGeometry: false, computeClearance: false, lengthen: null, ...o,
   });
   const solve = (dv, ar) => M.solveDepthForMinDL(th, O({ divergeLen: dv, arriveLen: ar }), {});
@@ -5113,7 +5145,7 @@ head("The throat-tangent solve, and where it is worth anything");
     mouthMode: "biradial", thetaH: 90, thetaV: 0, arcH: 500, arcV: 245,
     t, profileArea: "open", fTarget: 20000, profileT: 0.7,
     tight: 0.5, tightThroat: 0.5, tightMouth: 0.5, divergeLen: 0, arriveLen: 0,
-    sectionMode: "swept", stations: 24, samples: 512,
+    sectionMode: "swept", stations: 32, samples: 512,
     keepGeometry: false, computeClearance: false, lengthen: null, ...o,
   });
   const dLat = (tt, o = {}) => M.mapThroatToMouth(th, O({ tightThroat: tt, ...o })).dL;

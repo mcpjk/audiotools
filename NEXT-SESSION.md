@@ -465,11 +465,18 @@ is marginal, which on the graded default it already is. Time sample counts in
 FRESH PROCESSES; in one process the first pays the JIT warmup and the order
 lies.
 
-### 1. Raise the PREVIEW station count
+### 1. Raise the PREVIEW station count — DONE 2026-09-08
+
+**The preview is 32.** It divides both the export count and the sample count,
+where 24 divided neither, and it is free (155 ms against 158). Nothing
+reported moves: every judged number comes from the checked map at the export
+count. The preview's under-read of a throat-bow overlap fell 5.05 -> 1.57 mm,
+so the deferred export-count measurement is still required. Full finding in
+CLAUDE.md. The original analysis follows.
 
 **The `samples` half landed 2026-09-03** (64 -> 512, and `stations` can no
-longer exceed `samples`). What is left is the preview count itself: the
-sliders and the 3-D view run on 24 stations while the exports and the
+longer exceed `samples`). What was left was the preview count itself: the
+sliders and the 3-D view ran on 24 stations while the exports and the
 clearance solve build at 64.
 
 **First, what does NOT depend on it**, measured at the defaults with the

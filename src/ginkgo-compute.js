@@ -70,7 +70,10 @@ export function createCompute() {
         const th = G.analyseThroat(G.lineGridCells(sol.geometry, { c: input.c, t: input.t, per: 8 }),
           { c: input.c, R: input.R, dividerTotal: G.lineGridDividerLength(sol.geometry) });
         const map = weights.wTwist > 0 ? G.mapThroatToMouth(th, {
-          ...options, samples: 16, stations: 6, keepGeometry: false, computeClearance: false,
+          // 8 of 16, not 6: a coarse proxy inside the search, but a count that
+          // DIVIDES its own sample count, so the objective is not read off
+          // quantised station positions.
+          ...options, samples: 16, stations: 8, keepGeometry: false, computeClearance: false,
         }) : null;
         return G.objective(th, map, { ...weights, correction: sol.correction, infeasible: !sol.converged }).J;
       };

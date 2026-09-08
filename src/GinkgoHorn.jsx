@@ -754,7 +754,17 @@ export default function GinkgoHorn() {
   const [regX, setRegX] = useState(-1);
   const [regY, setRegY] = useState(-1);
   // Preview geometry is inexpensive; settled/export diagnostics run in a worker.
-  const PREVIEW_STATIONS = 24;
+  // 32, NOT 24 (2026-09-08), and the reason it is 32 rather than any other
+  // number is that it DIVIDES both the export count and the sample count, so
+  // every preview ring is exactly an export ring and nothing is quantised
+  // between them. Measured in fresh processes at the shipped defaults with the
+  // shipped bow, the preview map costs 158 / 155 / 210 / 243 ms at 24 / 32 /
+  // 48 / 64 stations — 32 is free — and it takes the tilt the preview shows
+  // from 1.8x the converged reading to 1.5x (43.4 -> 37.5 deg against 24.4 at
+  // the export count). NOTHING REPORTED MOVES WITH IT: every judged number
+  // comes from `checked`, which builds its own map at `stations`, so this
+  // count reaches only the 3-D view and the beat before the diagnostics land.
+  const PREVIEW_STATIONS = 32;
 
   // ── optimiser ──
   const [wAspect, setWAspect] = useState(0.6);
@@ -1174,10 +1184,10 @@ export default function GinkgoHorn() {
     // runs back from the aperture: a shallow one is a lip, not a joint, and
     // the loft cannot represent one that does not span a station.
     // ...and it is judged against the EXPORT station spacing, not the preview's.
-    // The clearance is measured on the 24-station preview map, where one
-    // station is ~13 mm of path; the file ships at `stations`, where it is
-    // ~5 mm. Keying the warning to the preview made a perfectly exportable
-    // cope look untenable.
+    // The clearance used to be measured on the preview map, where one station
+    // is ~10 mm of path; the file ships at `stations`, where it is ~5 mm.
+    // Keying the warning to the preview made a perfectly exportable cope look
+    // untenable.
     if (map && map.bulge && clearance && clearance.joint && clearance.joint.engaged) {
       const stationMm = map.Lmin / stations;
       if (clearance.joint.depthMin < stationMm)
@@ -2265,7 +2275,7 @@ export default function GinkgoHorn() {
         </div>
       </Stage>
 
-      <Stage n={9} title="Export" why="exports reuse the checked geometry; the preview stays at 24 stations">
+      <Stage n={9} title="Export" why={`exports reuse the checked geometry; the preview stays at ${PREVIEW_STATIONS} stations`}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button style={expBtn} disabled={!canExport} onClick={() => runExport("stl")}>STL · cell ducts</button>
           <button style={expBtn} disabled={!canExport} onClick={() => runExport("ducts")}>STEP · B-spline solids</button>
