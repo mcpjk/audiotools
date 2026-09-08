@@ -4452,11 +4452,14 @@ head("Bow direction across the row, and the station-free clearance");
     checkTrue("...while the solid read finds real interpenetration", so.minMid < -0.3,
       `${so.minMid.toFixed(3)} mm at station ${so.minMidAt}`);
     const nm = (id) => { const r = cro.rows.find((x) => x.id === id); return `${r.i},${r.j}`; };
-    const w = so.pairWorst.slice().sort((a, b) => a.gap - b.gap)[0];
-    checkTrue("...on a MIDDLE-ROW pair, which the station read ranked fifth",
-      [nm(w.a), nm(w.b)].sort().join("-") === "3,1-4,1",
-      `${nm(w.a)}-${nm(w.b)} at ${w.gap.toFixed(3)} mm, station read ` +
-      `${st.pairWorst.find((p) => p.a === w.a && p.b === w.b).gap.toFixed(3)} mm`);
+    // Both mirrors are equally bad. Floating-point noise can put either one
+    // first, so test the physical claim on BOTH rather than an unstable sort.
+    const mirrored = ["1,1-2,1", "3,1-4,1"].map(name =>
+      so.pairWorst.find(p => [nm(p.a), nm(p.b)].sort().join("-") === name));
+    checkTrue("...on both mirrored MIDDLE-ROW pairs, missed by the station read",
+      mirrored.every(p => p && Math.abs(p.gap - so.minMid) < 1e-8
+        && p.gap < -0.3 && st.pairWorst.find(q => q.a === p.a && q.b === p.b).gap > 0),
+      mirrored.map(p => `${nm(p.a)}-${nm(p.b)}: ${p.gap.toFixed(6)} mm`).join("; "));
   }
 
   // ── 5. AN INDEPENDENT CHECK ON THE SOLID READ ────────────────────────────

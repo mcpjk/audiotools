@@ -3,6 +3,8 @@ dist/
 .DS_Store
 *.local
 .vite/
+test-results/
+playwright-report/
 
 # generated CAD samples, not source — every .step in this repo is written by
 # the tool (buildShellSTEP / buildSolidsSTEP) and sent to the owner, never
