@@ -223,6 +223,9 @@ Match what is already there rather than modernising it:
   forms. Split a tool this way only when it has enough physics AND enough
   independent closed forms to make the tests worth having. Do not split for
   tidiness; the single-file convention is the default for a reason.
+- Ginkgo also has worker/state/replay modules: these are needed for off-thread
+  calculations, cancellation and reproducible exports, not a general component
+  split. Keep the UI together. See README for the state/diagnostic contract.
 - A long comment block at the top of each tool stating the model, its
   assumptions, and the direction of error for each simplification. **Keep this
   current.** If you change the physics, change that block in the same edit.
@@ -3400,3 +3403,18 @@ exists.
   remaining move toward the request, because any feasible point stays feasible
   when the request moves — testing feasibility alone silently ignored the new
   slider on every warm start.
+
+
+## Ginkgo review branch — 2026-09-07
+
+The UI now uses interpolated station sampling; the model default remains snapped
+for historical numerical results in this document. Endpoint and dividing-count
+identity, independent interpolation/area-law checks and STEP replay are covered
+by `scripts/test-ginkgo-state.mjs`. Layout and long jobs run in workers with exact
+input keys, cancellation and stale-reply rejection. Export checks refine samples
+at the export station count and cache the checked map; sampled convergence is
+not evidence of continuous STEP loft validity. Loft parameterisation remains an
+outstanding acoustics/CAD investigation.
+
+The owner accepts the reviewed ~0.216% actual throat cell area spread as a
+low-priority quirk. No layout solver tolerance/policy change was made for it.
