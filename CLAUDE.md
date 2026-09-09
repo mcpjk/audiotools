@@ -178,14 +178,16 @@ Match what is already there rather than modernising it:
 - Inline style objects, no CSS modules, no styling library.
 - Hand-rolled SVG for all plots — no charting library.
 - Physics helpers as plain top-level functions above the component.
-- **The one deliberate exception is no longer in this repo**, and the rule it
-  established still applies: the Ginkgo tool kept its physics in a plain
-  module with no React and no colour, so node could import it and check it
-  against closed forms. Split a tool that way only when it has enough physics
-  AND enough independent closed forms to make the tests worth having. Do not
-  split for tidiness; the single-file convention is the default for a reason.
-  All four tools here are single files, and none of them currently carries
-  enough physics to earn the split.
+- **One exception, deliberate**: `HornCalculator.jsx` keeps its physics in
+  `src/horn-model.js` — a plain module with no React and no colour — so that
+  `scripts/test-horn.mjs` can import it under node and check it against closed
+  forms. The Ginkgo tool established this pattern before it left. Split a tool
+  this way only when it has enough physics AND enough independent closed forms
+  to make the tests worth having. Do not split for tidiness; the single-file
+  convention is the default for a reason, and the other three tools are still
+  single files. **The split earns its keep the first time it runs**: it found
+  the tractrix orientation bug, which had shipped and which no amount of
+  comparing against the tool's own previous output could have caught.
 - A long comment block at the top of each tool stating the model, its
   assumptions, and the direction of error for each simplification. **Keep this
   current.** If you change the physics, change that block in the same edit.
