@@ -45,6 +45,7 @@ deciding to.
 ```
 index.html                landing page — plain HTML/CSS, no React
 horn-calculator.html      → src/horn-main.jsx        → HornCalculator
+src/horn-model.js         its physics, split out so node can test it
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
@@ -53,6 +54,7 @@ ginkgo-rim-lab.html       redirect stub → ginkgo.kiiworkshop.com
 src/palette.js            shared theme tokens — see below; ALSO lives in the
                           ginkgoMulticell repo, keep the two in step
 scripts/palette-gen.mjs   regenerates the neutral ramp
+scripts/test-horn.mjs     closed forms for horn-model.js — the build runs these
 tests/calculators.spec.js the render sweep + the two redirect stubs
 vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy + custom domain
@@ -67,8 +69,9 @@ server rewrite rules. Do not introduce one.
 ```bash
 npm install
 npm run dev        # localhost:5173
-npm run build      # check:palette, then vite → dist/
+npm run build      # check:palette, then test:horn, then vite → dist/
 npm run preview    # serve the built output as deployed
+npm run test:horn  # closed-form vectors for src/horn-model.js
 npm run test:ui    # Playwright: the render sweep and the redirect stubs
 ```
 
@@ -200,13 +203,21 @@ claiming a change works:
 3. For a physics change, check the number against a closed form computed
    independently, not against the tool's own output. Vary one input at a time
    and confirm the result moves the way theory says it should.
-4. There is no node-level physics suite in this repo any more — it left with
-   the Ginkgo model. **These four tools' physics is therefore checked by
-   nothing but reading and by step 3.** Treat that as the standing weakness it
-   is: a wrong coefficient in `HornCalculator.jsx` or `ApertureWavefield.jsx`
-   compiles, renders, and is wrong. If any of them grows enough physics to
-   deserve a suite, split its model out and write one, on the Ginkgo pattern —
-   closed forms, never the tool's own previous output.
+4. For anything in `src/horn-model.js`, `npm run test:horn` must pass. It
+   checks against closed forms — the exponential and cosh limits of the Hypex
+   family, the round trip through `hypexLengthForRatio`, the tractrix's
+   defining constant-tangent-length property, `sqrt(T)` scaling of the speed
+   of sound — never against the tool's own previous output. **A physics
+   change there without a matching change to that script is a change that has
+   not been verified.** If a test starts failing, work out which of the two is
+   wrong before touching either: when this suite was first run, three checks
+   went red and ALL THREE were the test's fault, not the model's.
+   **`ApertureWavefield.jsx`, `AnnularFLHCalculator.jsx` and
+   `DirectivityMatch.jsx` still have no suite at all**, so a wrong
+   coefficient in any of them compiles, renders and is wrong. Aperture is the
+   next one worth doing — the flat-piston closed form asin(0.6034·λ/w) gives
+   it a real referee. FLH and Directivity may not carry enough independent
+   closed forms to be worth it; check before splitting.
 5. `npm run test:ui` covers the render sweep and the two redirect stubs. The
    stubs assert the TARGET only, never that ginkgo.kiiworkshop.com is up —
    that is the other site's business and is not observable from here.
