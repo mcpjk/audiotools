@@ -8,12 +8,16 @@ const edit = async (page, label, value) => {
   await input.fill(String(value)); await input.press('Enter');
 };
 
-test('all six entry pages render without console or page errors', async ({ page }) => {
+test('all seven entry pages render without console or page errors', async ({ page }) => {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  // Every entry in vite.config.js's `input` map: a page missing from THIS list
+  // is a page whose blank-render is nobody's test. ginkgo-rim-lab.html was
+  // missing from it while being built and shipped.
   for (const path of ['index.html', 'horn-calculator.html', 'annular-flh.html',
-    'directivity-match.html', 'aperture-wavefield.html', 'ginkgo-horn.html']) {
+    'directivity-match.html', 'aperture-wavefield.html', 'ginkgo-horn.html',
+    'ginkgo-rim-lab.html']) {
     await page.goto('/' + path);
     if (path === 'ginkgo-horn.html') await ready(page);
     await expect(page.locator('body')).not.toHaveText('');

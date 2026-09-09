@@ -2559,12 +2559,15 @@ head("Throat knife edge (the defect metric's other boundary)");
   //    section plane wherever it falls, so it never asks two rings to be at
   //    the same place. Measured across the same span it moves 0.05 mm, against
   //    the station read's 0.20.
-  const solidRead = [512, 1024, 2048, 4096].map((samples) => M.ductClearance(
-    M.mapThroatToMouth(th, dflt({ stations: 48, samples })).rows,
-    { throatFloor: 0.5, compare: "solid" }).minMid);
-  const stationRead = [512, 1024, 2048, 4096].map((samples) => M.ductClearance(
-    M.mapThroatToMouth(th, dflt({ stations: 48, samples })).rows,
-    { throatFloor: 0.5 }).minMid);
+  // One map per sample count, read BOTH ways off it: the two reads differ only
+  // in `compare`, so building the map twice measured the same geometry twice.
+  const lottery = [512, 1024, 2048, 4096].map((samples) => {
+    const rows = M.mapThroatToMouth(th, dflt({ stations: 48, samples })).rows;
+    return [M.ductClearance(rows, { throatFloor: 0.5, compare: "solid" }).minMid,
+            M.ductClearance(rows, { throatFloor: 0.5 }).minMid];
+  });
+  const solidRead = lottery.map((x) => x[0]);
+  const stationRead = lottery.map((x) => x[1]);
   const spread = (a) => Math.max(...a) - Math.min(...a);
   checkTrue("the dive's DEPTH is a station-grid lottery and the solid read is not",
     solidRead.every((x) => x < 0) && spread(solidRead) < 0.08 && spread(stationRead) > 0.15,
@@ -2746,7 +2749,7 @@ head("Gross vs inset outlines, and where a wall fits");
     `${inset.perStation[inset.perStation.length - 1].toExponential(1)} mm`);
 
   // (e) `reach` IS ADDITIVE — asking for it may not move anything else.
-  const noFloor = M.ductClearance(mD.rows, { pairSteps: PS, outline: "inset", t });
+  const noFloor = inset; // same call as (a)'s `inset`, and the model is deterministic
   const withFloor = M.ductClearance(mD.rows, { pairSteps: PS, outline: "inset", t, floor: 3 });
   checkTrue("asking where a wall fits changes no other statistic",
     noFloor.reach === null && withFloor.reach !== null
@@ -2786,6 +2789,9 @@ head("Duct separation (field and solver)");
   };
   const m0 = M.mapThroatToMouth(th, opts);
   const cl0 = M.ductClearance(m0.rows, { thinBand: 1.0 });
+  // Solved once here and read by both the repulsion block and the budget's
+  // inertness check below, which are sibling scopes asking for the same solve.
+  const repelEasy = M.solveSeparation(th, opts, { floor: 0.2, mode: "repel", maxIter: 16 });
   // 1.09 mm, down from the 1.92 mm recorded before the sections were squared
   // to the path: the tilt was holding neighbours apart here, and removing it
   // near the dL optimum CUTS the overlap. It goes the other way on a shallow
@@ -2911,7 +2917,7 @@ head("Duct separation (field and solver)");
     // the option that makes diagonals visible at all must be backward
     // compatible to the bit, because every recorded defect figure is on the
     // orthogonal set
-    const mOrth = M.ductClearance(m0.rows, { thinBand: 1.0 });
+    const mOrth = cl0; // the default-args call, already made above
     const mExpl = M.ductClearance(m0.rows, { thinBand: 1.0, pairSteps: [[1, 0], [0, 1]] });
     checkTrue("the default pairSteps reproduces the orthogonal metric exactly",
       ["minMid", "minMidAt", "min", "overlap", "max", "pairs"]
@@ -2925,7 +2931,7 @@ head("Duct separation (field and solver)");
     // 16 rounds, not the UI's 20, so the assertion has margin: measured 10
     // to 13 rounds at the shipped ridge and relax, over the diagonal pair
     // set, which is a HARDER target than the chain's orthogonal one.
-    const rp = M.solveSeparation(th, opts, { floor: 0.2, mode: "repel", maxIter: 16 });
+    const rp = repelEasy;
     checkTrue("repulsion clears the recorded interpenetration",
       rp.gapAfter > rp.gapBefore && rp.gapAfter >= 0.15,
       `${rp.gapBefore.toFixed(2)} -> ${rp.gapAfter.toFixed(2)} mm in ${rp.iters} rounds, ${rp.ampMax.toFixed(1)} mm displaced`);
@@ -3049,7 +3055,7 @@ head("Duct separation (field and solver)");
         `${rTight.dLRefused} refused; unbudgeted lands ΔL ${rLoose.dL.toFixed(1)} mm against ${rTight.dL.toFixed(1)}`);
       // ...and it must be INERT where the geometry can actually be separated,
       // or it would be a regression dressed as a guard
-      const rEasy = M.solveSeparation(th, opts, { floor: 0.2, mode: "repel", maxIter: 16 });
+      const rEasy = repelEasy; // the same solve as `rp` above, and the model is deterministic
       checkTrue("the budget does not bind on a horn that can be separated",
         rEasy.ok && rEasy.dLRefused === 0,
         `solved to ${rEasy.gapAfter.toFixed(2)} mm with 0 states refused`);
@@ -5171,10 +5177,11 @@ head("The throat-tangent solve, and where it is worth anything");
     `tight ${r300.tight.toFixed(3)} at depth 300 -> depth solve says ${rd2.depth.toFixed(1)} mm`);
   // and the floor between the two is flat — that is what makes them a trade
   // rather than one being wrong
-  const floor = [290, 300, 310, 320, 340, 357].map((depth) => {
-    const rr = M.solveTightForMinDL(th, O({ depth }));
-    return dLat(rr.tight, { depth });
-  });
+  // Both sweeps below solve the tangent at a depth; four depths are common to
+  // them, so the solve is done ONCE per depth and the two sweeps read it.
+  const tAt = new Map([290, 300, 310, 320, 340, 357].map(
+    (depth) => [depth, M.solveTightForMinDL(th, O({ depth })).tight]));
+  const floor = [...tAt].map(([depth, tight]) => dLat(tight, { depth }));
   checkTrue("...and dL along the floor is flat, so the two are interchangeable",
     Math.max(...floor) - Math.min(...floor) < 0.3,
     `${floor.map((x) => x.toFixed(3)).join(" ")} mm over depth 290-357, spread ${(Math.max(...floor) - Math.min(...floor)).toFixed(3)}`);
@@ -5182,10 +5189,8 @@ head("The throat-tangent solve, and where it is worth anything");
   // horn is judged on, and it falls monotonically with depth along the same
   // floor. So a depth that is free should still be spent on depth, and this
   // solve is for a depth that is not.
-  const wsFloor = [300, 320, 340, 357].map((depth) => {
-    const rr = M.solveTightForMinDL(th, O({ depth }));
-    return M.mapThroatToMouth(th, O({ depth, tightThroat: rr.tight })).wallSpreadMax;
-  });
+  const wsFloor = [300, 320, 340, 357].map((depth) =>
+    M.mapThroatToMouth(th, O({ depth, tightThroat: tAt.get(depth) })).wallSpreadMax);
   checkTrue("the tie along the floor is broken by wall spread, which favours depth",
     wsFloor.every((x, i) => i === 0 || x < wsFloor[i - 1]),
     `${wsFloor.map((x) => x.toFixed(2)).join(" -> ")} mm at depth 300, 320, 340, 357`);
@@ -5207,9 +5212,9 @@ head("The throat-tangent solve, and where it is worth anything");
   // is allowed to return an invalid solid is worse than one that says it ran
   // out of room. And at a shallow depth the optimum is outside the bracket
   // and `atBound` has to say so rather than presenting an edge as an answer.
+  const overshot = M.mapThroatToMouth(th, O({ tightThroat: 1.2 })).bendFoldMin;
   checkTrue("past the bracket the duct folds, which is why the bracket exists",
-    M.mapThroatToMouth(th, O({ tightThroat: 1.2 })).bendFoldMin < 0,
-    `bendFoldMin ${M.mapThroatToMouth(th, O({ tightThroat: 1.2 })).bendFoldMin.toFixed(2)} mm at tight 1.2`);
+    overshot < 0, `bendFoldMin ${overshot.toFixed(2)} mm at tight 1.2`);
   const shallow = M.solveTightForMinDL(th, O({ depth: 260 }));
   checkTrue("a shallow horn wants a tangent outside the bracket and says so",
     shallow.atBound && shallow.tight < 0.14, `tight ${shallow.tight.toFixed(4)}, atBound ${shallow.atBound}`);
