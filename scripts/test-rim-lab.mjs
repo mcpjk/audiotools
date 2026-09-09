@@ -28,7 +28,8 @@ test('circle/ellipse closed forms, shared endpoints, and spline curvature constr
  assert.throws(()=>rimProfile({...base,width:NaN}));
 });
 
-test('experimental fork preserves the original cells and duct geometry exactly',()=>{
+test('experimental fork preserves the original cells and duct geometry exactly',(t)=>{
+ t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-09T00:00:00Z') });
  const oldTh=Original.buildLayout(input).throat;
  assert.deepEqual(th,oldTh);
  const old=Original.mapThroatToMouth(oldTh,opts);
@@ -86,7 +87,7 @@ test('rim STEP surfaces reproduce sections and enclose the expected material vol
 test('STEP air face retains the full quintic profile between samples',()=>{
  const r=G.rimCollar(th,map,{t:.4,xSide:-1,ySide:-1});
  for(const solid of r.solids) {
-  const sec=solid.sections[0], b=G.ductBrep(solid.sections), n=sec.pts.length/4;
+  const sec=solid.sections[0], b=G.ductBrep(solid.sections,{vParam:"chord"}), n=sec.pts.length/4;
   const [v0,a0,v1,a1]=sec.rimBoundary;
   const p0=sec.pts[0],p5=sec.pts[n];
   const p1=p0.map((v,k)=>v+v0[k]/5),p4=p5.map((v,k)=>v-v1[k]/5);
