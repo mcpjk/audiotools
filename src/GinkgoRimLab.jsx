@@ -1871,7 +1871,7 @@ export default function GinkgoRimLab() {
         </div>
         <div data-testid="rim-status" style={{ ...hintStyle, marginTop: 5 }}>
           {!rimEnabled ? "Rim off — original cell mouths retained." : !flare ? "Building experimental rim…" : !flare.report.ok ? `Rim refused: ${flare.report.why}` :
-            `${flare.report.pieces} pieces · section join curvature jump ${fmt(flare.report.joinJump, 6)} /mm · minimum profile radius ${fmt(flare.report.radiusMin, 1)} mm · inherited seam ${fmt(flare.report.kinkMax, 2)}° · rim envelope ${fmt(flare.report.size[0], 1)} × ${fmt(flare.report.size[1], 1)} × ${fmt(flare.report.size[2], 1)} mm`}
+            `${flare.report.pieces} pieces · section join curvature jump ${fmt(flare.report.joinJump, 6)} /mm · minimum profile radius ${fmt(flare.report.radiusMin, 1)} mm · corner join ${fmt(flare.report.cornerJoinDeg, 3)}° · inherited cell seam ${fmt(flare.report.kinkMax, 2)}° · rim envelope ${fmt(flare.report.size[0], 1)} × ${fmt(flare.report.size[1], 1)} × ${fmt(flare.report.size[2], 1)} mm`}
         </div>
         {flare?.report.ok && rimEnabled && <svg viewBox="-5 -10 160 100" role="img" aria-label="Rim profile comparison" style={{ width: "100%", height: 150, marginTop: 8 }}>
           {flare.report.profiles.map((p, i) => <g key={p.family}>
