@@ -1,6 +1,7 @@
 # Ginkgo Rim Lab
 
-Independent experiment at `ginkgo-rim-lab.html`, duplicated from main c83f088.
+Independent experiment at `ginkgo-rim-lab.html`, duplicated from main c83f088,
+with the uniform cell-loft correction from 2010294 ported before publication.
 The original UI, model, worker and exports remain unchanged. This snapshot is
 intentional for A/B comparison; later core fixes need explicit review and tests
 before being ported here. Do not import these modules into the original tool.
@@ -32,8 +33,8 @@ The air-facing profile is the acoustic candidate; back-face curvature is not
 constrained. Small radii versus thickness and outward reversals are refused.
 
 STEP uses quintic section interpolation with tangent and curvature constraints
-for these rim pieces; ordinary natural cubics would erase the intended end
-curvature. Cell surfaces keep their existing cubic chord-length loft. Whole-shell
+for these rim pieces, with chord parameters around the perimeter; ordinary natural cubics would erase the intended end
+curvature. Cell surfaces keep their existing cubic uniform loft. Whole-shell
 orientation is used for rim volume checking because a per-face radial proxy is
 invalid on a rolled strip. Exported settings include the experimental tool name,
 rim settings, and a model hash covering both geometry modules. Replay rebuilds
