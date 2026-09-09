@@ -13,6 +13,9 @@ const here = fileURLToPath(new URL(".", import.meta.url));
 // on index.html. See README.md.
 export default defineConfig({
   define: {
+    __GINKGO_RIM_REVISION__: JSON.stringify(createHash("sha256")
+      .update(readFileSync(resolve(here, "src/rim-lab/model.js")))
+      .update(readFileSync(resolve(here, "src/rim-lab/rim-geometry.js"))).digest("hex")),
     __GINKGO_MODEL_REVISION__: JSON.stringify(createHash("sha256")
       .update(readFileSync(resolve(here, "src/hgrid-model.js"))).digest("hex")),
   },
@@ -26,6 +29,7 @@ export default defineConfig({
         flh: resolve(here, "annular-flh.html"),
         directivity: resolve(here, "directivity-match.html"),
         aperture: resolve(here, "aperture-wavefield.html"),
+        rimLab: resolve(here, "ginkgo-rim-lab.html"),
         ginkgo: resolve(here, "ginkgo-horn.html"),
       },
     },
