@@ -5424,14 +5424,13 @@ export function cellPhase5(label) {
 // 1.707 mm — monotone, and all of it at the mouth where the sections open
 // fastest.
 //
-// The count is snapped to a DIVISOR of the map's own. The first reason was
-// the loft's UNIFORM parameterisation — unevenly spaced rings were told they
+// The count is snapped to a DIVISOR of the map's own. The first reason given
+// was the loft's uniform parameterisation — unevenly spaced rings told they
 // were evenly spaced, and at 32 of 48 (gaps alternating 1 and 2) the surface
-// ran 4.6 mm off the map's own rings. The chord-length loft (2026-09-08)
-// removed that mechanism, and the snap STAYS, for the reason the measurement
-// then exposed: the departure from the SKIPPED rings is mostly resolution,
-// not parameterisation. Measured on the shipped horn with the shipped bow,
-// against the rings the subsample left out:
+// ran 4.6 mm off the map's own rings. That is only part of it, and the snap
+// would stay even under a chord-length loft: the departure from the SKIPPED
+// rings is mostly RESOLUTION. Measured on the shipped horn with the shipped
+// bow, against the rings the subsample left out:
 //   32 of 48, gaps 1,2 (non-divisor)   uniform 3.89 mm   chord 3.10 mm
 //   32 of 64, every 2nd (divisor)      uniform 1.27 mm   chord 1.27 mm
 //   32 of 64, every 2nd, NO bow        uniform 0.18 mm   chord 0.18 mm
@@ -5862,10 +5861,10 @@ const interpSolve3 = (sys, pts, start = [0,0,0], end = [0,0,0]) => {
 };
 
 // A UNIFORM collocation matrix depends only on the point count, so it is
-// factored once per count and reused across every side of every duct. A
-// chord-length system is per duct — its parameters are that duct's own ring
-// spacing — and is factored on the spot: one LU of order stations + 3 per
-// duct, which is nothing against the map that produced the rings, and
+// factored once per count and reused across every side of every duct — which
+// is the shipped path. A chord-length system is per duct, since its parameters
+// are that duct's own ring spacing, so it is factored on the spot: one LU of
+// order stations + 3, nothing against the map that produced the rings, and
 // caching it would grow without bound over a session.
 const interpCache = new Map();
 const interpSystemCached = (m) => {
@@ -5876,17 +5875,17 @@ const interpSystemCached = (m) => {
 
 // The v parameter of every ring, the one decision the loft makes about how
 // far apart its rings are.
-//   "chord"   (default) cumulative mean point-to-point distance between
-//             consecutive rings, normalised to [0, 1] — the spline is told
-//             the spacing the rings really have.
-//   "uniform" q/(S-1) whatever the spacing — the form every export before
-//             2026-09-08 carried, kept so the recorded fold and overshoot
-//             figures reproduce, and as the baseline the tests measure
-//             against.
+//   "uniform" (default) q/(S-1) whatever the spacing. See the ductBrep note
+//             for why this beats measuring: it is closer to a refined
+//             reference through the bow, and it keeps the mouth's tangent
+//             break in the sacrificial extension rather than in the part.
+//   "chord"   cumulative mean point-to-point distance between consecutive
+//             rings, normalised to [0, 1]. Kept as the measured comparison
+//             baseline; it straightens the extension and bulges the mouth.
 // Two coincident rings would put two knots in one place and make the
 // collocation singular, so each step is floored at a thousandth of the mean
 // step; on any real ring set the floor never binds.
-export function ringParams(sections, vParam = "chord") {
+export function ringParams(sections, vParam = "uniform") {
   const S = sections.length;
   if (vParam === "uniform") return uniformParams(S - 1);
   const d = [];
@@ -5962,25 +5961,48 @@ const greville = (knots, n) =>
 // the sharing structure explicit: corner columns appear once and both
 // adjacent walls reference them.
 //
-// ALONG THE PATH THE LOFT IS PARAMETERISED BY CHORD LENGTH (`vParam`, see
-// `ringParams`). Until 2026-09-08 it was uniform: every ring was assumed the
-// same distance from the next and the spacing was never measured. Where the
-// rings are evenly spaced that is right; where they are not, the cubic is
-// told a short gap is a full one, delivers a full pitch of curvature into a
-// fraction of the distance, and overshoots BACKWARDS past the ring — the wall
-// then pokes through the cap meant to close it, and no residual, edge-pairing
-// or integrity check can see it, because none of them tests a surface against
-// itself. Three recorded symptoms had that one cause: the cutter extension
-// folding at 1 mm (0.157 mm of reversal at 64 stations, 0.420 at 0.5 mm), a
-// non-dividing shell station count, and the station snapping. Measured on the
-// shipped horn with chord-length parameters, all 18 ducts: the reversal is
-// 0.000 mm at every extension tried, the rings are still interpolated to
-// 1e-13, and on a regular 64-station export the surface moves at most
-// 0.26 mm, all of it inside u < 0.2 where the bow makes the ring steps
-// uneven (1.4x between neighbours), and 0 elsewhere. What it does NOT buy is
-// resolution: rings that were skipped are still not on the surface, so the
-// shell's divisor snap stays.
-export function ductBrep(sections, { capMouthPts = null, vParam = "chord" } = {}) {
+// ALONG THE PATH THE LOFT IS PARAMETERISED UNIFORMLY (`vParam`, see
+// `ringParams`), and chord length was tried for half a day on 2026-09-08 and
+// REVERTED. Read this before proposing it again.
+//
+// The argument for chord was that a uniform knot vector assumes every ring is
+// the same distance from the next and never measures, so where the rings are
+// unevenly spaced the cubic is told a short gap is a full one and overshoots.
+// That mechanism is real — it is what folds a short extension — but the
+// premise underneath it is false, and the fix costs more than the defect.
+//
+// (1) IT IS NOT MORE FAITHFUL. Judged against rings the model EVALUATES at
+//     256 stations, with no extension ring involved, the 64-station uniform
+//     loft sits 0.30 mm from the refined rings through the bow window against
+//     chord's 0.39. Uneven knot spans condition the interpolant worse than
+//     honest spacing helps. The chord change was verified on the ring residual
+//     and on an axial reversal, and NEITHER can see a lateral bulge between
+//     rings — the residual is 2e-13 for both by construction.
+// (2) THE MOUTH HAS A TANGENT BREAK AND NO PARAMETERISATION REMOVES IT.
+//     `extendSections` translates the end ring rigidly, so the data is a flare
+//     up to the mouth ring and then a straight prism. A global C2 cubic cannot
+//     carry a G1 break; it smears it to one side of the mouth ring or the
+//     other, and the parameterisation only chooses which side. Measured on the
+//     shell blank at the shipped 3 mm extension, all 18 cells:
+//        loft       bulge in the last REAL span     error in the extension
+//        uniform            0.089 mm                       0.733 mm
+//        chord              0.907 mm                       0.053 mm
+//     Centripetal and five knot-ratio floors slide monotonically between those
+//     two, and a full ratio floor reproduces uniform exactly, reversal and all.
+// (3) SO IT GOES WHERE IT IS HARMLESS. The extension is sacrificial — the
+//     mouth trim removes the blank's and the cutter's is subtracted — while
+//     the last real span is the skin at the mouth on a blank and the passage
+//     wall on a cutter. Uniform puts the error in the material that is thrown
+//     away. That is the whole reason it ships, and the owner found the chord
+//     version in CAD as a visible bulge at the mouth.
+//
+// The fold that chord removed has its own remedy and keeps it: the extension
+// must exceed about 0.4 of a station step, which is what the half-step floor
+// on `cutterExt` enforces. Removing the trade rather than choosing a point on
+// it needs the surface to carry the break — a knot of multiplicity 3 at the
+// mouth ring — which is queued, not done. `vParam: "chord"` survives as the
+// measured comparison baseline and is what the suite asserts the trade on.
+export function ductBrep(sections, { capMouthPts = null, vParam = "uniform" } = {}) {
   const S = sections.length;            // stations, incl. both ends
   const N = sections[0].pts.length;     // points around the ring
   if (N % 4 !== 0) return null;
@@ -6260,7 +6282,7 @@ const stepStr = (v) => String(v ?? "")
   .replace(/\\/g, "\\\\")
   .replace(/'/g, "''");
 
-function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true, vParam = "chord" }) {
+function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true, vParam = "uniform" }) {
   const E = [];
   let nid = 0;
   const add = (txt) => { E.push(`#${++nid}=${txt};`); return nid; };
@@ -6321,7 +6343,7 @@ function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true, vP
 
   for (const spec of solidsSpec) {
     const sections = spec.sections;
-    const brep = ductBrep(sections, { capMouthPts: spec.capMouthPts || null, vParam });
+    const brep = ductBrep(sections, { capMouthPts: spec.capMouthPts || null, vParam: spec.group === "experimental rim" ? "chord" : vParam });
     if (!brep) return null;
     const { nu, nv, uKnots, vKnots, walls, cornerCols, capThroat, capMouth } = brep;
     checks.ducts++;
@@ -6480,7 +6502,7 @@ function stepEmit({ name, desc, fileDesc, params, solidsSpec, folders = true, vP
 }
 
 // The air: every duct as one solid. What this file has always emitted.
-export function buildSTEP(throat, map, { t = 0, only = null, params = null, name = "ginkgo_ducts", vParam = "chord" } = {}) {
+export function buildSTEP(throat, map, { t = 0, only = null, params = null, name = "ginkgo_ducts", vParam = "uniform" } = {}) {
   if (!map) return null;
   const solidsSpec = [];
   for (const cellRec of throat.cells) {
@@ -6556,7 +6578,7 @@ export function throatCellWidth(throat, map = null, { t = 0 } = {}) {
 // gap is measured and the overshoot is 0 by construction (measured 9e-16 mm
 // on the shipped kit); this now runs as the REGRESSION GUARD for that, and
 // still reports rather than clamps, so a return of the mechanism is named.
-export function shellCapOvershoot(throat, map, { t = 0, wall = 3, stations = 32, ext = 3, samples = 24, vParam = "chord" } = {}) {
+export function shellCapOvershoot(throat, map, { t = 0, wall = 3, stations = 32, ext = 3, samples = 24, vParam = "uniform" } = {}) {
   if (!map) return null;
   let worst = 0, at = null, minRatio = Infinity, stepSum = 0, nStep = 0;
   for (const cellRec of throat.cells) {
@@ -6711,7 +6733,7 @@ export function buildShellSTEP(throat, map, {
   extendThroat = null, extendMouth = null, trimThroat = null, trimMouth = null,
   only = null, xSide = 0, ySide = 0, params = null, folders = true,
   rim = null, c = 343,
-  name = "ginkgo_horn_shell", vParam = "chord",
+  name = "ginkgo_horn_shell", vParam = "uniform",
 } = {}) {
   if (!map) return null;
   // THE TWO ENDS ARE SEPARABLE, and they are not the same problem. `extend`
@@ -6807,14 +6829,14 @@ export function buildShellSTEP(throat, map, {
         d += Math.hypot(B[k][0] - A[k][0], B[k][1] - A[k][1], B[k][2] - A[k][2]) / A.length;
       stepSum += d;
     }
-    // UNDER THE CHORD-LENGTH LOFT THE FOLD IS GONE (measured 0.000 mm of
-    // reversal at 0.5 and 1 mm on the shipped horn, against 0.42 and 0.16
-    // uniform), so the extension is just the protrusion the cap sag needs —
-    // `cutterExt` itself. The half-step floor is kept for the uniform
-    // baseline only, where it is still the thing that keeps the loft monotone.
-    const cutE = vParam === "uniform"
-      ? Math.max(cutterExt, 0.5 * (stepSum / Math.max(1, duct.length - 1)))
-      : cutterExt;
+    // THE HALF-STEP FLOOR IS UNCONDITIONAL AGAIN (2026-09-08, second pass).
+    // It was briefly dropped on the argument that the chord-length loft removes
+    // the fold, which it does — but the chord loft pays for that by smearing
+    // the mouth's tangent break into the last REAL span instead, and a shorter
+    // extension makes that worse. Under the uniform loft the floor is what
+    // keeps the extension span long enough that the wall cannot double back:
+    // measured 0.020 mm of reversal at ext 1 mm against 0.000 at half a step.
+    const cutE = Math.max(cutterExt, 0.5 * (stepSum / Math.max(1, duct.length - 1)));
     cutterExtUsed = Math.max(cutterExtUsed, cutE);
     solidsSpec.push({
       label: `duct cutter ${cellRec.label}`,
@@ -7017,7 +7039,7 @@ export function rimJoinError(solids) {
   };
   let worst=0;
   for(let i=0;i<solids.length;i+=3) {
-    const b=solids.slice(i,i+3).map(s=>ductBrep(s.sections));
+    const b=solids.slice(i,i+3).map(s=>ductBrep(s.sections,{vParam:"chord"}));
     if(b.some(x=>!x)) return Infinity;
     for(let j=0;j<2;j++) for(let k=1;k<32;k++) {
       const a=normal(b[j],k/32,1),c=normal(b[j+1],k/32,0);
