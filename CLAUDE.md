@@ -68,6 +68,14 @@ it SHORT: it is the handover, not a changelog. It reached 1338 lines of "done
 in the X session" before being cut back to the live queue on 2026-09-03;
 durable findings belong here in CLAUDE.md and history belongs in git.
 
+**The same discipline now applies to THIS file, which had grown to 3650 lines
+by 2026-09-09 — about 65k tokens loaded before a session starts.**
+`FINDINGS-ARCHIVE.md` holds the superseded, the falsified and the finished; it
+is in the repo and greppable but is not loaded. It is not a deletion and not a
+changelog either: the split rule is at the head of the findings section below,
+and the archive's own index says what left and why. A finding that is still a
+rule someone could break today does not go there.
+
 ## Layout
 
 ```
@@ -350,6 +358,21 @@ poorly-loaded case. That is the thing to move off, and the reason the profile
 exists.
 
 ## Known findings worth not re-deriving
+
+Seventeen findings were moved to **`FINDINGS-ARCHIVE.md`** on 2026-09-09 — the
+superseded, the falsified and the finished. Nothing was deleted and nothing is
+retracted; the file is in the repo and is one `grep` away. It is not loaded at
+session start, which is the whole point: this file is, and at 3650 lines it was
+costing ~65k tokens of standing context on every session before anyone had typed
+anything. **The rule the split was made under, and the one to apply if more is
+ever moved: a finding stays here if it is a rule someone could VIOLATE TODAY, or
+if it is the record that stops a rejected idea being re-proposed from memory. It
+moves there if the thing it describes has been superseded, or if the code it is
+about is finished. When in doubt it stays.** Go and read it when a note here
+points at something you cannot find, when you are about to re-measure something
+that sounds like it has been measured before, or before touching the sampling
+ladder, the STEP writer's numerics, the flow-mode era construction, or the CAD
+import/union forensics. Its own index says what is in it and why each entry left.
 
 - **THE MOUTH FLARE COLLAR IS BUILT (`flareCollar`, stage 3, 2026-09-08), AND
   THE MEASUREMENT THAT SHAPED IT IS THAT THE RIM WAS ALREADY ONE SMOOTH
@@ -1355,27 +1378,6 @@ exists.
   Every measurement those produced is still recorded here; what is gone is
   the code that would reproduce it. The findings that describe them now say
   so explicitly rather than implying the function is a call away.
-- **THE EDGE-CURVATURE WARNING WAS KEYED TO A LENGTH THE MODEL DOES NOT
-  CONTAIN, and it ranked the cells BACKWARDS.** It flagged
-  `minCurvR < 2 * Lshort` and warned that the flat-rectangle f1 estimate errs
-  as O((L/r)^2) — but f1 is `c / (2 * Llong)`, so the error goes as
-  (Llong/r)^2, and Lshort appears nowhere in it. Measured at the defaults:
-    flagged     1,1 1,3 6,1 6,3   at (Llong/r)^2 = 0.31
-    NOT flagged 2,1 2,3 5,1 5,3   at             0.52
-    NOT flagged 3,1 3,3 4,1 4,3   at             0.45
-  — the eight cells with the LARGEST claimed error all went unflagged while
-  the four it fired on ranked ninth to twelfth. It also only fired at all at
-  shape order 3 (0 of 18 at m = 2), because what it was reading there is the
-  interior grid lines bending to R ~ 15.4 mm near the corners against the
-  disc's own 17.75 mm rim — not a pathology, just the extra freedom m = 3
-  spends near the corner. Removed entirely on 2026-09-03 (owner's call) along
-  with `minCurvR`, `curvatureSensitive`, `curvatureFlagged`, `edgeMinRadius`
-  and two CSV columns. `f1model` already labels the estimate an estimate.
-  **The general lesson is the one at the top of this file**: a metric has to
-  measure the quantity in the model it is judging, or it will fire
-  confidently on the wrong things — and a warning nobody can act on is worse
-  than no warning, because it trains the reader to ignore the warning strip.
-
 - **THE SECTION PLANE NOW FOLLOWS THE TANGENT, and the construction it
   replaced was satisfying the expansion law in a plane the wave was not
   crossing.** This is the worked example behind the standing priority at the
@@ -1517,110 +1519,16 @@ exists.
   station-free `compare: "solid"` read the UI shows: -0.097 to -0.120 mm over
   the same span, a 0.022 mm spread against the station read's 0.203. The test
   now asserts that contrast rather than a magnitude.
-
-- **(SUPERSEDED by the raise above; kept for the measurement.) THE 512-SAMPLE
-  DEFAULT IS 19% OPTIMISTIC ON THE GRADED BOW, THREE TIMES
-  ITS ERROR ON THE BOW IT WAS CALIBRATED FOR — and the fold margin is a
-  `samples` measurement, NOT a `stations` one.** The convergence table below
-  was taken on the [0, 0.20] grade 0 bow, and 512 was chosen there. The
-  2026-09-04 default is [0.02, 0.22] with grade 0.15, and the grade NARROWS
-  the inner cells' windows — a narrower window is a steeper turn, a sharper
-  curvature peak, and a peak needs more samples to resolve. Measured at
-  stations 64, against samples 4096:
-    samples             512      1024     2048     4096
-    NEW bow g0.15      1.7732   1.5522   1.4964   1.4912  mm
-    error             +18.9%    +4.1%    +0.4%     0.0%
-    OLD bow g0         2.9930   2.8269   2.8085   2.8027  mm
-    error              +6.8%    +0.9%    +0.2%     0.0%
-  So **the 1.77 mm the tool reports on the shipped default is really about
-  1.49 mm.** Still positive, still not folded — but 16% thinner than displayed,
-  on the default that already carries the thinnest fold margin ever shipped.
-  The bias is ONE-SIDED (the metric can only be optimistic), so this is a
-  floor moving down, never up. samples 1024 costs a measured 68 ms preview /
-  131 ms export against 512's 49/98, which is the cheapest fix available.
-  **AND THE STATION COUNT IS A RED HERRING HERE, which cost a wrong entry in
-  NEXT-SESSION.md before it was caught.** `bendFoldMin` reads 1.6122 at
-  stations 24 and 48 and 1.7732 at 32, 64 and 128, which looks exactly like
-  the snapping — 24 and 48 do not divide 512, 32 and 64 do. It is not.
-  **The discriminating test is one line: re-measure at samples 480**, where
-  24, 32 and 48 all divide and 64 does not. The pairing does not move —
-  24 and 48 still agree (1.6648), 32 and 64 still agree (1.8344). Divisibility
-  flipped for three of the four counts and the grouping was unchanged, so
-  snapping is falsified.
-  What it actually is: the margin can only be evaluated WHERE A RING EXISTS,
-  and each station charges itself with the worst curvature over the samples it
-  stands for (`half = round(M / 2·stations)`, which NARROWS as stations rise).
-  The bow's curvature peak sits between stations, and the two grid families
-  land either side of it — 24/48 report it at u = 0.16667, 32/64/128 at
-  u = 0.15625. Both are stations near a peak neither owns. The station count
-  therefore shifts WHICH near-miss is reported; only `samples` changes how
-  well the peak itself is resolved.
-  **The general lesson: a pattern that looks like a known bug is not evidence
-  of that bug.** Divisibility was a real mechanism in this file, it fitted the
-  numbers, and it was wrong here. One cheap counter-test beat the pattern
-  match.
-
-- **`samples` IS NOW 512, AND ONLY ONE NUMBER IN THIS FILE MOVED — THE FOLD
-  MARGIN. The re-baselining was far narrower than expected.** (The 512 choice
-  is calibrated on the OLD bow; see the finding above for what it costs on the
-  graded default.) Raising the
-  centreline sample count from 64 to 512 at stations 64, over all 18 cells:
-    dL, Lmin, Lmax, mouth area, wallSpread, fc, kMax   unchanged to 4+ digits
-    sectionObliqMax                                    -0.9%
-    turnMax                                            +2.2%
-    clearance minMid (shipped bow)      -7.319 -> -7.498 mm  (less flattering)
-    bendFoldMin      (shipped bow)       4.454 -> 3.034 mm   -31.9%
-  So the sampling was never distorting the horn; it was mis-reading ONE
-  metric, and in the optimistic direction. Convergence and cost, on the
-  then-shipped throat-fifth [0, 0.2] bow:
-    samples     64     128     256     512    1024    2048
-    foldMin   4.455   3.980   3.349   3.034   2.871   2.853  mm
-    error      +56%    +40%    +17%   +6.3%   +0.6%    0.0%
-    preview     49      46      41      49      68     113   ms
-    export     119      95      92      98     131     167   ms
-  **The cost is FLAT to 512** and only starts rising at 1024, so 512 takes
-  the error from 56% to 6.3% for nothing. The residual is a known ONE-SIDED
-  bias — the metric can only be optimistic — and 1024 is what to reach for if
-  a fold margin is ever marginal.
-  **`stations` CAN NO LONGER EXCEED `samples`**: the map takes
-  `M = max(samples, stations)`, so the documented aliasing trap is now
-  unreachable rather than merely written down. Measured on the shipped bow at
-  stations 192, the aliased read (samples 64) reports fluxContract 0.18% and
-  obliquity 35.47 deg against 0.06% and 32.50 for the honest one — aliasing
-  invents about three quarters of a contraction reading.
-  **THE 10.9% CONTRACTION FIGURE THIS FILE CARRIED WAS AN ALIASING ARTIFACT.**
-  It was measured at stations 192 against samples 64. At the current defaults
-  `fluxContractMax` reads 0.01-0.18% at every resolution tried, aliased or
-  not, so it is NOT the metric the sampling raise was needed for. `bendFold`
-  was, and is.
-  **TWO REAL THINGS THE FINER SAMPLING REVEALED**, both about the throat-fifth
-  bow and both in the less flattering direction:
-  (1) the interior obliquity of a throat-start bow was under-read about
-  TENFOLD — 0.81 -> 7.78 deg at the shipped arcH 500, 1.04 -> 10.52 at the
-  superseded 555 — and at 555 that BREAKS the obliquity bound (10.52 deg of
-  tilt against 9.51 of ring curvature) where at 500 it still holds;
-  (2) at arcH 555 the same bow's fold margin is **0.86 mm** at honest
-  sampling, i.e. that horn was within a millimetre of a duct turning inside
-  out. At arcH 500 it is 3.03 mm. One more reason the arc moved.
-  The one cost is the TEST SUITE, which builds hundreds of maps and now takes
-  minutes rather than seconds. Tests that do not care about the fold margin
-  can pass `samples` explicitly; most of them do not need to.
-- **BOTH PASSAGE METRICS WERE UNDER-RESOLVED BY THE OLD 64-SAMPLE DEFAULT.**
-  (Superseded by the finding above, which fixed it; kept for the measurement.) `samples` defaults to 64 over
-  the whole path, so a 65 mm bow feature gets ~13 samples and its curvature
-  peak is missed. Measured on the shipped bow: `bendFoldMin` reads 3.28 /
-  2.09 / 1.29 / 1.11 mm at 64 / 128 / 192 / 256 samples — monotone downward,
-  so **the reported margin is an upper bound** — and `fluxContractMax` reads
-  0.00% at both the preview (24) and export (64) station counts against 10.9%
-  at 192. Raising `samples` is nearly FREE (measured: the map cost is
-  dominated by `stations`, since the profile solve runs per station — ~90 ms
-  at stations 64/samples 64 against ~80 ms at stations 64/samples 256), so this
-  is worth doing properly. It was not done here because it re-baselines
-  recorded numbers across the whole file and deserves its own pass.
-  Note also that `stations` ABOVE `samples` aliases outright: `idx =
-  Math.round(u * M)` makes consecutive rings share a centreline point and
-  frame. The UI ships stations 24 (preview) and 64 (export) against
-  samples 64, so it is safe today, but do not raise `stations` alone.
+  **TWO PROPERTIES CARRIED FORWARD FROM THE 512 AND 64 RUNGS OF THIS LADDER**,
+  whose own findings are in `FINDINGS-ARCHIVE.md`. `stations` CAN NO LONGER
+  EXCEED `samples` — the map takes `M = max(samples, stations)` — so the
+  aliasing trap where consecutive rings share a centreline point and frame is
+  unreachable rather than merely written down; do not undo that clamp. And the
+  10.9% passage-contraction figure this file carried for a while was an
+  ALIASING ARTIFACT of stations 192 against samples 64: at honest sampling
+  `fluxContractMax` reads 0.01-0.18% at every resolution tried. `bendFold` is
+  the metric the sampling raise was needed for, and it is the only one that
+  moves with `samples`.
 
 - **THE TOOL'S DEFAULT GEOMETRY CHANGED ON 2026-09-01 (owner's numbers), and
   every measurement in this file predating it was taken on the old one.**
@@ -1779,19 +1687,6 @@ exists.
   reported separately per axis. All of this is the standard 1-D convention
   and matches the horn tool; it is recorded because "312 Hz" is otherwise
   read as a property of the aperture rather than of the cap.
-- **A DEAD TERNARY PINNED THE REFERENCE HORN AT 90 DEG.** `hypexReference`
-  was called with `coverageDeg: mouthMode === "arc" ? thetaH : 90`, written
-  while "arc" was a live mouth mode. `mouthMode` has been the constant
-  `"biradial"` since the apex was removed, so the condition was permanently
-  false and Th_h never reached the reference. It fed diaDirectivity =
-  lambda/sin(Th/2) and through it "Mouth area needed", "Minimum horn
-  length", `governedBy` and the two diameters quoted in the card's prose.
-  Measured at the default throat, fc 500, T 0.7: Th_h 60 wants 15308 cm² over
-  432 mm and was shown 7654 cm² over 393 mm — 2x under; Th_h 120 wants 5103
-  and was shown the same 7654 — 1.5x over. Fixed to read `thetaH`. **The
-  general lesson is that removing a mode leaves its ternaries behind as
-  branches that always take one side**, and the compiler cannot see it —
-  grep for the other removed mode names when one is retired.
 - **A HANDLER BOUND ONCE CANNOT CLOSE OVER RENDER STATE, and in `DuctPreview`
   that silently reverted the 3-D preview to the geometry it opened with.**
   The pointer listeners are attached in a `useEffect` with no deps —
@@ -1872,20 +1767,6 @@ exists.
   0.281 at 12.0 for the horn actually on screen. Caught only by driving the
   real UI — node reproduced the right answer throughout.
 
-
-- **(STALE — see above.) BEND TIGHTNESS IS PINNED AT 0.5, and the minimum is NOT the safe end.**
-  The two Hermite tangent magnitudes are the cubic's only remaining freedom
-  and the measured optimum barely moves: wallSpread bottoms at 0.45-0.55 on
-  every well-posed geometry (curved 90x40 d425: 5.63 mm at 0.55; narrow
-  60x40 d500: 3.46 mm at 0.45) and is flat between them. The slider was
-  removed at the owner's request, but NOT set to its old minimum: 0.25
-  measures 8.50 mm of wall spread against 5.63 and 12.7 mm of dL against
-  2.4, because the tangents also decide where each cell's path length lands.
-  Above 0.8 it collapses — 1.0 gives a 1 mm minimum radius, 20 mm of wall
-  spread and 17 mm of duct overlap; 1.2 gives 517 deg of turning. On
-  badly-posed geometries (flat mouth, shallow depth) the whole curve is flat
-  and something else dominates. If it is ever worth per-geometry accuracy,
-  SOLVE it like depth; the model keeps the parameter.
 - **`dividerEndFrac` IS GONE, and the reason is that the geometry has no such
   station.** The parameter tapered a t/2 inset from the throat to an
   adjustable fraction of the path. It was removed because it described a
@@ -2298,42 +2179,6 @@ exists.
   the geometry class. Note also 1,1-3,2 — two columns apart, no shared edge —
   overlapping 4.62 mm over 40 mm of path, which is the reaching above, measured
   on the shipped file rather than in the model.
-- **THE LOFTED WALL RUNS PAST ITS OWN THROAT CAP PLANE, and that is a
-  SELF-INTERSECTING SOLID no self-check in the file can see.** `extendSections`
-  prepends ONE ring at distance `ext`, and `ductBrep` interpolates with a
-  UNIFORM parameterisation, so a short first gap followed by a full station
-  step is told the two are equal and the cubic overshoots BACKWARDS. The wall
-  then pokes through the flat cap meant to close it. Residual, edge pairing and
-  referential integrity all pass regardless — none of them tests
-  self-intersection. **This is the same mechanism already recorded for the
-  station count** (32 of 48, gaps alternating 1 and 2, ran 4.6 mm off its own
-  rings); it was simply never applied to the extension, which violates it far
-  harder. Measured at 6x3, 32 shell stations, mean station step 11.5 mm:
-    ext/step   0.09    0.17    0.26    0.43   0.69   0.96
-    overshoot  0.94    0.40    0.033   0.000  0.000  0.000  mm
-  **The threshold is about 0.4 of a station step, and the shipped default
-  straddles it**: ext 3 with the five-phase stagger gives 3.0 to 7.8 mm, i.e.
-  0.26 to 0.68 of a step, so the two phase-0 cells overshoot and the rest do
-  not. On the test geometry (step 13.3 mm) the worst is **0.6625 mm**.
-  `shellCapOvershoot` measures it on every export, names the cell and prints
-  the ratio; it is REPORTED, never clamped, because raising `ext` and lowering
-  `stations` both fix it and which one is wanted is the owner's call. A PLAIN
-  throat has no extension ring at all, so its wall stops exactly at its end
-  ring — measured 0.
-  **It does NOT explain the split failures**: the two cells that overshoot on
-  the owner's export are the two that SPLIT SUCCESSFULLY. It is a real defect
-  found while looking for that one, not the answer to it.
-- **THE TWO ENDS OF THE SHELL ARE SET SEPARATELY (`extendThroat` /
-  `extendMouth`, `trimThroat` / `trimMouth`), because they are not the same
-  problem.** The MOUTH trim cuts on the APERTURE SURFACE itself, a curved face
-  the blanks cross transversally, and it has never been reported failing. The
-  THROAT trim cuts on the PLANE z = 0 — which is exactly the operation the
-  owner measured failing as a plane SPLIT on individual blanks, so subtracting
-  it asks the kernel for the operation already known to fail. A plain throat
-  makes that face from the loft's own end ring, planar in z = 0 to 0 by
-  construction, and asks for no cut there at all; the price is the coplanar
-  overlapping throat caps (27 of 27 adjacent pairs) coming back. A trim with no
-  extension behind it would cut into the real body and is REFUSED, not shipped.
 - **ADJACENCY IS THE RULE FOR THE UNIONS, and the second export made it
   clean.** On the owner's third quarter (settings read from the header: 6x3,
   m 2, arcs 555x245, depth 357, T 0.7, divergeLen 2 (SEE THE CLAMP NOTE IN THE
@@ -2384,69 +2229,18 @@ exists.
   Simplify Geometry, Advanced Healing, Healing (HOOPS) and Accurate Edge
   Computation all OFF, and again with Shapr3D's standard "quality" defaults:
   **identical results both ways**, on the throat-plane splits and on the
-  unions. The hypothesis in the finding below was wrong. Turning them off is
-  still right on the argument that there is nothing to repair, but it changes
-  nothing, so it is not the lever.
-- **THE FIRST THING THAT SORTS THE UNIONS IS ADJACENCY, and it took a second
-  export to show up.** On the owner's second quarter (6 cells, x- y-, wall 3,
-  deeper than the first), 13 pair unions:
-    NON-ADJACENT (no shared edge)   4 of 4 succeeded
-    ORTHOGONAL neighbours           2 of 6 succeeded (3 failed, 1 non-manifold)
-    DIAGONAL neighbours             1 of 3 succeeded
-  On the FIRST export nothing sorted them at all, so this is a change in the
-  geometry rather than a rule that was always there. 13 points, so treat the
-  split as suggestive rather than established.
-  **ONE UNION RETURNED "resulting body non-manifold" RATHER THAN FAILING, and
-  that is the kernel naming the tangency in its own words.** A union of two
-  solids is non-manifold when they meet along a curve or at a point without
-  volumetric overlap there — exactly the tangential-contact crossing every
-  adjacent pair in this kit has. It is the first direct confirmation of that
-  mechanism from the kernel rather than from our own measurements.
-- **THREE BLANKS FAILED A PLANE SPLIT AT THE THROAT (2,1 / 3,1 / 3,2 of six),
-  and that is a ONE-BODY operation.** No second solid, no shared surface, no
-  tangency: whatever it is, it is a property of the single blank, and it
-  survives every import setting. It does NOT predict the union failures — 2,1
-  and 3,1 both fail the split yet union with each other successfully, while 3,1
-  and 3,2 both fail the split and their union fails too. Not reproducible here
-  yet, because that export predates the settings stamp; the throat plane itself
-  is a clean cut in the file as shipped (below).
-- **THE EXPORTED BODIES ARE TOPOLOGICALLY EXACT, SO AN IMPORTER'S HEALING AND
-  SIMPLIFY OPTIONS CAN ONLY SUBTRACT. Turn them OFF; there is nothing to
-  repair.** Audited on the owner's shipped quarter, all 14 solids:
-  F - E + V = 6 - 12 + 8 = **2** on every one, **every edge used exactly once
-  in each direction**, 12 distinct curves for 12 edges, 6 loops for 6 faces —
-  and every one of the 24 edge uses on a blank is a `B_SPLINE_CURVE_WITH_KNOTS`
-  **whose control points ARE control points of the adjoining face's own
-  surface**. So each edge lies on both surfaces by SHARED ENTITY, not by
-  tolerance, and there are no tolerant edges to replace.
-  Shapr3D's import dialog defaults five of these ON. Against this file:
-    · **Simplify Geometry** — says outright it "might change the model's
-      shape". The blanks are already the minimal 6-face topology, so it has no
-      redundancy to remove and can only alter the surfaces.
-    · **Advanced Healing (Parasolid Bodyshop Repair)** — "recalculate all
-      edges based on face intersections". This DISCARDS our exact shared-
-      control-point edges and re-derives each from a surface-surface
-      intersection, and the mitred corners are exactly where two nearly
-      parallel NURBS meet at a shallow angle. The most fragile operation
-      available, applied to all 12 edges of every blank.
-    · **Healing (HOOPS)** — adjusts topological tolerances and "eliminates
-      sliver faces"; near a sharp cell corner the wall face is genuinely
-      narrow and is not a sliver to remove.
-    · **Accurate Edge Computation** — same family: rectifies problems that the
-      audit says are not there.
-    · **Sewing** — a closed shell with paired edges needs no sewing, but the
-      importer may rely on it to form solids at all; leave it ON.
-  **This is also the best explanation on offer for the per-body
-  unpredictability**: whether healing damaged a given body is decided at
-  IMPORT, per solid, so it is invisible in the geometry we ship and it would
-  make one blank fail every operation it takes part in. The owner reports some
-  blanks failing a plane SPLIT at the throat — a one-body operation with no
-  union involved — which cannot be a pair-interaction effect at all.
-  **The throat plane itself is a clean cut in the file as shipped**: the z = 0
-  crossing sits at the SAME v to 5e-14 across every u on every wall (it is an
-  exact iso-curve, since the throat ring is planar in z = 0), with |dz/dv| >=
-  294 mm per unit v, and no v-line crosses z = 0 more than once. So a failing
-  split is not a wiggling wall.
+  unions. The hypothesis it tested was wrong, and that hypothesis is now in
+  `FINDINGS-ARCHIVE.md` along with the per-option reading of Shapr3D's import
+  dialog. Turning them off is still right on the argument that there is nothing
+  to repair, but it changes nothing, so it is not the lever.
+  **THE AUDIT BEHIND "NOTHING TO REPAIR" STANDS**, and it is why an importer's
+  healing can only subtract: over all 14 solids of the owner's shipped quarter,
+  F - E + V = 6 - 12 + 8 = 2 on every one, every edge used exactly once in each
+  direction, and every one of the 24 edge uses on a blank is a B-spline curve
+  whose control points ARE control points of the adjoining face's own surface —
+  so each edge lies on both surfaces by SHARED ENTITY, not by tolerance, and
+  there are no tolerant edges to replace. Leave Sewing ON; the importer may
+  rely on it to form solids at all.
 - **A HALF OR A QUARTER CAN BE EXPORTED (`xSide` / `ySide`), and a cell that
   sits ON a mirror plane is its own mirror image.** `symmetryRegion`
   selects cells by THROAT CENTROID, and a cell whose centroid sits ON a plane
@@ -2576,26 +2370,6 @@ exists.
   outline is the duct's own outline pushed out by one number — so the view
   showed the duct picture again, slightly fatter, and could never show the
   thing that matters (the boolean result, which needs a kernel).
-- **A CAPPED DUCT'S VOLUME DEPENDS ON THE CAP FILL, and that explains the
-  whole brep-vs-STL volume difference.** The mouth ring is NON-PLANAR in
-  every mouth mode — rect included, its ring spans ~1.7 mm of z — so the
-  surface spanning it is a choice: the STL fans to the ring centroid, the
-  STEP fills with a Coons patch, and the enclosed volume moves 0.8-5% of a
-  duct with that choice (5% on a wide biradial cell). The walls are NOT part
-  of the difference: closing the B-spline walls with the SAME fans the mesh
-  uses agrees with the mesh volume to 0.097% worst-case over 18 ducts. The
-  test asserts the fan-capped identity tightly and bounds the Coons-vs-fan
-  difference by ring area x ring normal-spread; do not chase the raw
-  brep-vs-mesh percentage, it is measuring the cap choice.
-- **LU WITH PARTIAL PIVOTING HAS TWO CONVENTIONS AND THEY DO NOT MIX.** Swap
-  full rows during factorisation (multiplier columns included) and you must
-  apply the whole permutation to the right-hand side BEFORE substitution;
-  swap only columns >= k and you must interleave swap-and-update. Mixing
-  them (full-row swaps + interleaved solve) corrupts the solve whenever a
-  later pivot moves a row whose multiplier was already used — measured 6.0
-  absolute error on a random 11x11, and 105 mm of surface residual before
-  the fix. The residual check caught it; a fixed-tolerance "looks close"
-  check would not have, because small systems often pivot trivially.
 - **THE COPED-JOINT BULGE IS BUILT, and the union identity held to 4e-16.**
   `bulge: { amp }` bows every INTERIOR mouth-cell edge into its neighbour
   with a sine lobe in (u,v) space — zero at the corners, mm converted per
@@ -3145,11 +2919,6 @@ exists.
   [0.3,0.95]) measures 0.00% at every resolution. Same conclusion, three
   ways: solve the depth and the bow becomes a small correction.
 
-- **A 1x1 grid used to crash the equal-area solve.** Zero constraints took
-  the trivial-return path through `finish()` before `let it` was initialised
-  — a temporal dead zone, not physics. Fixed; the 1x1 straight cell is now
-  itself a regression test and the closed-form testbed above.
-
 - **H-grid f₁ is set by rows, not columns.** The binding cell's long dimension
   runs in the row direction, so adding columns only narrows every cell — raising
   its aspect ratio — while f₁_min barely moves. 6×3 and 8×3 land within a few
@@ -3229,9 +2998,10 @@ exists.
   What is NOT done is resolving the overlap. The profile is the only lever on
   it today; centreline manipulation is the stronger one and is the next build.
 - **AXIAL DEPTH IS THE DOMINANT dL LEVER, and the optimum is closed form.**
-  This supersedes the note below, which was measured on the old apex-sphere
-  mouth. On the BIRADIAL mouth the path-length ordering DOES flip with depth —
-  centre shortest when shallow, rim shortest when deep — so there is a depth in
+  This supersedes the apex-sphere note (now in `FINDINGS-ARCHIVE.md`), which
+  was measured on the old single-radius mouth. On the BIRADIAL mouth the
+  path-length ordering DOES flip with depth — centre shortest when shallow,
+  rim shortest when deep — so there is a depth in
   between where every cell is equidistant. Measured at 90x40 deg, 600 mm
   horizontal arc: dL falls 118 -> 81 -> 31 -> **2.04 mm at depth 425**, i.e.
   from 54x the lambda/8 budget to 0.95x, with NO path manipulation at all.
@@ -3348,17 +3118,6 @@ exists.
   single row-wise profile would not cover it. Same lesson as the fc spread —
   solve the depth first and the correction problem gets structurally
   simpler, not merely smaller.
-- **Path length on the APEX-SPHERE mouth: the centre cell is always shortest.**
-  SUPERSEDED for the biradial mouth by the dL-optimum note above, where the
-  ordering DOES flip with depth. Kept only because it explains why the
-  correction problem looked harder than it is: on a cap centred at the apex
-  every mouth point is at radius r from it, so the distance to a point at
-  angle th is minimised at th = 0 for any r, and no depth or apex can flip it
-  (measured centre-minus-corner negative at every depth 40-700 mm and every
-  apex 60-300 mm). Correction was therefore always centre-cell lengthening,
-  needing room exactly where there is least. The biradial mouth removed that
-  constraint entirely.
-
 - **`sched[].origin` is the CENTRELINE point, not the section's centre, in
   BOTH construction modes.** They drift 0.775 mm in rect and 4.466 mm in arc,
   because the mean of the flowed boundary points is not the flow of the mean,
@@ -3391,12 +3150,6 @@ exists.
   the SigmaA CSV's `flux_area` column and equivalent diameter now use. Testing
   a volume against `area` instead of `axial` fails by ~5%, which is the
   obliquity, not an error.
-- **Station 0 needs no special case now, but it used to.** Under the flow the
-  section at s = 0 IS the throat outline in the throat plane, so the driver
-  mating face is flat by construction. Before the flow, every station was cut
-  perpendicular to its own centreline, and at the throat that already points
-  down the exit cone: station 0 came out tilted by up to 6.85 deg, straddling
-  z = +-0.5 mm, with no common face across the eighteen ducts to seat on.
 - **Per-cell path manipulation is IMPOSSIBLE in flow mode, and that is what
   swept sections unlocked.** Under the flow every boundary point runs its own
   trajectory from its throat position to its mouth position, and neighbours
@@ -3553,32 +3306,6 @@ exists.
   radius is infinite (equal d(arc length)).
   `mouthMode` "rect" and "arc" survive in the model as the comparison baselines
   the tests measure against; the tool offers only biradial.
-- **Decoupling vertical from horizontal curvature is a CONTINUUM, and the one
-  thing it trades is equal solid angle.** (Written when the aperture was still
-  an ellipsoid of REVOLUTION with a single radius; the biradial mouth above
-  superseded that and made the vertically-flat case reachable. The measured
-  trade below is what survives and is why equal solid angle was dropped as a
-  criterion.)
-  Measured at 6x3, Th_h 90 deg, vertical arc 213 mm, with equal-AREA vertical
-  subdivision enforced at every curvature — one rule covers the family, since
-  equal cumulative area reduces to Lambert's equal d(sin elev) at the sphere
-  and to equal d(y) at the cylinder:
-    kappa 1.00 (sphere) area 0.081%, solid angle 0.090%, dL 29.9 mm
-    kappa 0.50          area 0.021%, solid angle 3.358%, dL 33.7 mm
-    kappa 0.00 (flat)   area 0.000%, solid angle 7.873%, dL 37.5 mm
-  So equal area SURVIVES the whole range — the cylinder is exactly equal-area,
-  better than the sphere's 0.081% which is only chord discretisation — and what
-  degrades is equal solid angle. Per row at kappa 0: bottom 0.0562, middle
-  0.0608, top 0.0562 sr, so the middle row owns ~8% more of the pattern for the
-  same area. The cause is geometric: on a cylinder the outer rows sit at
-  sqrt(r^2+y^2) from the apex rather than r, and their surface is oblique to
-  the line of sight; on a sphere both terms vanish, which is exactly why the
-  spherical cap gets equal area and equal solid angle simultaneously.
-  Equal output per cell into unequal solid angle is roughly 0.33 dB of vertical
-  non-uniformity — an order-of-magnitude figure, not a prediction, since this
-  tool computes no radiated pattern and real vertical control is dominated by
-  mouth height and edge diffraction. dL degrades smoothly with curvature, so
-  there is no cliff to avoid, only a trade to price.
 - **The path has four knobs, not one, and `bendCentroid` is what measures
   them.** A cubic Hermite with both endpoints and both end directions fixed
   has exactly two free scalars — the tangent magnitudes — and one `tight`

@@ -1,8 +1,10 @@
 # Ginkgo Multicell Horn — the task queue
 
 This file is the handover: what to build next and the measurement each
-task rests on. It is NOT a changelog — findings live in CLAUDE.md and
-history lives in git. Keep it short enough to read in full.
+task rests on. It is NOT a changelog — findings live in CLAUDE.md (with the
+superseded and finished ones in FINDINGS-ARCHIVE.md, which is greppable but not
+loaded at session start) and history lives in git. Keep it short enough to read
+in full.
 
 ## THE STANDING PRIORITY (read the top of CLAUDE.md before anything here)
 
