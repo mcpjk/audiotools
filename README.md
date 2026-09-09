@@ -10,8 +10,16 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Annular FLH Calculator | `annular-flh.html` | Wall-primitive sectional area tool for square annular folded horns |
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
-| Ginkgo Rim Lab (experimental) | `ginkgo-rim-lab.html` | Independent circular, elliptical and curvature-matched rim comparison; original tool preserved |
-| Ginkgo Multicell Horn | `ginkgo-horn.html` | Equal-area cell partition of a CD exit under an imposed Hypex expansion, per-cell ducts routed to a coverage-defined mouth, exported as solids |
+
+**The two Ginkgo tools moved to `ginkgo.kiiworkshop.com` on 2026-09-09**
+(repo [`mcpjk/ginkgoMulticell`](https://github.com/mcpjk/ginkgoMulticell)),
+taking their full history with them. `ginkgo-horn.html` and
+`ginkgo-rim-lab.html` remain here as redirect stubs so existing links keep
+working; they are real entries in `vite.config.js` and are covered by
+`tests/calculators.spec.js`.
+
+`src/palette.js` is the one file the two repos share. It is duplicated rather
+than published, so a palette change has to be made in both.
 
 Everything computes client-side. No backend, no network calls, no analytics,
 no external libraries beyond React itself.
@@ -29,24 +37,19 @@ horn-calculator.html      entry → src/horn-main.jsx       → HornCalculator
 annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalculator
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   entry → src/aperture-main.jsx    → ApertureWavefield
-ginkgo-horn.html          entry → src/ginkgo-main.jsx      → GinkgoHorn
+ginkgo-horn.html          redirect stub → ginkgo.kiiworkshop.com
+ginkgo-rim-lab.html       redirect stub → ginkgo.kiiworkshop.com
 src/
   HornCalculator.jsx        the component — self-contained, imports react + palette
   AnnularFLHCalculator.jsx
   DirectivityMatch.jsx
   ApertureWavefield.jsx
-  GinkgoHorn.jsx            UI and canvas; calculation jobs run in Web Workers
-  hgrid-model.js            its geometry, solver and acoustics; no React, no colour
-  ginkgo-worker.js           worker entry; compute jobs and export cache in ginkgo-compute.js
-  ginkgo-worker-client.js    cancellation and stale-reply protection
-  ginkgo-state.js            exact design keys and versioned STEP metadata
-  ginkgo-replay.js           reconstruct achieved geometry from that metadata
   palette.js                shared theme tokens, imported by every tool
+                            ALSO in the ginkgoMulticell repo — keep in step
   horn-main.jsx             three-line mount script
   flh-main.jsx
   directivity-main.jsx
 scripts/palette-gen.mjs   regenerates the neutral ramp
-scripts/test-hgrid.mjs    test vectors for the H-grid model, run by the build
 vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy config and custom domain
 ```
@@ -74,9 +77,6 @@ did get.
 
 Every other tool is a single self-contained component. The H-grid throat
 partition keeps its geometry, its equal-area solver and its acoustic model in
-`src/hgrid-model.js`, which imports nothing — no React, no palette. That is so
-`npm run test:hgrid` can load it under plain node and check it against closed
-forms: the exact Neumann modes of a disc and of a circular sector, area closure
 on πR² for any parameter vector, mirrored cells agreeing to machine precision,
 the evanescent decay length, and the corner-angle and DOF counts. The build runs
 those tests before Vite.
@@ -190,4 +190,3 @@ and every STEP file stamps `loft=` in its settings string.
 including page rendering, stale-layout export prevention, separation invalidation,
 solve cancellation and downloaded STEP settings.
 
-The Rim Lab is an isolated snapshot; see `src/rim-lab/README.md` for its geometry, validation and limitations.
