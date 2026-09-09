@@ -33,6 +33,7 @@ test('experimental fork preserves the original cells and duct geometry exactly',
  assert.deepEqual(th,oldTh);
  const old=Original.mapThroatToMouth(oldTh,opts);
  assert.deepEqual(map.rows,old.rows);
+ assert.equal(G.buildSTEP(th,map,{t:.4}).text,Original.buildSTEP(oldTh,old,{t:.4}).text);
  const before=structuredClone(map.rows);
  for(const family of ['circle','ellipse','spline']) assert.equal(G.rimCollar(th,map,{family,t:.4}).report.ok,true);
  assert.deepEqual(map.rows,before);
