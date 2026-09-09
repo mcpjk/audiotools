@@ -41,6 +41,7 @@ test('experimental fork preserves the original cells and duct geometry exactly',
 test('rim follows the exact aperture, shares patch boundaries and respects regions',()=>{
  const rim=G.rimCollar(th,map,{t:.4,family:'spline'});
  assert.equal(rim.report.ok,true); assert.equal(rim.solids.length,12);
+ assert.ok(rim.report.cornerJoinDeg < .01);
  near(rim.report.joinJump,0);
  const field=G.rimExitField(th,map,{t:.4});
  for(let i=0;i<12;i+=3){
