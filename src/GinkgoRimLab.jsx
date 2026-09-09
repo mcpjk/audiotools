@@ -2440,16 +2440,11 @@ export default function GinkgoRimLab() {
           {" "}<strong style={{ color: C.inkDim }}>The cutters are flush with the throat — not extended past it at all.</strong> An
           extension exists to punch through a cap the blank fills differently from the duct, and at the throat there is no such
           difference: both rings are planar in z = 0, so both Coons fills are that plane, measured to 0.0e+0 mm on all {throat.N} cells.
-          What an extension there used to cost was a <em>folded wall</em>: the loft interpolated with a uniform parameterisation, so a short
-          first gap against a full station step made the cubic overshoot backwards through the very cap it was closing — measured at 64
-          stations (4.87 mm step), 0.42 / 0.15 / 0.00 mm of reversal at extensions of 0.5 / 1 / 1.5 mm. <strong style={{ color: C.inkDim }}>The
-          loft is now parameterised by chord length</strong>: it measures the distance between its rings, and the same extensions measure
-          0.000 mm of reversal on every duct. Flush stays, on the membrane argument, and because it puts the cutter's throat face in plane
-          with the blank's, which has taken a failing subtraction to a succeeding one in CAD.
+          The cell loft uses uniform parameterisation, matching the original tool. A chord-length trial reduced extension reversal
+          but increased the bulge in the real mouth span; uniform keeps that distortion in the sacrificial extension.
           {" "}<strong style={{ color: C.inkDim }}>At the mouth the membrane is real</strong>, because the aperture is curved and the
-          duct's cap does sag behind it (0.018 mm at 90×40, 0.038 at 90×60), so that end keeps an extension — the 1 mm the sag needs, and
-          no longer floored at half a station step, since the fold that floor guarded against is gone. The note prints what was used and
-          which loft the file carries. The blank's own extension stays at 3 mm for the staggered end faces.
+          duct cap sags behind it. The cutter extension retains a half-station-step minimum to prevent the short-span fold.
+          The blank extension stays at 3 mm. Experimental rim pieces use their own constrained interpolation.
           {" "}The note reports how much <em>near-copy surface</em> the kit carries: two adjacent blanks offset the same shared grid line
           by the same amount, so millimetres of their surfaces are the same surface computed twice, landing under a micron apart —
           invisible, and below what a kernel can resolve. A per-parity wall jitter that removed it was withdrawn on CAD evidence that it
