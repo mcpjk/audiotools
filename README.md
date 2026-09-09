@@ -10,6 +10,7 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Annular FLH Calculator | `annular-flh.html` | Wall-primitive sectional area tool for square annular folded horns |
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
+| Ginkgo Rim Lab (experimental) | `ginkgo-rim-lab.html` | Independent circular, elliptical and curvature-matched rim comparison; original tool preserved |
 | Ginkgo Multicell Horn | `ginkgo-horn.html` | Equal-area cell partition of a CD exit under an imposed Hypex expansion, per-cell ducts routed to a coverage-defined mouth, exported as solids |
 
 Everything computes client-side. No backend, no network calls, no analytics,
@@ -188,3 +189,5 @@ and every STEP file stamps `loft=` in its settings string.
 (install Chromium with `npx playwright install chromium` first). CI runs both,
 including page rendering, stale-layout export prevention, separation invalidation,
 solve cancellation and downloaded STEP settings.
+
+The Rim Lab is an isolated snapshot; see `src/rim-lab/README.md` for its geometry, validation and limitations.

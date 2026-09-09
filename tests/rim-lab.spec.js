@@ -1,0 +1,61 @@
+import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { readDesignStamp } from '../src/rim-lab/state.js';
+const ready = page => expect(page.getByTestId('rim-status')).toContainText('12 pieces');
+const edit = async (page,label,value) => {
+ const input=page.getByRole('spinbutton',{name:label,exact:true});
+ await input.fill(String(value)); await input.press('Enter');
+};
+test('landing page offers two independent Ginkgo tools',async({page})=>{
+ const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('/');
+ await expect(page.locator('a[href="./ginkgo-horn.html"]')).toBeVisible();
+ await page.locator('a[href="./ginkgo-rim-lab.html"]').click();
+ await expect(page.getByRole('heading',{name:'GINKGO RIM LAB',exact:true})).toBeVisible();
+ await ready(page);
+ await expect(page.getByRole('img',{name:'Rim profile comparison'})).toBeVisible();
+ await page.getByRole('link',{name:'Open original Ginkgo',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'GINKGO MULTICELL HORN',exact:true})).toBeVisible();
+ await expect(page.getByRole('spinbutton',{name:'Radius h (mm)',exact:true})).toHaveValue('0');
+ await expect(page.getByTestId('rim-status')).toHaveCount(0);
+ expect(errors).toEqual([]);
+});
+test('profile controls invalidate the shell export and STEP records the new rim',async({page})=>{
+ await page.goto('/ginkgo-rim-lab.html'); await ready(page);
+ await page.getByRole('button',{name:'Ellipse',exact:true}).click();
+ await edit(page,'Rim forward scale (mm)',45);
+ await expect(page.getByRole('button',{name:'STEP · horn shell',exact:true})).toBeDisabled();
+ await ready(page);
+ const pending=page.waitForEvent('download');
+ await page.getByRole('button',{name:'STEP · horn shell',exact:true}).click();
+ const download=await pending;
+ expect(download.suggestedFilename()).toContain('ginkgo_rim_lab_');
+ const text=await readFile(await download.path(),'utf8');
+ const state=readDesignStamp(text);
+ expect(state.tool).toBe('ginkgo-rim-lab');
+ expect(state.export.shell.rim.family).toBe('ellipse');
+ expect(state.export.shell.rim.depth).toBe(45);
+ expect(text).toContain('experimental rim');
+ expect(state.model).toMatch(/^[a-f0-9]{64}$/);
+});
+test('rim can be disabled and invalid geometry cannot be exported silently',async({page})=>{
+ await page.goto('/ginkgo-rim-lab.html'); await ready(page);
+ await page.getByRole('button',{name:'Circle',exact:true}).click();
+ await edit(page,'Rim outward scale (mm)',8);
+ await edit(page,'shell wall (mm)',8);
+ await expect(page.getByTestId('rim-status')).toContainText('Rim refused:');
+ await expect(page.getByRole('button',{name:'STEP · horn shell',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'Rim on',exact:true}).click();
+ await expect(page.getByTestId('rim-status')).toContainText('Rim off');
+ await expect(page.getByRole('button',{name:'STEP · horn shell',exact:true})).toBeEnabled();
+});
+test('baffle termination and curved mouths remain interactive',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('/ginkgo-rim-lab.html'); await ready(page);
+ await page.getByRole('button',{name:'Baffle tangent',exact:true}).click();
+ await edit(page,'Coverage Θv (°)',40);
+ await ready(page);
+ await page.getByRole('button',{name:'Circle',exact:true}).click(); await ready(page);
+ await page.getByRole('button',{name:'Curvature-matched spline',exact:true}).click(); await ready(page);
+ expect(errors).toEqual([]);
+});
