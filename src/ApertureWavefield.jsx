@@ -52,6 +52,40 @@ import { C } from "./palette.js";
 //   Far field only, deliberately: the listening radius belongs to the
 //   polar plot below, which is where near-field collapse is visible.
 //
+// THE WAVEFRONT ANIMATION — a film, and its frame rate is a choice
+//   The view is slow motion of a real field, and the slow-motion factor
+//   is FREQUENCY-INDEPENDENT by construction. A model clock t advances
+//   at dt_model = dt_real·v_show/c and the canvas draws Re{A·e^(iωt)},
+//   so a crest sits at r = c·t and moves at exactly v_show metres of
+//   modelled space per real second AT EVERY FREQUENCY. Air is
+//   non-dispersive; the picture now says so.
+//
+//   It did not. Until 2026-09 the loop advanced a fixed 0.13 rad of
+//   phase per animation FRAME, which holds the cycle constant (0.806 s
+//   at 60 Hz refresh) and makes the apparent speed 0.13·fps·c/(2πf) —
+//   inversely proportional to frequency, a 100:1 spread across the
+//   audio band, and a dispersive medium the field sum never modelled.
+//   It was also tied to display refresh rate, so a 120 Hz monitor ran
+//   it at double speed. Both are gone: the clock reads the rAF
+//   timestamp.
+//
+//   Two costs of doing it honestly, both bounded, both on screen:
+//   · TEMPORAL sampling. dφ per frame is ω·dt_real·v_show/c, so high f
+//     wants more frames per cycle than the display has. PHI_CAP holds
+//     it at four frames per cycle; above that the clock runs slower
+//     than v_show and the readout says the true figure instead of
+//     lying. The cap engages above f = c·fps/(4·v_show): 17.5 kHz at
+//     the 0.3 m/s default and 60 Hz, 8.7 kHz at the 0.6 preset. That
+//     is why 0.3 is the default — it is the fastest preset that stays
+//     honest across essentially the whole audio band. Where it does
+//     bite, the field is already past the spatial limit below anyway.
+//   · SPATIAL sampling, which belongs to the field grid and not to the
+//     clock: there are (c/f)·gridW/Lx pixels per wavelength — 8.7 at
+//     4 kHz on the defaults, 1.75 at 20 kHz, past Nyquist. The readout
+//     prints it and flags below 2 px/λ, where the fringes are moiré
+//     rather than wavefronts. Raising Detail or shrinking Lx is the
+//     fix; nothing in the animation can repair it.
+//
 // STATED ASSUMPTIONS
 //   · 2D line sources: amplitude ∝ 1/√r, element factor sinc() not
 //     2J₁(x)/x. Angles, onset frequencies and fill-factor leakage
@@ -86,6 +120,22 @@ const fmt = (v, dec = 1) => {
 };
 
 const speedOfSound = (tC) => 331.3 * Math.sqrt(1 + tC / 273.15);
+
+// ── animation time base — see the header block ──
+// Apparent propagation speeds on offer, in metres of MODELLED space per real
+// second. Independent of frequency by construction; 0.3 crosses the default
+// 3 m field in ten seconds.
+const SHOW_SPEEDS = [0.15, 0.3, 0.6];
+// Floor on animation frames per wave cycle. Below four a wavefront reads as
+// flicker; at two it aliases into travelling backwards. The clock is held here
+// and the readout reports the speed it actually achieved.
+const PHI_CAP = Math.PI / 2;
+// Ceiling on the real time any single frame may represent, so a tab that was
+// hidden for a minute resumes rather than jumping the field a metre.
+const DT_CAP = 0.1;
+// Nominal refresh used ONLY to predict the cap in the readout. The clock
+// itself reads the rAF timestamp and does not assume any rate.
+const FPS_NOMINAL = 60;
 
 // Field colour map, anchored to the palette so the zero-pressure level matches
 // the page background exactly. These were previously raw RGB literals holding
@@ -329,6 +379,7 @@ export default function ApertureWavefield() {
   const [gridW, setGridW] = useState(300);
   const [mapMode, setMapMode] = useState("instant");
   const [animate, setAnimate] = useState(true);
+  const [vShow, setVShow] = useState(0.3);          // apparent speed, m/s of modelled space
   const [gain, setGain] = useState(1.0);
   const [showRays, setShowRays] = useState(true);
 
@@ -426,9 +477,43 @@ export default function ApertureWavefield() {
     return { re, im, W, H, ref, x0, x1, y0, Ly };
   }, [src, gridW, freq, c, Lx, lambda_mm]);
 
+  // ── animation time base, and what it costs — reported, never assumed ──
+  // Everything here except `capped` is exact; `capped` and `vEff` assume
+  // FPS_NOMINAL because the cap is the one quantity that depends on the
+  // display, and a readout that changed with the measured frame rate would
+  // be unreadable.
+  const anim = useMemo(() => {
+    const omega = 2 * Math.PI * freq;
+    const dphi = (omega * vShow) / c / FPS_NOMINAL;
+    const capped = dphi > PHI_CAP;
+    const vEff = capped ? (PHI_CAP * FPS_NOMINAL * c) / omega : vShow;
+    return {
+      vEff, capped,
+      slowMo: c / vEff,                                   // real seconds per model second
+      cross: Lx / vEff,                                   // field is exactly Lx wide
+      framesPerCycle: (2 * Math.PI) / Math.min(dphi, PHI_CAP),
+      pxPerLambda: ((lambda_mm / 1000) * gridW) / Lx,
+    };
+  }, [freq, c, vShow, Lx, lambda_mm, gridW]);
+
+  // Held in state rather than read inside the animation effect, so that the
+  // readout and the loop agree about whether anything is actually moving.
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReduceMotion(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  const moving = animate && !reduceMotion;
+
   // ── canvas render + animation ──
   const canvasRef = useRef(null);
-  const phaseRef = useRef(0);
+  // MODEL time in seconds, not accumulated phase: changing frequency then
+  // re-reads the same instant of the same clock instead of jumping the field.
+  const tRef = useRef(0);
   useEffect(() => {
     const cv = canvasRef.current;
     if (!cv) return;
@@ -438,11 +523,13 @@ export default function ApertureWavefield() {
     const img = ctx.createImageData(W, H);
     const data = img.data;
     let raf = null;
-    const reduce = typeof window !== "undefined" && window.matchMedia
-      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false;
+
+    const omega = 2 * Math.PI * freq;
+    const rate = vShow / c;                 // model seconds per real second = 1/slow-mo
+    const dtCycleCap = PHI_CAP / omega;     // the frames-per-cycle floor, in model seconds
 
     const draw = () => {
-      const ph = phaseRef.current;
+      const ph = omega * tRef.current;
       const ct = Math.cos(ph), st = Math.sin(ph);
       const inv = gain / ref;
       for (let i = 0; i < W * H; i++) {
@@ -468,12 +555,26 @@ export default function ApertureWavefield() {
       ctx.putImageData(img, 0, 0);
     };
 
-    if (animate && mapMode === "instant" && !reduce) {
-      const loop = () => { phaseRef.current += 0.13; draw(); raf = requestAnimationFrame(loop); };
+    if (moving && mapMode === "instant") {
+      // Advance by MEASURED elapsed time, so the apparent speed is vShow at
+      // every frequency and on every display, rather than by a fixed step per
+      // frame, which made it ∝ 1/f and ∝ refresh rate.
+      let last = null;
+      const loop = (ts) => {
+        if (last !== null) {
+          let dtReal = (ts - last) / 1000;
+          if (!(dtReal > 0)) dtReal = 0;
+          else if (dtReal > DT_CAP) dtReal = DT_CAP;
+          tRef.current += Math.min(dtReal * rate, dtCycleCap);
+        }
+        last = ts;
+        draw();
+        raf = requestAnimationFrame(loop);
+      };
       raf = requestAnimationFrame(loop);
     } else draw();
     return () => { if (raf) cancelAnimationFrame(raf); };
-  }, [field, mapMode, animate, gain]);
+  }, [field, mapMode, moving, gain, freq, c, vShow]);
 
   // ── polar curves ──
   const polar = useMemo(() => {
@@ -743,6 +844,14 @@ export default function ApertureWavefield() {
               <span style={{ color: C.textDim }}>Propagate</span>
             </label>
           )}
+          {mapMode === "instant" && moving && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>Shown at</span>
+              {SHOW_SPEEDS.map((v) => (
+                <button key={v} onClick={() => setVShow(v)} style={btn(vShow === v, C.amber)}>{v} m/s</button>
+              ))}
+            </div>
+          )}
           <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12 }}>
             <input type="checkbox" checked={showRays} onChange={(e) => setShowRays(e.target.checked)} style={{ accentColor: C.red }} />
             <span style={{ color: C.textDim }}>Geometry overlays</span>
@@ -816,6 +925,31 @@ export default function ApertureWavefield() {
             })}
           </svg>
         </div>
+
+        {mapMode === "instant" && (
+          <div style={{ marginTop: 6, fontSize: 10, fontFamily: C.mono, color: C.textMuted, textAlign: "center" }}>
+            {animate && reduceMotion && (
+              <>frozen — the system asks for reduced motion · </>
+            )}
+            {moving && (
+              <>
+                {fmt(anim.slowMo, 0)}:1 slow motion · crests cross the {fmt(Lx, 1)} m field in {fmt(anim.cross, 1)} s
+                {" · "}{fmt(anim.framesPerCycle, 0)} frames per cycle
+                {anim.capped && (
+                  <span style={{ color: C.red }}>
+                    {" "}— clock capped at the 4-frame floor, so the film runs at {fmt(anim.vEff, 2)} m/s,
+                    not {vShow} (assumes {FPS_NOMINAL} Hz refresh)
+                  </span>
+                )}
+                {" · "}
+              </>
+            )}
+            {fmt(anim.pxPerLambda, 1)} px per λ
+            {anim.pxPerLambda < 2 && (
+              <span style={{ color: C.red }}> — under 2 px/λ, the fringes are moiré, not wavefronts</span>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 6, flexWrap: "wrap" }}>
           <span style={{ fontSize: 10, color: C.green }}>━ Mouth arc(s)</span>
@@ -1150,6 +1284,21 @@ export default function ApertureWavefield() {
         R = (w/2)/sinα whose chord endpoints land at ±w/2, each with its normal pointing radially from the virtual apex.
         The spherical wavefront is therefore produced by where the sources <em>are</em>, not by an added phase term —
         the same code path handles flat and curved mouths, and α = 0 reproduces every v1 result exactly.
+        <br />
+        <strong style={{ color: C.textDim }}>The wavefront view is a film, at a stated frame rate</strong> · One
+        slow-motion factor is used at every frequency, so a crest crosses the field at the same metres per second
+        whether you are at 200 Hz or 20 kHz, and only the spacing between crests changes. That is what a
+        non-dispersive medium looks like, and it is what the field sum already assumes. Until 2026-09 this ran at a
+        fixed phase step per animation frame, which held the CYCLE constant instead and made the apparent speed
+        ∝ 1/f — a 100:1 spread across the audio band, plus a doubling on a 120 Hz display. If you want to compare two
+        frequencies, this is the difference between a fair comparison and an artefact.
+        <br />
+        <strong style={{ color: C.textDim }}>Two sampling limits, both printed under the field</strong> · In time, the
+        clock will not go below four animation frames per wave cycle; if that floor binds, the readout reports the
+        speed the film actually achieved rather than the one requested. In space, the grid resolves (c/f)·gridW/Lx
+        pixels per wavelength — 8.7 at 4 kHz on the defaults, 1.75 at 20 kHz. Below about 2 px/λ you are looking at
+        moiré between the wave and the pixel grid, not at wavefronts; raise Detail or narrow the field width. No
+        amount of animation fixes that one, which is why it is printed rather than hidden.
         <br />
         <strong style={{ color: C.textDim }}>What the polar map shows</strong> · Level over frequency
         × angle, far field, one direct summation per band — the polar plot below is one vertical slice
