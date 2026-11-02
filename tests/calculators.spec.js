@@ -5,9 +5,9 @@ import { test, expect } from '@playwright/test';
 // name every real entry in vite.config.js's `input` map — a page missing from
 // HERE is a page whose blank render is nobody's test.
 const TOOLS = ['horn-calculator.html', 'annular-flh.html',
-  'directivity-match.html', 'aperture-wavefield.html'];
+  'directivity-match.html', 'aperture-wavefield.html', 'box-modes.html'];
 
-test('the landing page and all four calculators render without errors', async ({ page }) => {
+test('the landing page and every calculator render without errors', async ({ page }) => {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
@@ -42,6 +42,6 @@ test('the landing page sends the Ginkgo cards to the subdomain', async ({ page }
   await page.goto('/');
   for (const t of ['ginkgo-horn', 'ginkgo-rim-lab'])
     await expect(page.locator(`a[href="https://ginkgo.kiiworkshop.com/${t}.html"]`)).toBeVisible();
-  for (const t of TOOLS)   // and the four that stayed are still local
+  for (const t of TOOLS)   // and the local tools are still local
     await expect(page.locator(`a[href="./${t}"]`)).toBeVisible();
 });
