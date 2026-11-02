@@ -20,6 +20,7 @@ export default defineConfig({
         flh: resolve(here, "annular-flh.html"),
         directivity: resolve(here, "directivity-match.html"),
         aperture: resolve(here, "aperture-wavefield.html"),
+        boxModes: resolve(here, "box-modes.html"),
         // Redirect stubs only — the tools themselves moved to
         // ginkgo.kiiworkshop.com (repo mcpjk/ginkgoMulticell) on 2026-09-09.
         // They stay in the build so existing links and bookmarks survive.

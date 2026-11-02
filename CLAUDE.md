@@ -4,7 +4,7 @@ Working notes for this repo. Read before changing anything.
 
 ## What this is
 
-Four loudspeaker design calculators served as a static multi-page site at
+Five loudspeaker design calculators served as a static multi-page site at
 `audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
@@ -49,12 +49,15 @@ src/horn-model.js         its physics, split out so node can test it
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
 directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
+box-modes.html            → src/box-modes-main.jsx   → BoxModes
+src/box-modes-model.js    its physics, split out like horn-model.js
 ginkgo-horn.html          redirect stub → ginkgo.kiiworkshop.com
 ginkgo-rim-lab.html       redirect stub → ginkgo.kiiworkshop.com
 src/palette.js            shared theme tokens — see below; ALSO lives in the
                           ginkgoMulticell repo, keep the two in step
 scripts/palette-gen.mjs   regenerates the neutral ramp
 scripts/test-horn.mjs     closed forms for horn-model.js — the build runs these
+scripts/test-box-modes.mjs  closed forms for box-modes-model.js — so does this
 tests/calculators.spec.js the render sweep + the two redirect stubs
 vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy + custom domain
@@ -72,6 +75,7 @@ npm run dev        # localhost:5173
 npm run build      # check:palette, then test:horn, then vite → dist/
 npm run preview    # serve the built output as deployed
 npm run test:horn  # closed-form vectors for src/horn-model.js
+npm run test:box   # closed-form vectors for src/box-modes-model.js
 npm run test:ui    # Playwright: the render sweep and the redirect stubs
 ```
 
@@ -184,8 +188,10 @@ Match what is already there rather than modernising it:
   forms. The Ginkgo tool established this pattern before it left. Split a tool
   this way only when it has enough physics AND enough independent closed forms
   to make the tests worth having. Do not split for tidiness; the single-file
-  convention is the default for a reason, and the other three tools are still
-  single files. **The split earns its keep the first time it runs**: it found
+  convention is the default for a reason. Box Modes is the second tool split
+  this way (2026-11-02): the exact 1D duct solution and the lumped-compliance
+  limit are real referees for its modal sum, and on its first run the suite
+  caught the disc sampler over-weighting the cone's rim by 30%. **The split earns its keep the first time it runs**: it found
   the tractrix orientation bug, which had shipped and which no amount of
   comparing against the tool's own previous output could have caught.
 - A long comment block at the top of each tool stating the model, its

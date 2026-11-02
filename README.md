@@ -10,6 +10,7 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Annular FLH Calculator | `annular-flh.html` | Wall-primitive sectional area tool for square annular folded horns |
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
+| Box Modes | `box-modes.html` | Standing-wave pressure inside a rectangular box, re the lumped value — where a port entrance sees the modes that couple to the driver |
 
 **The two Ginkgo tools moved to `ginkgo.kiiworkshop.com` on 2026-09-09**
 (repo [`mcpjk/ginkgoMulticell`](https://github.com/mcpjk/ginkgoMulticell)),
@@ -37,6 +38,7 @@ horn-calculator.html      entry → src/horn-main.jsx       → HornCalculator
 annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalculator
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   entry → src/aperture-main.jsx    → ApertureWavefield
+box-modes.html            entry → src/box-modes-main.jsx   → BoxModes
 ginkgo-horn.html          redirect stub → ginkgo.kiiworkshop.com
 ginkgo-rim-lab.html       redirect stub → ginkgo.kiiworkshop.com
 src/
