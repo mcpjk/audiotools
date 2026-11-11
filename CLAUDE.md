@@ -51,6 +51,11 @@ directivity-match.html    → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   → src/aperture-main.jsx    → ApertureWavefield
 box-modes.html            → src/box-modes-main.jsx   → BoxModes
 src/box-modes-model.js    its physics, split out like horn-model.js
+cavity-modes.html         → src/cavity-modes-main.jsx → CavityModes
+src/cavity-model.js       its physics: STL → cut-cell grid → Lanczos modes
+src/cavity-worker.js      runs the eigen-solve off the page's thread — the
+                          one tool with a worker; seconds-to-minutes of
+                          compute would otherwise freeze the page
 ginkgo-horn.html          redirect stub → ginkgo.kiiworkshop.com
 ginkgo-rim-lab.html       redirect stub → ginkgo.kiiworkshop.com
 src/palette.js            shared theme tokens — see below; ALSO lives in the
@@ -58,6 +63,7 @@ src/palette.js            shared theme tokens — see below; ALSO lives in the
 scripts/palette-gen.mjs   regenerates the neutral ramp
 scripts/test-horn.mjs     closed forms for horn-model.js — the build runs these
 scripts/test-box-modes.mjs  closed forms for box-modes-model.js — so does this
+scripts/test-cavity.mjs   closed forms for cavity-model.js — and this (~10 s)
 tests/calculators.spec.js the render sweep + the two redirect stubs
 vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy + custom domain
@@ -76,6 +82,7 @@ npm run build      # check:palette, then test:horn, then vite → dist/
 npm run preview    # serve the built output as deployed
 npm run test:horn  # closed-form vectors for src/horn-model.js
 npm run test:box   # closed-form vectors for src/box-modes-model.js
+npm run test:cavity  # closed-form vectors for src/cavity-model.js
 npm run test:ui    # Playwright: the render sweep and the redirect stubs
 ```
 

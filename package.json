@@ -6,13 +6,14 @@
   "description": "Loudspeaker design calculators, served as a static multi-page site",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-palette.mjs && node scripts/test-horn.mjs && node scripts/test-box-modes.mjs && vite build",
+    "build": "node scripts/check-palette.mjs && node scripts/test-horn.mjs && node scripts/test-box-modes.mjs && node scripts/test-cavity.mjs && vite build",
     "preview": "vite preview",
     "check:palette": "node scripts/check-palette.mjs",
     "test:ui": "playwright test",
     "theme:sync": "node scripts/sync-theme.mjs",
     "test:horn": "node scripts/test-horn.mjs",
-    "test:box": "node scripts/test-box-modes.mjs"
+    "test:box": "node scripts/test-box-modes.mjs",
+    "test:cavity": "node scripts/test-cavity.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

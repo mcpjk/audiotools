@@ -5,7 +5,8 @@ import { test, expect } from '@playwright/test';
 // name every real entry in vite.config.js's `input` map — a page missing from
 // HERE is a page whose blank render is nobody's test.
 const TOOLS = ['horn-calculator.html', 'annular-flh.html',
-  'directivity-match.html', 'aperture-wavefield.html', 'box-modes.html'];
+  'directivity-match.html', 'aperture-wavefield.html', 'box-modes.html',
+  'cavity-modes.html'];
 
 test('the landing page and every calculator render without errors', async ({ page }) => {
   const errors = [];
