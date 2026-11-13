@@ -2,7 +2,7 @@
 
 Loudspeaker design calculators, served as a static multi-page site.
 
-Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
+Live under: `macapeh.com/audio/design/` (see **Deployment** below)
 
 | Tool | Page | What it does |
 |---|---|---|
@@ -12,12 +12,11 @@ Live at: `audiotools.kiiworkshop.com` (see **Deployment** below)
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
 | Box Modes | `box-modes.html` | Standing-wave pressure inside a rectangular box, re the lumped value — where a port entrance sees the modes that couple to the driver |
 
-**The two Ginkgo tools moved to `ginkgo.kiiworkshop.com` on 2026-09-09**
+**The two Ginkgo tools moved to their own repo on 2026-09-09**, served at
+`macapeh.com/audio/design/multicell/`
 (repo [`mcpjk/ginkgoMulticell`](https://github.com/mcpjk/ginkgoMulticell)),
-taking their full history with them. `ginkgo-horn.html` and
-`ginkgo-rim-lab.html` remain here as redirect stubs so existing links keep
-working; they are real entries in `vite.config.js` and are covered by
-`tests/calculators.spec.js`.
+taking their full history with them. The redirect stubs they left here were
+removed on 2026-11-13, when the old hostname was retired.
 
 `src/palette.js` is the one file the two repos share. It is duplicated rather
 than published, so a palette change has to be made in both.
@@ -39,8 +38,6 @@ annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalcul
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   entry → src/aperture-main.jsx    → ApertureWavefield
 box-modes.html            entry → src/box-modes-main.jsx   → BoxModes
-ginkgo-horn.html          redirect stub → ginkgo.kiiworkshop.com
-ginkgo-rim-lab.html       redirect stub → ginkgo.kiiworkshop.com
 src/
   HornCalculator.jsx        the component — self-contained, imports react + palette
   AnnularFLHCalculator.jsx
@@ -144,23 +141,35 @@ location ever changes, both files have to change together.
 A failed build does not overwrite the live version, and previous deployments can
 be rolled back from the dashboard.
 
-### Custom domain
+### Where it is served
 
-`audiotools.kiiworkshop.com`, declared as a `custom_domain` route in
-`wrangler.jsonc` so the binding lives in version control rather than only in
-the dashboard. kiiworkshop.com is already a Cloudflare zone, so Cloudflare
-creates the DNS record and provisions the certificate itself — nothing to edit
-by hand at a registrar.
+This Worker has no hostname of its own. The public site is `macapeh.com`,
+served by the hub Worker `macapeh-site` (its own repo), which mounts each page
+here under `macapeh.com/audio/design/<tool>/` through a Cloudflare **service
+binding** named `AUDIOTOOLS`, stripping the prefix before forwarding. So the
+build must keep `base: "./"` in `vite.config.js`: every asset path is
+relative and resolves under whatever prefix the hub uses. Moving a tool to
+another path is an edit to the hub's `src/site.js`, not to this repo.
 
-Note the distinction, because the two sit next to each other in the dashboard
-and only one of them works here: a **custom domain** creates the DNS record and
-makes the hostname resolve; a plain **route** only attaches the Worker to a URL
-pattern, and assumes a record already exists. A route on a hostname with no DNS
-record produces a "server not found" error, not a Worker error.
+```
+/audio/design/horn-profile/        -> horn-calculator
+/audio/design/annular-flh/         -> annular-flh
+/audio/design/directivity-match/   -> directivity-match
+/audio/design/aperture-wavefield/  -> aperture-wavefield
+/audio/design/box-modes/           -> box-modes
+/audio/design/cavity-modes/        -> cavity-modes
+```
 
-A subdomain rather than the apex, so the tools deploy independently of whatever
-serves kiiworkshop.com itself. Note that Workers custom domains only attach to
-zones on Cloudflare's nameservers; an external CNAME cannot point at a Worker.
+The old home, `audiotools.kiiworkshop.com`, was retired on 2026-11-13 with no
+redirect: the hostname is detached and its DNS record gone. The
+`workers.dev` URL still serves this Worker directly, which isolates "did the
+build work" from "did the hub work".
+
+Note the distinction, because the two sit next to each other in the dashboard:
+a **custom domain** creates the DNS record and makes the hostname resolve; a
+plain **route** only attaches a Worker to a URL pattern, and assumes a record
+already exists. A route on a hostname with no DNS record produces a "server
+not found" error, not a Worker error.
 
 ### Ginkgo calculation and export checks
 
