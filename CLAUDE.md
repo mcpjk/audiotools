@@ -12,11 +12,10 @@ network calls, no analytics, no external libraries beyond React.
 **THE TWO GINKGO TOOLS LEFT THIS REPO ON 2026-09-09** (now served at
 `macapeh.com/audio/design/multicell/`), repo **`mcpjk/ginkgoMulticell`**, with their full
 history: they had reached ~20,800 lines against these four tools' ~3,500, and
-~99% of a five-minute build gate every unrelated change had to pay. What is
-left here for them is two REDIRECT STUBS — `ginkgo-horn.html` and
-`ginkgo-rim-lab.html`, static meta-refresh pages that keep existing links and
-bookmarks working. They are real entries in `vite.config.js` and are covered
-by `tests/calculators.spec.js`; do not delete them.
+~99% of a five-minute build gate every unrelated change had to pay. The two
+redirect stubs they left behind (`ginkgo-horn.html`, `ginkgo-rim-lab.html`)
+were deleted on 2026-11-13, when the old hostname was retired; only the
+landing page's card links to the multicell horn now.
 **`src/palette.js` is the ONE file the two repos share.** It was the only
 import that crossed the boundary. It is duplicated, not published, so a
 palette change has to be made in BOTH repos, and `npm run check:palette` runs
@@ -57,15 +56,13 @@ src/cavity-model.js       its physics: STL → cut-cell grid → Lanczos modes
 src/cavity-worker.js      runs the eigen-solve off the page's thread — the
                           one tool with a worker; seconds-to-minutes of
                           compute would otherwise freeze the page
-ginkgo-horn.html          redirect stub → macapeh.com/audio/design/multicell/
-ginkgo-rim-lab.html       redirect stub → same (the rim lab no longer exists)
 src/palette.js            shared theme tokens — see below; ALSO lives in the
                           ginkgoMulticell repo, keep the two in step
 scripts/palette-gen.mjs   regenerates the neutral ramp
 scripts/test-horn.mjs     closed forms for horn-model.js — the build runs these
 scripts/test-box-modes.mjs  closed forms for box-modes-model.js — so does this
 scripts/test-cavity.mjs   closed forms for cavity-model.js — and this (~10 s)
-tests/calculators.spec.js the render sweep + the two redirect stubs
+tests/calculators.spec.js the render sweep + the landing page links
 vite.config.js            the `input` map is what makes this multi-page
 wrangler.jsonc            Cloudflare deploy + custom domain
 ```
@@ -84,7 +81,7 @@ npm run preview    # serve the built output as deployed
 npm run test:horn  # closed-form vectors for src/horn-model.js
 npm run test:box   # closed-form vectors for src/box-modes-model.js
 npm run test:cavity  # closed-form vectors for src/cavity-model.js
-npm run test:ui    # Playwright: the render sweep and the redirect stubs
+npm run test:ui    # Playwright: the render sweep and the landing page links
 ```
 
 ## Adding a tool
@@ -234,9 +231,9 @@ claiming a change works:
    next one worth doing — the flat-piston closed form asin(0.6034·λ/w) gives
    it a real referee. FLH and Directivity may not carry enough independent
    closed forms to be worth it; check before splitting.
-5. `npm run test:ui` covers the render sweep and the two redirect stubs. The
-   stubs assert the TARGET only, never that macapeh.com is up —
-   that is the other site's business and is not observable from here.
+5. `npm run test:ui` covers the render sweep and the landing page's links. The
+   Ginkgo card is asserted by its TARGET only, never that macapeh.com is up —
+   that is the hub's business and is not observable from here.
 
 Chromium is available at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
 for headless rendering checks.
@@ -244,8 +241,8 @@ for headless rendering checks.
 ## Deployment
 
 Push to `main` → Cloudflare builds and deploys the `audiotools` Worker, which
-has no hostname of its own: the hub serves it, and `audiotools.kiiworkshop.com`
-is the hub's, 301ing to the new paths. `dist/` and
+has no hostname of its own: the hub serves it. The old
+`audiotools.kiiworkshop.com` was retired on 2026-11-13 with no redirect. `dist/` and
 `node_modules/` are gitignored; Cloudflare regenerates both.
 
 Gotchas that have already bitten once each:

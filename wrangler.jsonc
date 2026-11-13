@@ -11,9 +11,9 @@
   // NO routes and NO custom domain. The public site is macapeh.com, served
   // by the hub Worker "macapeh-site", which reaches this Worker through a
   // service binding and mounts its pages under /audio/design/. The old
-  // hostname audiotools.kiiworkshop.com is now a custom domain of the HUB
-  // (it 301s to the new paths). Do not list it here again: a deploy would
-  // try to take it back from the hub.
+  // hostname audiotools.kiiworkshop.com was retired on 2026-11-13 (no
+  // redirect). Do not add a custom domain or route here: the hub owns the
+  // public URLs.
   // workers.dev stays on: it isolates "did the build work" from "did the
   // hub work", and it is how to reach this Worker directly.
   "workers_dev": true

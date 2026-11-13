@@ -15,10 +15,8 @@ Live under: `macapeh.com/audio/design/` (see **Deployment** below)
 **The two Ginkgo tools moved to their own repo on 2026-09-09**, served at
 `macapeh.com/audio/design/multicell/`
 (repo [`mcpjk/ginkgoMulticell`](https://github.com/mcpjk/ginkgoMulticell)),
-taking their full history with them. `ginkgo-horn.html` and
-`ginkgo-rim-lab.html` remain here as redirect stubs so existing links keep
-working; they are real entries in `vite.config.js` and are covered by
-`tests/calculators.spec.js`.
+taking their full history with them. The redirect stubs they left here were
+removed on 2026-11-13, when the old hostname was retired.
 
 `src/palette.js` is the one file the two repos share. It is duplicated rather
 than published, so a palette change has to be made in both.
@@ -40,8 +38,6 @@ annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalcul
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
 aperture-wavefield.html   entry → src/aperture-main.jsx    → ApertureWavefield
 box-modes.html            entry → src/box-modes-main.jsx   → BoxModes
-ginkgo-horn.html          redirect stub → macapeh.com/audio/design/multicell/
-ginkgo-rim-lab.html       redirect stub → macapeh.com/audio/design/multicell/
 src/
   HornCalculator.jsx        the component — self-contained, imports react + palette
   AnnularFLHCalculator.jsx
@@ -164,8 +160,8 @@ another path is an edit to the hub's `src/site.js`, not to this repo.
 /audio/design/cavity-modes/        -> cavity-modes
 ```
 
-`audiotools.kiiworkshop.com` (the old home) is a custom domain of the HUB,
-which answers every request on it with a 301 to the page's new path. The
+The old home, `audiotools.kiiworkshop.com`, was retired on 2026-11-13 with no
+redirect: the hostname is detached and its DNS record gone. The
 `workers.dev` URL still serves this Worker directly, which isolates "did the
 build work" from "did the hub work".
 
