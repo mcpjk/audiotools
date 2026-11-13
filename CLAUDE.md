@@ -96,12 +96,18 @@ npm run test:ui    # Playwright: the render sweep and the landing page links
 4. Register it in **three** places:
    - `vite.config.js` → the `input` map. **A page missing from this map is
      silently not built** — no error, it just never appears.
-   - The hub, `mcpjk/macapeh.com` → a `TOOLS` entry in `src/site.js` (path,
-     `AUDIOTOOLS`, page name without `.html`, title, blurb). **This is what
-     gives the page a public URL and its card on the public index**; without
-     it the tool is built and deployed but unreachable.
-   - `index.html` here → an `<a class="card">` block, for local dev and the
-     test sweep only. Keep its blurb the same as the hub's.
+   - `index.html` → an `<a class="card">` block. This landing page is only for
+     `npm run dev` / `npm run preview`; the public site never serves it (the
+     hub sends a tool's `index` link to that tool's section page).
+   - **The hub, in its own repo `mcpjk/macapeh.com`** → a `TOOLS` entry in
+     `src/site.js` (public path, `service: "AUDIOTOOLS"`, `page` = the entry
+     HTML's name without `.html`, title, blurb). **Without it the tool is
+     built and deployed but has no public URL**, and the hub's index never
+     lists it. The hub auto-deploys on a push to its `main`.
+
+Renaming an entry HTML file breaks its public URL the same way: the hub asks
+for the page by name, so change its `page` in `src/site.js` in step with the
+rename.
 
 ## The palette
 
