@@ -13,7 +13,13 @@ const problems = [];
 const note = (file, line, msg) => problems.push(`${file}${line ? ":" + line : ""}  ${msg}`);
 
 // ── 1. tool sources must not carry raw colour values ──
-for (const f of readdirSync("src").filter((f) => f.endsWith(".jsx"))) {
+// Top-level .jsx, plus everything in a per-tool folder (src/<tool>/: .js, .jsx,
+// .css), since a tool in its own folder need not be React.
+const sources = [
+  ...readdirSync("src").filter((f) => f.endsWith(".jsx")),
+  ...readdirSync("src", { recursive: true }).filter((f) => f.includes("/") && /\.(jsx?|css)$/.test(f)),
+];
+for (const f of sources) {
   readFileSync(`src/${f}`, "utf8").split("\n").forEach((ln, i) => {
     if (ln.includes("palette-exempt")) return;
     const hex = ln.match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g);

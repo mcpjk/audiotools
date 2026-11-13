@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
 // HERE is a page whose blank render is nobody's test.
 const TOOLS = ['horn-calculator.html', 'annular-flh.html',
   'directivity-match.html', 'aperture-wavefield.html', 'box-modes.html',
-  'cavity-modes.html'];
+  'cavity-modes.html', 'crossover-scope.html'];
 
 test('the landing page and every calculator render without errors', async ({ page }) => {
   const errors = [];

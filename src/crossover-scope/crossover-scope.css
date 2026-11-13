@@ -1,0 +1,86 @@
+/* Crossover Scope layout. Every colour and font here is a var() that main.js
+   sets on :root from palette.js before the page mounts, so this file carries
+   no colour of its own and follows a retheme. */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--page); color:var(--ink); font-family:var(--f-body); font-size:14px; line-height:1.5;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+  padding-block:22px 48px;
+}
+.wrap{max-width:1320px; margin:0 auto; display:grid; gap:20px}
+nav.back{font-family:var(--f-mono); font-size:12px; color:var(--muted)}
+nav.back a{color:var(--muted); text-decoration:none}
+nav.back a:hover{color:var(--accent)}
+header{display:grid; gap:4px; max-width:70ch}
+h1{font-family:var(--f-mono); font-size:16px; font-weight:600; letter-spacing:0.05em; color:var(--accent); margin:0; text-transform:uppercase}
+h1 span{font-weight:400; font-size:12px; color:var(--faint); letter-spacing:0.04em; margin-left:10px; text-transform:none}
+header p{margin:0; color:var(--muted); font-size:13px}
+.app{display:grid; grid-template-columns:300px minmax(0,1fr); gap:20px; align-items:start}
+@media (max-width: 900px){ .app{grid-template-columns:minmax(0,1fr)} }
+
+/* Control rail */
+.rail{display:grid; gap:18px; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:16px; position:sticky; top:12px}
+@media (max-width: 900px){ .rail{position:static} }
+.group{display:grid; gap:8px}
+.label{font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:flex; justify-content:space-between; gap:8px; align-items:baseline}
+.label output, .label .val{font-family:var(--f-mono); font-size:12.5px; font-weight:500; letter-spacing:0; text-transform:none; color:var(--ink); font-variant-numeric:tabular-nums}
+.seg{display:flex; flex-wrap:wrap; gap:4px}
+.seg button, .btn{
+  font:500 13px var(--f-body); padding:5px 10px; border:1px solid var(--line); background:transparent; color:var(--ink);
+  border-radius:6px; cursor:pointer; line-height:1.3;
+}
+.seg button:hover, .btn:hover{border-color:var(--grid-strong)}
+.seg button[aria-pressed="true"]{background:var(--ink); color:var(--panel); border-color:var(--ink)}
+.seg.mono button{font-family:var(--f-mono); font-size:12.5px; min-width:34px}
+button:focus-visible, input:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+input[type=range]{width:100%; accent-color:var(--accent); margin:0}
+.check{display:flex; gap:8px; align-items:center; font-size:13px; cursor:pointer}
+.check input{accent-color:var(--accent); width:15px; height:15px; margin:0}
+.sub{font-size:12px; color:var(--muted); margin:0}
+.divider{height:1px; background:var(--line)}
+.traces{display:grid; grid-template-columns:1fr 1fr; gap:6px 12px}
+.sw{display:inline-block; width:16px; height:0; border-top:2.5px solid; vertical-align:middle; margin-right:2px}
+.sw.lp{border-color:var(--lp)} .sw.hp{border-color:var(--hp)} .sw.sum{border-color:var(--sum); border-top-width:3.5px} .sw.in{border-color:var(--input); border-top-style:dashed}
+.presets{display:grid; gap:4px}
+.presets button{text-align:left; font:400 13px var(--f-body); padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--ink); cursor:pointer}
+.presets button:hover{border-color:var(--grid-strong); background:var(--chip)}
+.presets button b{font-weight:600}
+
+/* Plots */
+.plots{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; min-width:0}
+@media (max-width: 1100px){ .plots{grid-template-columns:minmax(0,1fr)} }
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px 14px; display:grid; gap:10px; min-width:0}
+.panel.wide{grid-column:1 / -1}
+.ph{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap}
+.ph h2{font-family:var(--f-mono); font-size:13px; font-weight:600; margin:0}
+.keys{display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--muted)}
+canvas{display:block; width:100%; touch-action:pan-y}
+#cMag{height:270px; cursor:ew-resize}
+#cGd{height:230px; cursor:ew-resize}
+#cPh{height:230px}
+#cWave{height:290px}
+.cap{font-size:12.5px; color:var(--muted); margin:0; max-width:95ch}
+.cap code, .notes code{font-family:var(--f-mono); font-size:12px; color:var(--ink); background:var(--chip); padding:1px 5px; border-radius:4px; white-space:nowrap}
+
+/* Readout */
+.readout{display:grid; gap:10px}
+.rtab{width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums}
+.rtab th{font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; color:var(--muted); text-align:right; padding:4px 6px; border-bottom:1px solid var(--line)}
+.rtab th:first-child{text-align:left}
+.rtab td{font-family:var(--f-mono); font-size:13px; text-align:right; padding:5px 6px; border-bottom:1px solid var(--chip)}
+.rtab td:first-child{font-family:var(--f-body); text-align:left; color:var(--muted)}
+.rtab .c-lp{color:var(--lp)} .rtab .c-hp{color:var(--hp)} .rtab .c-sum{color:var(--sum); font-weight:500}
+.hint{font-size:13px; margin:0; padding:9px 12px; border-radius:6px; background:var(--chip); line-height:1.45}
+.hint + .hint{margin-top:-4px}
+
+/* Notes */
+.notes{display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:16px}
+@media (max-width: 1100px){ .notes{grid-template-columns:repeat(2, minmax(0,1fr))} }
+@media (max-width: 560px){ .notes{grid-template-columns:minmax(0,1fr)} }
+.note{display:grid; gap:6px; align-content:start; min-width:0; padding-top:10px; border-top:2px solid var(--ink)}
+.note h3{margin:0; font-family:var(--f-mono); font-size:13px; font-weight:600}
+.note p{margin:0; font-size:13px; color:var(--muted)}
+.note .eq{font-family:var(--f-mono); font-size:12.5px; color:var(--ink); overflow-x:auto; white-space:nowrap; padding:6px 0}
+[hidden]{display:none!important}

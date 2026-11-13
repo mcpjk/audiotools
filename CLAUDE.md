@@ -59,6 +59,10 @@ src/cavity-model.js       its physics: STL → cut-cell grid → Lanczos modes
 src/cavity-worker.js      runs the eigen-solve off the page's thread — the
                           one tool with a worker; seconds-to-minutes of
                           compute would otherwise freeze the page
+crossover-scope.html      → src/crossover-scope/main.js (plain DOM + canvas,
+                          not React; served under /audio/learn/). The first
+                          tool with its own folder: read its CLAUDE.md
+src/crossover-scope/model.js  its physics; scripts/test-crossover.mjs checks it
 src/palette.js            shared theme tokens — a COPY of the hub's master
                           (see below); keep it byte-identical
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -84,6 +88,7 @@ npm run preview    # serve the built output as deployed
 npm run test:horn  # closed-form vectors for src/horn-model.js
 npm run test:box   # closed-form vectors for src/box-modes-model.js
 npm run test:cavity  # closed-form vectors for src/cavity-model.js
+npm run test:crossover  # closed forms for src/crossover-scope/model.js
 npm run test:ui    # Playwright: the render sweep and the landing page links
 ```
 
