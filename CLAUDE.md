@@ -16,10 +16,12 @@ history: they had reached ~20,800 lines against these four tools' ~3,500, and
 redirect stubs they left behind (`ginkgo-horn.html`, `ginkgo-rim-lab.html`)
 were deleted on 2026-11-13, when the old hostname was retired; only the
 landing page's card links to the multicell horn now.
-**`src/palette.js` is the ONE file the two repos share.** It was the only
-import that crossed the boundary. It is duplicated, not published, so a
-palette change has to be made in BOTH repos, and `npm run check:palette` runs
-in both. That is the standing cost of the split.
+**`src/palette.js` is the ONE file the repos share.** Its master lives in the
+hub, `mcpjk/macapeh.com` at `public/_site/palette.js`, served at
+`macapeh.com/_site/palette.js`; this repo and ginkgoMulticell carry
+byte-identical copies. A palette change goes into the master first, then is
+copied into BOTH tool repos, and `npm run check:palette` runs in both. Site-wide
+conventions are in the hub's `STYLE.md` (`macapeh.com/_site/STYLE.md`).
 Everything about the horn physics — the standing acoustic priority, the
 findings, the task queue — went with the tools and now lives in that repo's
 `CLAUDE.md`, `FINDINGS-ARCHIVE.md` and `NEXT-SESSION.md`. Do not re-derive it
@@ -43,7 +45,8 @@ deciding to.
 ## Layout
 
 ```
-index.html                landing page — plain HTML/CSS, no React
+index.html                local index for dev and the test sweep — NEVER
+                          served publicly; the hub renders the public one
 horn-calculator.html      → src/horn-main.jsx        → HornCalculator
 src/horn-model.js         its physics, split out so node can test it
 annular-flh.html          → src/flh-main.jsx         → AnnularFLHCalculator
@@ -56,8 +59,8 @@ src/cavity-model.js       its physics: STL → cut-cell grid → Lanczos modes
 src/cavity-worker.js      runs the eigen-solve off the page's thread — the
                           one tool with a worker; seconds-to-minutes of
                           compute would otherwise freeze the page
-src/palette.js            shared theme tokens — see below; ALSO lives in the
-                          ginkgoMulticell repo, keep the two in step
+src/palette.js            shared theme tokens — a COPY of the hub's master
+                          (see below); keep it byte-identical
 scripts/palette-gen.mjs   regenerates the neutral ramp
 scripts/test-horn.mjs     closed forms for horn-model.js — the build runs these
 scripts/test-box-modes.mjs  closed forms for box-modes-model.js — so does this
@@ -95,7 +98,7 @@ npm run test:ui    # Playwright: the render sweep and the landing page links
      silently not built** — no error, it just never appears.
    - `index.html` → an `<a class="card">` block. This landing page is only for
      `npm run dev` / `npm run preview`; the public site never serves it (the
-     hub redirects a tool's `index` to its own `/audio/design/` page).
+     hub sends a tool's `index` link to that tool's section page).
    - **The hub, in its own repo `mcpjk/macapeh.com`** → a `TOOLS` entry in
      `src/site.js` (public path, `service: "AUDIOTOOLS"`, `page` = the entry
      HTML's name without `.html`, title, blurb). **Without it the tool is
@@ -108,7 +111,9 @@ rename.
 
 ## The palette
 
-`src/palette.js` is the master palette and the single source of colour.
+`src/palette.js` is the single source of colour in this repo — a copy of the
+master in the hub (`public/_site/palette.js`), which the hub's own index pages
+also import.
 **Import it; never redeclare a local `C`; never write a raw hex in a tool.**
 
 ```js
@@ -159,7 +164,8 @@ safely. Verified as a round trip: washi to sumi and back returns every page
 byte-identical.
 
 To change values, edit the OKLCH specs in `scripts/palette-gen.mjs` and re-run
-it; it prints a block that replaces the theme in `palette.js`. It is written to
+it; it prints a block that replaces the theme in the hub's master `palette.js`,
+which is then copied here and to ginkgoMulticell. It is written to
 reproduce the committed theme exactly, so a diff should show only comments.
 Do not hand-edit hexes — that is how a ramp stops being a ramp.
 
