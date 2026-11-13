@@ -8,15 +8,13 @@
   "assets": {
     "directory": "./dist"
   },
-  // The live hostname, declared here rather than left as dashboard-only
-  // state, so the deploy is self-contained and survives a project rebuild.
-  // custom_domain: true is what makes Cloudflare create and hold the DNS
-  // record; a plain route would attach the Worker to a pattern without
-  // bringing the hostname into existence.
-  "routes": [
-    { "pattern": "audiotools.kiiworkshop.com", "custom_domain": true }
-  ],
-  // Declaring routes would otherwise turn the workers.dev subdomain off.
-  // Keep it: it isolates "did the build work" from "did the domain work".
+  // NO routes and NO custom domain. The public site is macapeh.com, served
+  // by the hub Worker "macapeh-site", which reaches this Worker through a
+  // service binding and mounts its pages under /audio/design/. The old
+  // hostname audiotools.kiiworkshop.com is now a custom domain of the HUB
+  // (it 301s to the new paths). Do not list it here again: a deploy would
+  // try to take it back from the hub.
+  // workers.dev stays on: it isolates "did the build work" from "did the
+  // hub work", and it is how to reach this Worker directly.
   "workers_dev": true
 }

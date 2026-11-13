@@ -4,12 +4,13 @@ Working notes for this repo. Read before changing anything.
 
 ## What this is
 
-Five loudspeaker design calculators served as a static multi-page site at
-`audiotools.kiiworkshop.com`. Everything computes client-side — no backend, no
+Loudspeaker design calculators served as a static multi-page site under
+`macapeh.com/audio/design/`, through the `macapeh-site` hub Worker's service
+binding (see README → Deployment; keep vite `base: "./"`). Everything computes client-side — no backend, no
 network calls, no analytics, no external libraries beyond React.
 
-**THE TWO GINKGO TOOLS LEFT THIS REPO ON 2026-09-09** for
-`ginkgo.kiiworkshop.com`, repo **`mcpjk/ginkgoMulticell`**, with their full
+**THE TWO GINKGO TOOLS LEFT THIS REPO ON 2026-09-09** (now served at
+`macapeh.com/audio/design/multicell/`), repo **`mcpjk/ginkgoMulticell`**, with their full
 history: they had reached ~20,800 lines against these four tools' ~3,500, and
 ~99% of a five-minute build gate every unrelated change had to pay. What is
 left here for them is two REDIRECT STUBS — `ginkgo-horn.html` and
@@ -56,8 +57,8 @@ src/cavity-model.js       its physics: STL → cut-cell grid → Lanczos modes
 src/cavity-worker.js      runs the eigen-solve off the page's thread — the
                           one tool with a worker; seconds-to-minutes of
                           compute would otherwise freeze the page
-ginkgo-horn.html          redirect stub → ginkgo.kiiworkshop.com
-ginkgo-rim-lab.html       redirect stub → ginkgo.kiiworkshop.com
+ginkgo-horn.html          redirect stub → macapeh.com/audio/design/multicell/
+ginkgo-rim-lab.html       redirect stub → same (the rim lab no longer exists)
 src/palette.js            shared theme tokens — see below; ALSO lives in the
                           ginkgoMulticell repo, keep the two in step
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -234,7 +235,7 @@ claiming a change works:
    it a real referee. FLH and Directivity may not carry enough independent
    closed forms to be worth it; check before splitting.
 5. `npm run test:ui` covers the render sweep and the two redirect stubs. The
-   stubs assert the TARGET only, never that ginkgo.kiiworkshop.com is up —
+   stubs assert the TARGET only, never that macapeh.com is up —
    that is the other site's business and is not observable from here.
 
 Chromium is available at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
@@ -242,7 +243,9 @@ for headless rendering checks.
 
 ## Deployment
 
-Push to `main` → Cloudflare builds and deploys automatically. `dist/` and
+Push to `main` → Cloudflare builds and deploys the `audiotools` Worker, which
+has no hostname of its own: the hub serves it, and `audiotools.kiiworkshop.com`
+is the hub's, 301ing to the new paths. `dist/` and
 `node_modules/` are gitignored; Cloudflare regenerates both.
 
 Gotchas that have already bitten once each:
