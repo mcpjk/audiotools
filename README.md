@@ -18,8 +18,10 @@ Live under: `macapeh.com/audio/design/` (see **Deployment** below)
 taking their full history with them. The redirect stubs they left here were
 removed on 2026-11-13, when the old hostname was retired.
 
-`src/palette.js` is the one file the two repos share. It is duplicated rather
-than published, so a palette change has to be made in both.
+`src/palette.js` is the one file the repos share. Its master is in the hub
+(`mcpjk/macapeh.com`, `public/_site/palette.js`, served at
+`macapeh.com/_site/palette.js`); this repo and ginkgoMulticell carry copies, so
+a palette change goes into the master first and is then copied into both.
 
 Everything computes client-side. No backend, no network calls, no analytics,
 no external libraries beyond React itself.
@@ -32,7 +34,7 @@ work without any server rewrite rules. A router would need the host to rewrite
 every unknown path back to `index.html`; real files need nothing.
 
 ```
-index.html                landing page — plain HTML/CSS, no React
+index.html                local index for dev and tests — never served; the hub renders the public one
 horn-calculator.html      entry → src/horn-main.jsx       → HornCalculator
 annular-flh.html          entry → src/flh-main.jsx        → AnnularFLHCalculator
 directivity-match.html    entry → src/directivity-main.jsx → DirectivityMatch
