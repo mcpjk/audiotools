@@ -22,6 +22,7 @@ export default defineConfig({
         aperture: resolve(here, "aperture-wavefield.html"),
         boxModes: resolve(here, "box-modes.html"),
         cavityModes: resolve(here, "cavity-modes.html"),
+        crossoverScope: resolve(here, "crossover-scope.html"),
       },
     },
   },

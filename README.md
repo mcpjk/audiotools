@@ -11,6 +11,7 @@ Live under: `macapeh.com/audio/design/` (see **Deployment** below)
 | Directivity Match | `directivity-match.html` | Horn ↔ cone crossover: −6 dB coverage and DI step through crossover |
 | Aperture Wavefield | `aperture-wavefield.html` | Curved-mouth aperture arrays: wavefield, polars, beamwidth vs frequency by direct summation |
 | Box Modes | `box-modes.html` | Standing-wave pressure inside a rectangular box, re the lumped value — where a port entrance sees the modes that couple to the driver |
+| Crossover Scope | `crossover-scope.html` | Served under `/audio/learn/`. One crossover seen four ways: level, group delay/phase, phasors and an FFT-simulated waveform |
 
 **The two Ginkgo tools moved to their own repo on 2026-09-09**, served at
 `macapeh.com/audio/design/multicell/`
