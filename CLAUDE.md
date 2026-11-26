@@ -261,8 +261,11 @@ claiming a change works:
    Ginkgo card is asserted by its TARGET only, never that macapeh.com is up —
    that is the hub's business and is not observable from here.
 
-Chromium is available at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
-for headless rendering checks.
+For headless rendering checks, launch Playwright's own Chromium with no
+`executablePath` (`chromium.launch()`); it resolves the installed build itself.
+Do not hard-code a versioned path such as `/opt/pw-browsers/chromium-NNNN/…` —
+the 1194 build this note once named was replaced (by 1243) and the path went
+stale.
 
 ## Deployment
 
