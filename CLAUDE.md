@@ -63,6 +63,9 @@ crossover-scope.html      → src/crossover-scope/main.js (plain DOM + canvas,
                           not React; served under /audio/learn/). The first
                           tool with its own folder: read its CLAUDE.md
 src/crossover-scope/model.js  its physics; scripts/test-crossover.mjs checks it
+line-spl.html             → src/line-spl-main.jsx    → LineArraySPL
+src/line-spl-model.js     its physics: image-summed line, driver limits,
+                          broadband allocation; scripts/test-line-spl.mjs
 src/palette.js            shared theme tokens — a COPY of the hub's master
                           (see below); keep it byte-identical
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -89,6 +92,7 @@ npm run test:horn  # closed-form vectors for src/horn-model.js
 npm run test:box   # closed-form vectors for src/box-modes-model.js
 npm run test:cavity  # closed-form vectors for src/cavity-model.js
 npm run test:crossover  # closed forms for src/crossover-scope/model.js
+npm run test:line  # closed forms for src/line-spl-model.js
 npm run test:ui    # Playwright: the render sweep and the landing page links
 ```
 
