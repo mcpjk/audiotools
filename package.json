@@ -6,7 +6,7 @@
   "description": "Loudspeaker design calculators, served as a static multi-page site",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-palette.mjs && node scripts/test-horn.mjs && node scripts/test-box-modes.mjs && node scripts/test-cavity.mjs && node scripts/test-crossover.mjs && vite build",
+    "build": "node scripts/check-palette.mjs && node scripts/test-horn.mjs && node scripts/test-box-modes.mjs && node scripts/test-cavity.mjs && node scripts/test-crossover.mjs && node scripts/test-line-spl.mjs && vite build",
     "preview": "vite preview",
     "check:palette": "node scripts/check-palette.mjs",
     "test:ui": "playwright test",
@@ -14,7 +14,8 @@
     "test:horn": "node scripts/test-horn.mjs",
     "test:box": "node scripts/test-box-modes.mjs",
     "test:cavity": "node scripts/test-cavity.mjs",
-    "test:crossover": "node scripts/test-crossover.mjs"
+    "test:crossover": "node scripts/test-crossover.mjs",
+    "test:line": "node scripts/test-line-spl.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

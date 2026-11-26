@@ -23,6 +23,7 @@ export default defineConfig({
         boxModes: resolve(here, "box-modes.html"),
         cavityModes: resolve(here, "cavity-modes.html"),
         crossoverScope: resolve(here, "crossover-scope.html"),
+        lineSpl: resolve(here, "line-spl.html"),
       },
     },
   },

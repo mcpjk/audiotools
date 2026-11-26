@@ -63,6 +63,9 @@ crossover-scope.html      → src/crossover-scope/main.js (plain DOM + canvas,
                           not React; served under /audio/learn/). The first
                           tool with its own folder: read its CLAUDE.md
 src/crossover-scope/model.js  its physics; scripts/test-crossover.mjs checks it
+line-spl.html             → src/line-spl-main.jsx    → LineArraySPL
+src/line-spl-model.js     its physics: image-summed line, driver limits,
+                          broadband allocation; scripts/test-line-spl.mjs
 src/palette.js            shared theme tokens — a COPY of the hub's master
                           (see below); keep it byte-identical
 scripts/palette-gen.mjs   regenerates the neutral ramp
@@ -89,6 +92,7 @@ npm run test:horn  # closed-form vectors for src/horn-model.js
 npm run test:box   # closed-form vectors for src/box-modes-model.js
 npm run test:cavity  # closed-form vectors for src/cavity-model.js
 npm run test:crossover  # closed forms for src/crossover-scope/model.js
+npm run test:line  # closed forms for src/line-spl-model.js
 npm run test:ui    # Playwright: the render sweep and the landing page links
 ```
 
@@ -257,8 +261,11 @@ claiming a change works:
    Ginkgo card is asserted by its TARGET only, never that macapeh.com is up —
    that is the hub's business and is not observable from here.
 
-Chromium is available at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
-for headless rendering checks.
+For headless rendering checks, launch Playwright's own Chromium with no
+`executablePath` (`chromium.launch()`); it resolves the installed build itself.
+Do not hard-code a versioned path such as `/opt/pw-browsers/chromium-NNNN/…` —
+the 1194 build this note once named was replaced (by 1243) and the path went
+stale.
 
 ## Deployment
 
